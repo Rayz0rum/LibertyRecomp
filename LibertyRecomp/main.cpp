@@ -3,6 +3,9 @@
 #ifdef __x86_64__
 #include <cpuid.h>
 #endif
+#ifdef __APPLE__
+#include <sys/mman.h>
+#endif
 #include <cpu/guest_thread.h>
 #include <gpu/video.h>
 #include <kernel/function.h>
@@ -32,6 +35,7 @@
 #include <preload_executable.h>
 #include <iostream>
 #include <app.h>
+#include <debugger.h>
 
 #ifdef _WIN32
 #include <timeapi.h>
@@ -81,6 +85,10 @@ void KiSystemStartup()
         std::_Exit(1);
     }
 
+    // Initialize debugger before anything else
+    Debugger::SetMemoryBase(g_memory.base, PPC_MEMORY_SIZE);
+    Debugger::Initialize();
+    Debugger::StartCLIThread();
 
     // CRITICAL: Initialize Xbox 360 Xenon memory regions BEFORE heap init
     // The physical heap starts at 0x80000000, and we zero 0x82000000-0x831F0000
@@ -223,6 +231,34 @@ uint32_t LdrLoadModule(const std::filesystem::path &path)
 
     memcpy(g_memory.Translate(image.base), image.data.get(), image.size);
     g_xdbfWrapper = XDBFWrapper(static_cast<uint8_t*>(g_memory.Translate(image.resource_offset)), image.resource_size);
+
+    // Option B: Protect .rdata section from writes to catch corruption source
+    // DISABLED: Some global constructors may legitimately modify .rdata
+    // The hardcoded vtable fix handles the worker thread issue
+#if 0  // Temporarily disabled
+#ifdef __APPLE__
+    {
+        constexpr uint32_t RDATA_START = 0x82090000;
+        constexpr uint32_t RDATA_END   = 0x82270000;
+        constexpr size_t   RDATA_SIZE  = RDATA_END - RDATA_START;
+        
+        void* rdataPtr = g_memory.Translate(RDATA_START);
+        
+        // Align to page boundary (4KB pages)
+        uintptr_t addr = reinterpret_cast<uintptr_t>(rdataPtr);
+        uintptr_t pageStart = addr & ~0xFFFUL;
+        size_t protectSize = RDATA_SIZE + (addr - pageStart);
+        
+        int result = mprotect(reinterpret_cast<void*>(pageStart), protectSize, PROT_READ);
+        if (result == 0) {
+            printf("[MPROTECT] .rdata section 0x%08X-0x%08X marked READ-ONLY\n", RDATA_START, RDATA_END);
+            printf("[MPROTECT] Host addr %p, size 0x%zX\n", reinterpret_cast<void*>(pageStart), protectSize);
+        } else {
+            printf("[MPROTECT] FAILED to protect .rdata: errno=%d\n", errno);
+        }
+    }
+#endif
+#endif
 
     // GTA IV Memory Layout Collision Fix
     // Address 0x82003890 aliases with "common.rpf" string in image .rdata section.

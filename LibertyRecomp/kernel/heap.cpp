@@ -4,31 +4,26 @@
 #include "function.h"
 #include "xdm.h"
 
-// Virtual heap uses o1heap for general allocations
+// Memory layout from MarathonRecomp:
+// | Region        | Start      | End        | Purpose              |
+// |---------------|------------|------------|----------------------|
+// | Null guard    | 0x00000000 | 0x00001000 | Catch null ptr access|
+// | Normal heap   | 0x00020000 | 0x7FEA0000 | General allocations  |
+// | Reserved      | 0x7FEA0000 | 0xA0000000 | XMA I/O, system      |
+// | Physical heap | 0xA0000000 | 0xFFFFFFFF | GPU/DMA memory       |
+
 constexpr size_t RESERVED_BEGIN = 0x7FEA0000;
-
-// Physical heap uses simple bump allocator starting at 0xA0000000
-constexpr size_t PHYS_HEAP_START = 0xA0000000;
-constexpr size_t PHYS_HEAP_END = 0x100000000;
-
-// Simple bump allocator state for physical memory
-static uint8_t* physBumpPtr = nullptr;
-static uint8_t* physBumpEnd = nullptr;
-static std::mutex physBumpMutex;
+constexpr size_t RESERVED_END = 0xA0000000;
 
 void Heap::Init()
 {
-    // Virtual heap with o1heap
+    // Normal heap: 0x20000 to 0x7FEA0000 (using o1heap)
     heap = o1heapInit(g_memory.Translate(0x20000), RESERVED_BEGIN - 0x20000);
     
-    // Physical heap - simple bump allocator
-    physBumpPtr = (uint8_t*)g_memory.Translate(PHYS_HEAP_START);
-    physBumpEnd = g_memory.base + PHYS_HEAP_END;  // Don't use Translate - PHYS_HEAP_END == PPC_MEMORY_SIZE
-    physicalHeap = (O1HeapInstance*)physBumpPtr; // Just for the NULL check
+    // Physical heap: 0xA0000000 to 0x100000000 (using o1heap for proper free support)
+    physicalHeap = o1heapInit(g_memory.Translate(RESERVED_END), 0x100000000 - RESERVED_END);
     
-    std::fprintf(stderr, "[Heap::Init] heap=%p\n", (void*)heap);
-    std::fprintf(stderr, "[Heap::Init] phys bump: %p - %p (size=%zu MB)\n", 
-        physBumpPtr, physBumpEnd, (physBumpEnd - physBumpPtr) / (1024*1024));
+    std::fprintf(stderr, "[Heap::Init] heap=%p physicalHeap=%p\n", (void*)heap, (void*)physicalHeap);
     std::fflush(stderr);
 }
 
@@ -36,17 +31,7 @@ void* Heap::Alloc(size_t size)
 {
     std::lock_guard lock(mutex);
 
-    void* ptr = o1heapAllocate(heap, std::max<size_t>(1, size));
-    if (ptr == nullptr)
-    {
-        const O1HeapDiagnostics diag = o1heapGetDiagnostics(heap);
-        std::fprintf(stderr,
-            "[Heap] OOM (heap): request=%zu capacity=%zu allocated=%zu\n",
-            size, diag.capacity, diag.allocated);
-        std::fflush(stderr);
-    }
-
-    return ptr;
+    return o1heapAllocate(heap, std::max<size_t>(1, size));
 }
 
 void* Heap::AllocPhysical(size_t size, size_t alignment)
@@ -54,54 +39,90 @@ void* Heap::AllocPhysical(size_t size, size_t alignment)
     size = std::max<size_t>(1, size);
     alignment = alignment == 0 ? 0x1000 : std::max<size_t>(16, alignment);
 
-    std::lock_guard lock(physBumpMutex);
-    
-    if (!physBumpPtr) {
-        std::fprintf(stderr, "[Heap::AllocPhysical] ERROR: physBumpPtr is NULL!\n");
-        std::fflush(stderr);
-        return nullptr;
-    }
-    
-    // Align the bump pointer
-    uint8_t* aligned = (uint8_t*)(((size_t)physBumpPtr + alignment - 1) & ~(alignment - 1));
-    
-    // Check if we have enough space
-    if (aligned + size > physBumpEnd) {
-        std::fprintf(stderr, "[Heap::AllocPhysical] OOM: need=%zu available=%zu\n",
-            size, (size_t)(physBumpEnd - aligned));
-        std::fflush(stderr);
-        return nullptr;
-    }
-    
-    // Bump the pointer
-    physBumpPtr = aligned + size;
-    
-    return aligned;
+    std::lock_guard lock(physicalMutex);
+
+    void* ptr = o1heapAllocate(physicalHeap, size + alignment);
+    size_t aligned = ((size_t)ptr + alignment) & ~(alignment - 1);
+
+    // Store original pointer and size for Free() to work correctly
+    *((void**)aligned - 1) = ptr;
+    *((size_t*)aligned - 2) = size + O1HEAP_ALIGNMENT;
+
+    return (void*)aligned;
 }
 
 void Heap::Free(void* ptr)
 {
-    // Check if it's from the physical bump allocator region
-    if (ptr >= g_memory.Translate(PHYS_HEAP_START) && ptr < (g_memory.base + PHYS_HEAP_END)) {
-        // Bump allocator doesn't free - memory is leaked until reset
-        // This is fine for game memory that lives for the session
-        return;
+    if (ptr >= physicalHeap)
+    {
+        std::lock_guard lock(physicalMutex);
+        o1heapFree(physicalHeap, *((void**)ptr - 1));
     }
-    
-    // Virtual heap free
-    std::lock_guard lock(mutex);
-    o1heapFree(heap, ptr);
+    else
+    {
+        std::lock_guard lock(mutex);
+        o1heapFree(heap, ptr);
+    }
 }
 
 size_t Heap::Size(void* ptr)
 {
-    // For bump allocator, we don't track individual sizes
-    // Return 0 for physical allocations
-    if (ptr >= g_memory.Translate(PHYS_HEAP_START) && ptr < (g_memory.base + PHYS_HEAP_END)) {
-        return 0;
-    }
-    return 0; // TODO: implement for regular heap if needed
+    if (ptr)
+        return *((size_t*)ptr - 2) - O1HEAP_ALIGNMENT; // relies on fragment header in o1heap.c
+
+    return 0;
 }
+
+// =============================================================================
+// Rtl Heap Functions (from MarathonRecomp)
+// =============================================================================
+
+uint32_t RtlAllocateHeap(uint32_t heapHandle, uint32_t flags, uint32_t size)
+{
+    void* ptr = g_userHeap.Alloc(size);
+    if ((flags & 0x8) != 0)  // HEAP_ZERO_MEMORY
+        memset(ptr, 0, size);
+
+    assert(ptr);
+    return g_memory.MapVirtual(ptr);
+}
+
+uint32_t RtlReAllocateHeap(uint32_t heapHandle, uint32_t flags, uint32_t memoryPointer, uint32_t size)
+{
+    void* ptr = g_userHeap.Alloc(size);
+    if ((flags & 0x8) != 0)  // HEAP_ZERO_MEMORY
+        memset(ptr, 0, size);
+
+    if (memoryPointer != 0)
+    {
+        void* oldPtr = g_memory.Translate(memoryPointer);
+        memcpy(ptr, oldPtr, std::min<size_t>(size, g_userHeap.Size(oldPtr)));
+        g_userHeap.Free(oldPtr);
+    }
+
+    assert(ptr);
+    return g_memory.MapVirtual(ptr);
+}
+
+uint32_t RtlFreeHeap(uint32_t heapHandle, uint32_t flags, uint32_t memoryPointer)
+{
+    if (memoryPointer != NULL)
+        g_userHeap.Free(g_memory.Translate(memoryPointer));
+
+    return true;
+}
+
+uint32_t RtlSizeHeap(uint32_t heapHandle, uint32_t flags, uint32_t memoryPointer)
+{
+    if (memoryPointer != NULL)
+        return (uint32_t)g_userHeap.Size(g_memory.Translate(memoryPointer));
+
+    return 0;
+}
+
+// =============================================================================
+// X Memory Functions
+// =============================================================================
 
 uint32_t XAllocMem(uint32_t size, uint32_t flags)
 {
@@ -112,10 +133,38 @@ uint32_t XAllocMem(uint32_t size, uint32_t flags)
     if ((flags & 0x40000000) != 0)
         memset(ptr, 0, size);
 
+    assert(ptr);
     return g_memory.MapVirtual(ptr);
 }
 
-void XFreeMem(uint32_t ptr)
+void XFreeMem(uint32_t baseAddress, uint32_t flags)
 {
-    g_userHeap.Free(g_memory.Translate(ptr));
+    if (baseAddress != NULL)
+        g_userHeap.Free(g_memory.Translate(baseAddress));
 }
+
+uint32_t XVirtualAlloc(void *lpAddress, unsigned int dwSize, unsigned int flAllocationType, unsigned int flProtect)
+{
+    assert(!lpAddress);
+    return g_memory.MapVirtual(g_userHeap.Alloc(dwSize));
+}
+
+uint32_t XVirtualFree(uint32_t lpAddress, unsigned int dwSize, unsigned int dwFreeType)
+{
+    if ((dwFreeType & 0x8000) != 0 && dwSize)
+        return FALSE;
+
+    if (lpAddress)
+        g_userHeap.Free(g_memory.Translate(lpAddress));
+
+    return TRUE;
+}
+
+// =============================================================================
+// GTA IV CRT Heap Hooks
+// =============================================================================
+// NOTE: The actual heap hooks are in imports.cpp using PPC_FUNC macro.
+// GUEST_FUNCTION_HOOK doesn't work for game functions (only kernel imports).
+// The hooks are: sub_82993298 (malloc), sub_82993360 (free), sub_82993848 (realloc),
+// sub_829A64C0 (low-level alloc), sub_829A7090 (low-level realloc)
+// =============================================================================

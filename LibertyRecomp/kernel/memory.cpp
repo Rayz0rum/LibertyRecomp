@@ -1,6 +1,10 @@
 #include <stdafx.h>
 #include "memory.h"
 
+// Include pre-generated vtable data from GTA IV XEX
+// This pre-populates vtables with valid function pointers before game starts
+#include "../../gta_iv/vtable_prepopulate.h"
+
 static constexpr size_t AlignDown(size_t value, size_t alignment) noexcept
 {
     return value & ~(alignment - 1);
@@ -45,6 +49,21 @@ Memory::Memory()
         if (PPCFuncMappings[i].host != nullptr)
             InsertFunction(PPCFuncMappings[i].guest, PPCFuncMappings[i].host);
     }
+
+    // Register stubs for missing callbacks - must be done BEFORE memory protection
+    // 0x829FBE38 - called from sub_829A7960
+    InsertFunction(0x829FBE38, [](PPCContext& ctx, uint8_t* base) {
+        ctx.r3.u32 = 0; // Return success
+    });
+    
+    // 0x830F2CB8 - called from sub_82A03520 (in BSS range, likely uninitialized pointer)
+    InsertFunction(0x830F2CB8, [](PPCContext& ctx, uint8_t* base) {
+        ctx.r3.u32 = 0; // Return success
+    });
+
+    // Pre-populate vtables with function pointers extracted from XEX
+    // This ensures vtables have valid entries before game code runs
+    PrePopulateVtables(base);
 
     // Protect the recomp function lookup table from guest writes.
     // If the game overwrites these host function pointers, it can lead to crashes that look like

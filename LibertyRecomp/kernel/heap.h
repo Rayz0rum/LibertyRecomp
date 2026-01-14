@@ -36,3 +36,15 @@ struct Heap
 };
 
 extern Heap g_userHeap;
+
+// Rtl Heap Functions (from MarathonRecomp)
+uint32_t RtlAllocateHeap(uint32_t heapHandle, uint32_t flags, uint32_t size);
+uint32_t RtlReAllocateHeap(uint32_t heapHandle, uint32_t flags, uint32_t memoryPointer, uint32_t size);
+uint32_t RtlFreeHeap(uint32_t heapHandle, uint32_t flags, uint32_t memoryPointer);
+uint32_t RtlSizeHeap(uint32_t heapHandle, uint32_t flags, uint32_t memoryPointer);
+
+// X Memory Functions
+uint32_t XAllocMem(uint32_t size, uint32_t flags);
+void XFreeMem(uint32_t baseAddress, uint32_t flags);
+uint32_t XVirtualAlloc(void *lpAddress, unsigned int dwSize, unsigned int flAllocationType, unsigned int flProtect);
+uint32_t XVirtualFree(uint32_t lpAddress, unsigned int dwSize, unsigned int dwFreeType);

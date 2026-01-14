@@ -73,6 +73,10 @@ set(LIBERTY_RECOMP_PRECOMPILED_HEADERS
 
 set(LIBERTY_RECOMP_KERNEL_CXX_SOURCES
     "kernel/imports.cpp"
+    "kernel/object_table.cpp"
+    "kernel/xevent.cpp"
+    "kernel/xsemaphore.cpp"
+    "kernel/xmutant.cpp"
     "kernel/xdm.cpp"
     "kernel/heap.cpp"
     "kernel/memory.cpp"
@@ -449,6 +453,7 @@ target_link_libraries(LibertyRecomp PRIVATE
     CURL::libcurl
     plume
     GameNetworkingSockets::static
+    liberty_debugger
 )
 
 # Force-load LibertyRecompLib on macOS to include all weak symbols (PPC recompiled functions)
