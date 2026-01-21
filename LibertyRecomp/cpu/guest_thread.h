@@ -124,6 +124,8 @@ struct GuestThreadHandle : KernelObject
     #else
     std::thread thread;
     #endif
+    // FIX: Added isStarted to ensure thread is initialized before continuing
+    std::atomic<bool> isStarted = false;
     // HACK(1)
     std::atomic<bool> isFinished = false;
 

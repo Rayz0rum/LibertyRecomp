@@ -20,15 +20,15 @@ namespace GTAIV {
 // =============================================================================
 
 static std::shared_mutex s_shaderMapMutex;
-static std::unordered_map<uint32_t, GuestShader*> s_shaderHandleMap;
+static std::unordered_map<uint32_t, ::GuestShader*> s_shaderHandleMap;
 
-void RegisterShader(uint32_t guestHandle, GuestShader* hostShader) {
+void RegisterShader(uint32_t guestHandle, ::GuestShader* hostShader) {
     if (guestHandle == 0 || hostShader == nullptr) return;
     std::unique_lock<std::shared_mutex> lock(s_shaderMapMutex);
     s_shaderHandleMap[guestHandle] = hostShader;
 }
 
-GuestShader* LookupShader(uint32_t guestHandle) {
+::GuestShader* LookupShader(uint32_t guestHandle) {
     if (guestHandle == 0 || guestHandle == 0xFFFFFFFF) return nullptr;
     std::shared_lock<std::shared_mutex> lock(s_shaderMapMutex);  // Read lock - allows concurrent reads
     auto it = s_shaderHandleMap.find(guestHandle);
@@ -46,15 +46,15 @@ void UnregisterShader(uint32_t guestHandle) {
 // =============================================================================
 
 static std::shared_mutex s_bufferMapMutex;
-static std::unordered_map<uint32_t, GuestBuffer*> s_bufferHandleMap;
+static std::unordered_map<uint32_t, ::GuestBuffer*> s_bufferHandleMap;
 
-void RegisterBuffer(uint32_t guestHandle, GuestBuffer* hostBuffer) {
+void RegisterBuffer(uint32_t guestHandle, ::GuestBuffer* hostBuffer) {
     if (guestHandle == 0 || hostBuffer == nullptr) return;
     std::unique_lock<std::shared_mutex> lock(s_bufferMapMutex);
     s_bufferHandleMap[guestHandle] = hostBuffer;
 }
 
-GuestBuffer* LookupBuffer(uint32_t guestHandle) {
+::GuestBuffer* LookupBuffer(uint32_t guestHandle) {
     if (guestHandle == 0) return nullptr;
     std::shared_lock<std::shared_mutex> lock(s_bufferMapMutex);  // Read lock
     auto it = s_bufferHandleMap.find(guestHandle);
@@ -72,15 +72,15 @@ void UnregisterBuffer(uint32_t guestHandle) {
 // =============================================================================
 
 static std::shared_mutex s_textureMapMutex;
-static std::unordered_map<uint32_t, GuestTexture*> s_textureHandleMap;
+static std::unordered_map<uint32_t, ::GuestTexture*> s_textureHandleMap;
 
-void RegisterTexture(uint32_t guestHandle, GuestTexture* hostTexture) {
+void RegisterTexture(uint32_t guestHandle, ::GuestTexture* hostTexture) {
     if (guestHandle == 0 || hostTexture == nullptr) return;
     std::unique_lock<std::shared_mutex> lock(s_textureMapMutex);
     s_textureHandleMap[guestHandle] = hostTexture;
 }
 
-GuestTexture* LookupTexture(uint32_t guestHandle) {
+::GuestTexture* LookupTexture(uint32_t guestHandle) {
     if (guestHandle == 0) return nullptr;
     std::shared_lock<std::shared_mutex> lock(s_textureMapMutex);  // Read lock
     auto it = s_textureHandleMap.find(guestHandle);
@@ -98,15 +98,15 @@ void UnregisterTexture(uint32_t guestHandle) {
 // =============================================================================
 
 static std::shared_mutex s_surfaceMapMutex;
-static std::unordered_map<uint32_t, GuestSurface*> s_surfaceHandleMap;
+static std::unordered_map<uint32_t, ::GuestSurface*> s_surfaceHandleMap;
 
-void RegisterSurface(uint32_t guestHandle, GuestSurface* hostSurface) {
+void RegisterSurface(uint32_t guestHandle, ::GuestSurface* hostSurface) {
     if (guestHandle == 0 || hostSurface == nullptr) return;
     std::unique_lock<std::shared_mutex> lock(s_surfaceMapMutex);
     s_surfaceHandleMap[guestHandle] = hostSurface;
 }
 
-GuestSurface* LookupSurface(uint32_t guestHandle) {
+::GuestSurface* LookupSurface(uint32_t guestHandle) {
     if (guestHandle == 0) return nullptr;
     std::shared_lock<std::shared_mutex> lock(s_surfaceMapMutex);  // Read lock
     auto it = s_surfaceHandleMap.find(guestHandle);
@@ -117,6 +117,64 @@ void UnregisterSurface(uint32_t guestHandle) {
     if (guestHandle == 0) return;
     std::unique_lock<std::shared_mutex> lock(s_surfaceMapMutex);
     s_surfaceHandleMap.erase(guestHandle);
+}
+
+// =============================================================================
+// Texture Level Descriptor Query
+// Replacement for sub_829E5C38 - returns texture info from host-side structures
+// instead of querying Xbox 360 GPU hardware.
+//
+// This function is called by sub_8286BAE0 (render target backup creator) which
+// needs texture dimensions and format to create matching GPU resources.
+//
+// Based on analysis in RENDERING_RESEARCH.md Section 2.6 and IDA pseudocode.
+// =============================================================================
+
+TextureLevelInfo GetTextureLevelInfo(uint32_t texturePtr, uint32_t mipLevel) {
+    TextureLevelInfo info = {};
+    info.valid = false;
+    
+    if (texturePtr == 0) {
+        return info;
+    }
+    
+    // First try to find as texture
+    ::GuestTexture* texture = LookupTexture(texturePtr);
+    if (texture != nullptr) {
+        // Calculate mip dimensions (each mip level halves dimensions)
+        uint32_t mipWidth = std::max(1u, texture->width >> mipLevel);
+        uint32_t mipHeight = std::max(1u, texture->height >> mipLevel);
+        uint32_t mipDepth = std::max(1u, texture->depth >> mipLevel);
+        
+        info.type = GetTextureTypeFromResource(texture->type);
+        info.width = mipWidth;
+        info.height = mipHeight;
+        info.depth = mipDepth;
+        info.format = 0; // We don't store original guest format in GuestTexture - use default
+        info.pitch = mipWidth * 4; // Default to RGBA8 pitch
+        info.valid = true;
+        return info;
+    }
+    
+    // Try to find as surface (render target / depth stencil)
+    ::GuestSurface* surface = LookupSurface(texturePtr);
+    if (surface != nullptr) {
+        // Surfaces typically only have 1 mip level
+        uint32_t mipWidth = std::max(1u, surface->width >> mipLevel);
+        uint32_t mipHeight = std::max(1u, surface->height >> mipLevel);
+        
+        info.type = GetTextureTypeFromResource(surface->type);
+        info.width = mipWidth;
+        info.height = mipHeight;
+        info.depth = 1;
+        info.format = surface->guestFormat;
+        info.pitch = mipWidth * GetFormatBytesPerPixel(surface->guestFormat);
+        info.valid = true;
+        return info;
+    }
+    
+    // Resource not found in either map
+    return info;
 }
 
 // =============================================================================

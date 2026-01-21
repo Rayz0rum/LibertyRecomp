@@ -3,16 +3,13 @@
 #include <cstdint>
 #include <cstddef>
 
-namespace GTAIV {
-
-// =============================================================================
-// Forward Declarations for Guest Resource Types
-// =============================================================================
-
+// Forward declare global types from video.h
+struct GuestSurface;
+struct GuestTexture;
 struct GuestShader;
 struct GuestBuffer;
-struct GuestTexture;
-struct GuestSurface;
+
+namespace GTAIV {
 
 // =============================================================================
 // D3D Primitive Types (Xbox 360 / D3D9 compatible)
@@ -79,6 +76,30 @@ GuestTexture* LookupTexture(uint32_t guestHandle);
 void RegisterSurface(uint32_t guestHandle, GuestSurface* hostSurface);
 void UnregisterSurface(uint32_t guestHandle);
 GuestSurface* LookupSurface(uint32_t guestHandle);
+
+// =============================================================================
+// Texture Level Descriptor Query
+// Replacement for sub_829E5C38 - returns texture info from host-side structures
+// instead of querying Xbox 360 GPU hardware.
+//
+// Called by sub_8286BAE0 (render target backup creator) to get texture info
+// for creating matching GPU resources.
+// =============================================================================
+
+struct TextureLevelInfo {
+    uint32_t type;    // Resource type (3=2D, 4=RT, 17=3D, 18=cube, 19=array)
+    uint32_t width;   // Width at specified mip level
+    uint32_t height;  // Height at specified mip level
+    uint32_t depth;   // Depth at specified mip level (1 for 2D textures)
+    uint32_t format;  // Original Xbox 360 D3DFMT_* format code
+    uint32_t pitch;   // Row pitch in bytes
+    bool valid;       // True if lookup succeeded
+};
+
+// Query texture level info from host-side structures
+// texturePtr: Guest memory pointer to texture resource
+// mipLevel: Mip level to query (0 = base level)
+TextureLevelInfo GetTextureLevelInfo(uint32_t texturePtr, uint32_t mipLevel);
 
 // =============================================================================
 // Resource Statistics

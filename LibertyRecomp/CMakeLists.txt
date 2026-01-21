@@ -172,6 +172,7 @@ endif()
 
 set(LIBERTY_RECOMP_APU_CXX_SOURCES
     "apu/audio.cpp"
+    "apu/audio_state.cpp"
     "apu/xma_decoder.cpp"
     "apu/embedded_player.cpp"
     "apu/driver/sdl2_driver.cpp"

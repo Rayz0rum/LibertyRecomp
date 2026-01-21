@@ -10,6 +10,7 @@
 // Almost all decoding code is from Xenia Canary, so leave the copyright here
 
 #include "xma_decoder.h"
+#include "audio_state.h"
 
 // #define ENABLE_DEBUG_XMA_DECODER
 
@@ -426,7 +427,12 @@ uint32_t XMAPlaybackCreate(uint32_t streams, XMAPLAYBACKINIT *init, uint32_t fla
             init->sampleRate.get(), init->outputBufferSize.get(), init->channelCount,
             init->subframes);
     xmaPlayback->decoderThread = std::thread(DecoderThreadFunc, xmaPlayback);
-    *outPlayback = g_memory.MapVirtual(xmaPlayback);
+    
+    uint32_t guestAddr = g_memory.MapVirtual(xmaPlayback);
+    *outPlayback = guestAddr;
+    
+    // Register with AudioStateManager for proper state tracking
+    AudioStateManager::Instance().OnPlaybackCreated(xmaPlayback, guestAddr);
 
     return 0;
 }
@@ -518,6 +524,10 @@ uint32_t XMAPlaybackSubmitData(XmaPlayback *playback, uint32_t stream, uint32_t 
             playback->inputBufferReadOffset = frameOffset & 0x3FFFFFF;
         }
     }
+
+    // Notify AudioStateManager that data has been submitted
+    // This is the key event that sets audio to "ready" state
+    AudioStateManager::Instance().OnDataSubmitted(playback, dataSize);
 
     playback->bAllowedToDecode = true;
     playback->cv.notify_one();
@@ -677,6 +687,11 @@ uint32_t XMAPlaybackConsumeDecodedData(XmaPlayback *playback, uint32_t stream, u
     uint32_t samplesConsumed = totalBytes >> bytesPerSample;
     playback->streamPosition += samplesConsumed;
 
+    // Notify AudioStateManager when audio data is consumed (confirms active playback)
+    if (samplesConsumed > 0) {
+        AudioStateManager::Instance().OnDataConsumed(playback, samplesConsumed);
+    }
+
     return samplesConsumed;
 }
 
@@ -687,6 +702,10 @@ uint32_t XMAPlaybackQueryModifyLockObtained(XmaPlayback *playback) {
 
 uint32_t XMAPlaybackDestroy(XmaPlayback *playback) {
     debug_printf("XMAPlaybackDestroy %x\n", playback);
+    
+    // Notify AudioStateManager of destruction
+    AudioStateManager::Instance().OnPlaybackDestroyed(playback);
+    
     return 0;
 }
 

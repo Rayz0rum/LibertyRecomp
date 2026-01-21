@@ -129,17 +129,25 @@ static void* GuestThreadFunc(void* arg)
 static void* GuestThreadFunc(GuestThreadHandle* hThread)
 {
 #endif
-    bool wasSuspended = hThread->suspended.load();
+    // FIX: Memory barrier to ensure all fields written before thread start are visible
+    std::atomic_thread_fence(std::memory_order_acquire);
+    
+    bool wasSuspended = hThread->suspended.load(std::memory_order_acquire);
     fprintf(stderr, "[GuestThreadFunc] Thread starting, suspended=%d, waiting...\n", wasSuspended ? 1 : 0);
     if (wasSuspended) {
-        hThread->suspended.wait(true);
+        hThread->suspended.wait(true, std::memory_order_acquire);
         fprintf(stderr, "[GuestThreadFunc] Thread RESUMED after wait\n");
     } else {
         fprintf(stderr, "[GuestThreadFunc] Thread NOT suspended, running immediately\n");
     }
+    
+    // FIX: Signal that we're ready before starting guest code
+    hThread->isStarted.store(true, std::memory_order_release);
+    hThread->isStarted.notify_all();
+    
     GuestThread::Start(hThread->params);
     // HACK(1)
-    hThread->isFinished = true;
+    hThread->isFinished.store(true, std::memory_order_release);
     return nullptr;
 }
 

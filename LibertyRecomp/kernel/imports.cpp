@@ -4248,6 +4248,26 @@ void StartVBlankTimer() {
         printf("[VBlank] Thread tick #%u callback=0x%08X\n", vblankCount,
                g_gpuRingBuffer.interruptCallback);
       }
+
+      // =================================================================
+      // CRITICAL FIX: Set "frame ready" flag that loading loop waits for
+      // =================================================================
+      // byte_83128A80 at guest address 0x83128A80 is the "frame ready" signal
+      // sub_82856FE0 reads this flag; if set, it returns 1 (ready) and resets
+      // it sub_8218C2C0 calls sub_82856FE0 to check if loading frame completed
+      // Without this signal, the loading loop spins forever!
+      constexpr uint32_t GUEST_FRAME_READY_FLAG = 0x83128A80;
+      constexpr uint32_t FRAME_READY_OFFSET =
+          GUEST_FRAME_READY_FLAG - 0x80000000;
+      if (g_memory.base) {
+        uint8_t *frameReadyFlag = g_memory.base + FRAME_READY_OFFSET;
+        *frameReadyFlag = 1; // Signal frame ready
+        if (vblankCount <= 5) {
+          printf("[VBlank] Set frame_ready flag at 0x%08X = 1\n",
+                 GUEST_FRAME_READY_FLAG);
+        }
+      }
+
       if (g_gpuRingBuffer.interruptCallback != 0) {
         PPCFunc *callback =
             g_memory.FindFunction(g_gpuRingBuffer.interruptCallback);
@@ -4724,16 +4744,63 @@ uint32_t XMsgInProcessCall(uint32_t app, uint32_t message, be<uint32_t> *param1,
   return 0;
 }
 
-void XamUserReadProfileSettings(uint32_t titleId, uint32_t userIndex,
+uint32_t XamUserReadProfileSettings(uint32_t titleId, uint32_t userIndex,
                                 uint32_t xuidCount, uint64_t *xuids,
                                 uint32_t settingCount, uint32_t *settingIds,
                                 be<uint32_t> *bufferSize, void *buffer,
                                 void *overlapped) {
-  if (buffer != nullptr) {
+  // XUSER_READ_PROFILE_SETTING_RESULT structure layout (Xbox 360 SDK):
+  // Offset 0:   dwSettingsLen (total buffer size used)
+  // Offset 4:   pSettings (pointer to settings data area)
+  // Offset 192: dwNumSettings (NUMBER OF SETTINGS - CRITICAL)
+  // Offset 196: pSettingsArray (pointer to XUSER_PROFILE_SETTING array)
+  //
+  // The game reads offset 192 in sub_822EF570 as a loop count.
+  // If this is garbage, the loop runs 100k+ times causing runaway allocations.
+  
+  constexpr uint32_t ERROR_INSUFFICIENT_BUFFER = 122;
+  constexpr uint32_t MIN_BUFFER_SIZE = 320; // Need enough for all offsets the game reads
+  
+  if (buffer != nullptr && bufferSize != nullptr && *bufferSize >= MIN_BUFFER_SIZE) {
+    // Zero the entire buffer first
     memset(buffer, 0, *bufferSize);
-  } else {
-    *bufferSize = 4;
+    
+    uint8_t* resultBytes = reinterpret_cast<uint8_t*>(buffer);
+    
+    // Offset 0: dwSettingsLen = minimal header size (big-endian)
+    *reinterpret_cast<be<uint32_t>*>(resultBytes + 0) = MIN_BUFFER_SIZE;
+    
+    // Offset 4: pSettings = offset to settings area after header (big-endian)
+    *reinterpret_cast<be<uint32_t>*>(resultBytes + 4) = MIN_BUFFER_SIZE;
+    
+    // Offset 192: dwNumSettings = 0 (NO SETTINGS RETURNED) - CRITICAL FIX
+    // This prevents the runaway allocation loop in sub_822EF570
+    *reinterpret_cast<be<uint32_t>*>(resultBytes + 192) = 0;
+    
+    // Offset 196: pSettingsArray = NULL (no settings)
+    *reinterpret_cast<be<uint32_t>*>(resultBytes + 196) = 0;
+    
+    printf("[XamUserReadProfileSettings] SUCCESS: Initialized buffer size=%u, dwNumSettings=0 at offset 192\n", 
+           bufferSize->get());
+    
+    // Handle overlapped completion if provided
+    if (overlapped != nullptr) {
+      XXOVERLAPPED* pOverlapped = reinterpret_cast<XXOVERLAPPED*>(overlapped);
+      pOverlapped->dwCompletionContext = GuestThread::GetCurrentThreadId();
+      pOverlapped->Error = 0;
+      pOverlapped->Length = 0;
+    }
+    
+    return 0; // ERROR_SUCCESS
+  } else if (bufferSize != nullptr) {
+    // Buffer too small or NULL - return required size and ERROR_INSUFFICIENT_BUFFER
+    *bufferSize = MIN_BUFFER_SIZE;
+    printf("[XamUserReadProfileSettings] Buffer too small/NULL, returning required size=%u, error=122\n", 
+           MIN_BUFFER_SIZE);
+    return ERROR_INSUFFICIENT_BUFFER;
   }
+  
+  return 0; // ERROR_SUCCESS (no buffer size pointer provided)
 }
 
 // =============================================================================
@@ -5888,31 +5955,55 @@ PPC_FUNC(sub_825F5C28) {
 // Hook sub_829A2380 - Semaphore acquire (routes through sync table)
 // This function acquires a semaphore - route through sync table for proper
 // tracking
+// FIX: Timeout-aware logic to fix render thread hang
+//   - timeout=0 (non-blocking poll): call original for actual semaphore state
+//   - timeout!=0 during Init: fail-open (existing behavior)
+//   - timeout!=0 during Runtime: call original for proper waits
 extern "C" void __imp__sub_829A2380(PPCContext &ctx, uint8_t *base);
 extern "C" void sub_829A2380_hook(PPCContext &ctx, uint8_t *base) {
   static int s_count = 0;
   ++s_count;
   uint32_t handle = ctx.r3.u32;
+  int32_t timeout = ctx.r4.s32; // Read timeout IMMEDIATELY before any calls
   uint32_t callerLR = (uint32_t)ctx.lr;
 
   if (s_count <= 30 || s_count % 500 == 0) {
-    printf(
-        "[sub_829A2380] #%d SYNC_TABLE acquire handle=0x%08X caller=0x%08X\n",
-        s_count, handle, callerLR);
+    printf("[sub_829A2380] #%d SYNC_TABLE acquire handle=0x%08X timeout=%d "
+           "caller=0x%08X\n",
+           s_count, handle, timeout, callerLR);
     fflush(stdout);
   }
 
-  // Route through sync table - creates on-the-fly if not tracked
-  if (handle != 0) {
-    SyncObject *syncObj =
-        SyncTable_GetOrCreate(handle, SyncType::Semaphore, callerLR);
-    if (syncObj) {
-      // Pre-signal so wait returns immediately during init
-      syncObj->Signal(1);
-    }
+  // CASE 1: Non-blocking poll (timeout=0)
+  // MUST call original to get actual semaphore state.
+  // This is CRITICAL for render thread shutdown detection (sub_827DAC90).
+  // The render thread uses non-blocking semaphore checks to detect shutdown.
+  // If we return success unconditionally, the check always returns "signaled"
+  // and the render thread exits immediately.
+  if (timeout == 0) {
+    __imp__sub_829A2380(ctx, base);
+    return;
   }
 
-  ctx.r3.u32 = 1; // Return success
+  // CASE 2: Blocking wait during Init/Boot phase
+  // Use fail-open (existing behavior) - semaphores may not be signaled yet
+  if (ShouldFailOpenWait()) {
+    // Route through sync table - creates on-the-fly if not tracked
+    if (handle != 0) {
+      SyncObject *syncObj =
+          SyncTable_GetOrCreate(handle, SyncType::Semaphore, callerLR);
+      if (syncObj) {
+        // Pre-signal so wait returns immediately during init
+        syncObj->Signal(1);
+      }
+    }
+    ctx.r3.u32 = 1; // Return success (non-zero = not signaled in cntlzw logic)
+    return;
+  }
+
+  // CASE 3: Blocking wait during Runtime
+  // Call original for proper semaphore wait semantics
+  __imp__sub_829A2380(ctx, base);
 }
 
 // Hook sub_829A21F8 - Semaphore create wrapper (routes through sync table)
@@ -5941,27 +6032,44 @@ extern "C" void sub_829A21F8_hook(PPCContext &ctx, uint8_t *base) {
 
 // Hook sub_829A9738 - Wait-with-retry helper (calls NtWaitForSingleObjectEx)
 // This is called by sub_829A2380 (semaphore acquire) during init
-// The semaphore isn't released during init, so we make this non-blocking
+// FIX: Timeout-aware logic to fix render thread hang
+//   - timeout=0 (non-blocking poll): call original for actual wait object state
+//   - timeout!=0 during Init: fail-open to prevent init hangs
+//   - timeout!=0 during Runtime: call original for proper waits
 extern "C" void __imp__sub_829A9738(PPCContext &ctx, uint8_t *base);
 extern "C" void sub_829A9738_hook(PPCContext &ctx, uint8_t *base) {
   static int s_count = 0;
   ++s_count;
 
   uint32_t waitObj = ctx.r3.u32; // Object to wait on
-  int32_t timeout = ctx.r4.s32;  // Timeout value
+  int32_t timeout = ctx.r4.s32;  // Timeout value - read IMMEDIATELY
 
   if (s_count <= 20 || s_count % 100 == 0) {
-    LOGF_IMPL(Utility, "WaitHelper",
-              "sub_829A9738 #{} obj=0x{:08X} timeout={} - returning success "
-              "(non-blocking)",
+    LOGF_IMPL(Utility, "WaitHelper", "sub_829A9738 #{} obj=0x{:08X} timeout={}",
               s_count, waitObj, timeout);
   }
 
-  // NON-BLOCKING: Return success immediately
+  // CASE 1: Non-blocking poll (timeout=0)
+  // MUST call original to get actual wait object state.
+  // This is CRITICAL for render thread shutdown detection.
+  // When __imp__sub_829A2380 calls this with timeout=0, we need actual state.
+  if (timeout == 0) {
+    __imp__sub_829A9738(ctx, base);
+    return;
+  }
+
+  // CASE 2: Blocking wait during Init/Boot phase
+  // Return success immediately to prevent init hangs.
   // The semaphore release (sub_827DAD60 → sub_829A2290) doesn't happen during
-  // init so this wait would block forever. Return 0 (success) to allow init to
-  // continue.
-  ctx.r3.u32 = 0; // STATUS_SUCCESS / ERROR_SUCCESS
+  // init so this wait would block forever.
+  if (ShouldFailOpenWait()) {
+    ctx.r3.u32 = 0; // STATUS_SUCCESS
+    return;
+  }
+
+  // CASE 3: Blocking wait during Runtime
+  // Call original for proper wait semantics
+  __imp__sub_829A9738(ctx, base);
 }
 
 // =============================================================================
@@ -10953,12 +11061,40 @@ PPC_FUNC(sub_827DF490) {
 extern "C" void __imp__sub_827827C8(PPCContext &ctx, uint8_t *base);
 PPC_FUNC(sub_827827C8) {
   static int s_count = 0;
+  static uint32_t s_lastCaller = 0;
+  static int s_sameCallerCount = 0;
   ++s_count;
-  if (s_count <= 10)
-    LOG_WARNING("[sub_827E7B38] sub_827827C8 ENTER (queue op)");
+
+  uint32_t callerLR = (uint32_t)ctx.lr;
+
+  // Track repeated calls from same caller
+  if (callerLR == s_lastCaller) {
+    ++s_sameCallerCount;
+  } else {
+    s_sameCallerCount = 1;
+    s_lastCaller = callerLR;
+  }
+
+  // Log first calls and periodic updates
+  if (s_count <= 10 || s_count % 10000 == 0) {
+    printf("[sub_827827C8] #%d caller=0x%08X sameCallerCount=%d\n", s_count,
+           callerLR, s_sameCallerCount);
+    fflush(stdout);
+  }
+
+  // SAFETY: Detect runaway loop - same caller 1000+ times suggests infinite
+  // loop
+  if (s_sameCallerCount > 1000) {
+    if (s_sameCallerCount == 1001 || s_sameCallerCount % 10000 == 0) {
+      printf("[sub_827827C8] WARNING: Possible runaway loop from caller 0x%08X "
+             "(%d calls)\n",
+             callerLR, s_sameCallerCount);
+      fflush(stdout);
+    }
+    // Don't block - let the allocation safety limit handle it
+  }
+
   __imp__sub_827827C8(ctx, base);
-  if (s_count <= 10)
-    LOG_WARNING("[sub_827E7B38] sub_827827C8 EXIT");
 }
 
 extern "C" void __imp__sub_82990EC0(PPCContext &ctx, uint8_t *base);
@@ -12161,9 +12297,12 @@ PPC_FUNC(sub_829B08E0) {
 extern "C" void __imp__sub_8218BE28(PPCContext &ctx, uint8_t *base);
 PPC_FUNC(sub_8218BE28) {
   static int s_count = 0;
+  static int s_largeAllocCount = 0; // Track large allocations
+  static uint32_t s_lastLargeCaller = 0;
   ++s_count;
   uint32_t allocSize = ctx.r3.u32;
   uint32_t alignment = 16; // r5 in original = 16
+  uint32_t callerLR = (uint32_t)ctx.lr;
 
   // =======================================================================
   // CRITICAL FIX: Always use direct allocation
@@ -12178,6 +12317,29 @@ PPC_FUNC(sub_8218BE28) {
   if (allocSize == 0) {
     ctx.r3.u32 = 0;
     return;
+  }
+
+  // DIAGNOSTIC: Track large allocations to detect runaway loop
+  if (allocSize > 90000) {
+    ++s_largeAllocCount;
+    if (s_largeAllocCount <= 20 || s_largeAllocCount % 1000 == 0) {
+      printf("[ALLOC-DIAG] Large alloc #%d: %u bytes, caller=0x%08X, "
+             "lastCaller=0x%08X\n",
+             s_largeAllocCount, allocSize, callerLR, s_lastLargeCaller);
+      fflush(stdout);
+    }
+    s_lastLargeCaller = callerLR;
+
+    // SAFETY: If we're in a runaway allocation loop, stop after 500 large
+    // allocations
+    if (s_largeAllocCount > 500) {
+      printf("[ALLOC-DIAG] STOPPING runaway allocation loop after %d large "
+             "allocations\n",
+             s_largeAllocCount);
+      fflush(stdout);
+      ctx.r3.u32 = 0; // Return NULL to break the loop
+      return;
+    }
   }
 
   // PLATFORM GLUE: Use AllocPhysical to get memory in guest-addressable range
@@ -14207,8 +14369,9 @@ static void RepairCorruptedStream(uint32_t streamPtr) {
 //   r3 = Bytes actually read, or -1 on error
 // =============================================================================
 
-// PC FileStream marker - streams created by our sub_827E8180 hook use this
-constexpr uint32_t PC_FILESTREAM_MARKER = 0x82A7FE00;
+// PC FileStream marker - use StorageConstants::PC_STORAGE_DEVICE_ADDR
+// (0x83132000) Note: Legacy marker 0x82A7FE00 removed - was causing validation
+// failures
 
 // Helper: Check if address is in valid guest memory
 static inline bool IsValidGuestAddress(uint32_t addr) {
@@ -14618,11 +14781,13 @@ PPC_FUNC(sub_827E7FA8) {
     return;
   }
 
-  // Check if this is a PC FileStream (heap address with our marker)
-  if (streamPtr >= 0x00020000 && streamPtr < 0x7FEA0000) {
+  // Check if this is a PC FileStream (marker-based validation)
+  // PC FileStreams can be in heap (0x00020000+) or physical heap via MapVirtual
+  // (0xC0000000+)
+  if (streamPtr != 0 && streamPtr < 0x80000000) {
     uint32_t storageDevice = PPC_LOAD_U32(streamPtr + 0);
 
-    if (storageDevice == 0x82A7FE00) {
+    if (storageDevice == StorageConstants::PC_STORAGE_DEVICE_ADDR) {
       // PC FileStream - return file size from stream[16]
       uint32_t fileSize = PPC_LOAD_U32(streamPtr + 16);
 
@@ -14697,17 +14862,20 @@ PPC_FUNC(sub_821928D0) {
   }
 
   // Check if stream pointer is in valid guest memory range
-  // EXCEPTION: PC FileStreams allocated in heap (0x02000000-0x10000000 range)
+  // PC FileStreams can be in heap (0x00020000+) or physical heap via MapVirtual
+  // (0xC0000000+)
   bool isPcFileStream = false;
-  if (streamPtr >= 0x00020000 && streamPtr < 0x7FEA0000) {
+  if (streamPtr != 0 && streamPtr < 0x80000000) {
     // Check if this is a PC FileStream by checking storage device marker
     uint32_t storageDevice = PPC_LOAD_U32(streamPtr + 0);
-    if (storageDevice == 0x82A7FE00) {
+    if (storageDevice == StorageConstants::PC_STORAGE_DEVICE_ADDR) {
       isPcFileStream = true;
     }
   }
 
-  if (!isPcFileStream && (streamPtr < 0x80000000 || streamPtr >= 0x90000000)) {
+  // Accept physical heap addresses (0xA0000000+) in addition to code/data
+  // (0x80-0x90)
+  if (!isPcFileStream && (streamPtr < 0x80000000)) {
     if (s_invalidStreams < 10) {
       LOGF_WARNING("[sub_821928D0] Invalid stream pointer 0x{:08X} (call #{})",
                    streamPtr, s_callCount);
@@ -14720,8 +14888,8 @@ PPC_FUNC(sub_821928D0) {
   // Load and validate the object pointer at stream+0
   uint32_t objectPtr = PPC_LOAD_U32(streamPtr + 0);
 
-  // PC FileStreams have objectPtr = 0x82A7FE00 (our marker) - this is valid
-  if (objectPtr == 0x82A7FE00) {
+  // PC FileStreams have objectPtr = PC_STORAGE_DEVICE_ADDR - this is valid
+  if (objectPtr == StorageConstants::PC_STORAGE_DEVICE_ADDR) {
     // Valid PC FileStream - call original
     __imp__sub_821928D0(ctx, base);
     return;
@@ -14740,7 +14908,8 @@ PPC_FUNC(sub_821928D0) {
     return;
   }
 
-  if (objectPtr < 0x80000000 || objectPtr >= 0x90000000) {
+  // Accept physical heap addresses (0xA0000000+) for object pointers
+  if (objectPtr < 0x80000000) {
     if (s_invalidStreams < 10) {
       LOGF_WARNING("[sub_821928D0] Stream 0x{:08X} has invalid object pointer "
                    "0x{:08X} (call #{})",
@@ -14755,7 +14924,9 @@ PPC_FUNC(sub_821928D0) {
   if (objectPtr != 0) {
     uint32_t vtablePtr = PPC_LOAD_U32(objectPtr + 0);
 
-    if (vtablePtr != 0 && (vtablePtr < 0x80000000 || vtablePtr >= 0x90000000)) {
+    // Vtables should be in code section (0x80-0x84), but accept all guest
+    // memory
+    if (vtablePtr != 0 && (vtablePtr < 0x80000000)) {
       if (s_invalidStreams < 10) {
         LOGF_WARNING("[sub_821928D0] Stream 0x{:08X} -> object 0x{:08X} has "
                      "invalid vtable 0x{:08X} (call #{})",
@@ -14847,10 +15018,11 @@ PPC_FUNC(sub_82192A60) {
   }
 
   // Check for invalid address range
-  // NOTE: PC FileStreams are allocated in heap (0x02000000-0x10000000 range),
-  // not guest memory! Only reject addresses that are completely invalid
-  bool validPcFileStream = (streamPtr >= 0x00100000 && streamPtr < 0x7FEA0000);
-  bool validGuestStream = (streamPtr >= 0x80000000 && streamPtr < 0x90000000);
+  // PC FileStreams can be in heap (0x00100000+) or physical heap via MapVirtual
+  // (0xC0000000+) Accept all non-guest addresses below 0x80000000
+  bool validPcFileStream = (streamPtr >= 0x00100000 && streamPtr < 0x80000000);
+  // Accept all guest memory including physical heap (0xA0000000+)
+  bool validGuestStream = (streamPtr >= 0x80000000);
 
   if (!validPcFileStream && !validGuestStream) {
     s_invalidStreams++;
@@ -16694,12 +16866,50 @@ extern "C" void __imp__sub_821924D8(PPCContext &ctx, uint8_t *base);
 extern "C" void __imp__sub_8218C2C0(PPCContext &ctx, uint8_t *base);
 extern "C" void __imp__sub_8218C1F0(PPCContext &ctx, uint8_t *base);
 
-// STUBBED: sub_82121E80 - loading state machine (blocks on async ops)
+// UN-STUBBED: sub_82121E80 - loading state machine
+// =============================================================================
+// This is the critical loading state machine that:
+//   - Loops through states 0→1→2→3→4/5
+//   - Calls sub_827DAE18 (yield) which eventually calls KeDelayExecutionThread
+//   - Initializes animation data structures (keyframe counts, etc.)
+//   - Must run to completion for game to function properly
+//
+// Previously stubbed because it "blocks on async ops", but:
+//   - The yield mechanism (KeDelayExecutionThread) is properly implemented
+//   - Stubbing prevented animation data initialization → division by zero
+//   - This is GAME LOGIC, not Xbox hardware - must run per system rules
+// =============================================================================
 PPC_FUNC(sub_82121E80) {
   static int s_count = 0;
+  static int s_maxState = -1;
   ++s_count;
-  LOGF_WARNING("[82121E80] #{} STUBBED - loading state bypassed", s_count);
-  ctx.r3.u32 = 0;
+
+  // Read current loading state before call
+  uint32_t stateBefore = PPC_LOAD_U32(0x82B94554);
+
+  if (s_count <= 20 || s_count % 100 == 0) {
+    LOGF_WARNING("[82121E80] #{} ENTER - loading state machine, state={}",
+                 s_count, stateBefore);
+  }
+
+  // Actually run the loading state machine
+  __imp__sub_82121E80(ctx, base);
+
+  // Read state after call
+  uint32_t stateAfter = PPC_LOAD_U32(0x82B94554);
+  uint32_t result = ctx.r3.u32;
+
+  // Track state progression
+  if ((int)stateAfter > s_maxState) {
+    s_maxState = stateAfter;
+    LOGF_WARNING("[82121E80] STATE PROGRESS: {} -> {} (new max), r3={}",
+                 stateBefore, stateAfter, result);
+  }
+
+  if (s_count <= 20 || s_count % 100 == 0) {
+    LOGF_WARNING("[82121E80] #{} EXIT state={} r3={}", s_count, stateAfter,
+                 result);
+  }
 }
 
 PPC_FUNC(sub_821924D8) {
@@ -16710,13 +16920,55 @@ PPC_FUNC(sub_821924D8) {
   LOGF_WARNING("[821200D0-INT] sub_821924D8 EXIT #{}", s_count);
 }
 
-// STUBBED: sub_8218C2C0 - loading check (return 1=ready to break wait loop)
+// =============================================================================
+// sub_82299330 - Animation Interpolation (DIVISION-BY-ZERO GUARD)
+// =============================================================================
+// This function interpolates animation keyframes. The parameter in r6 is the
+// keyframe count. If r6 = 0, the function enters an infinite loop due to:
+//   v13 = v12 % a6;  // Division by zero when a6 = 0
+//
+// This guard is a DEFENSIVE measure. With sub_82121E80 un-stubbed, animation
+// data should be properly initialized and r6 should never be 0. But we keep
+// this guard as a safety net for edge cases.
+// =============================================================================
+extern "C" void __imp__sub_82299330(PPCContext &ctx, uint8_t *base);
+PPC_FUNC(sub_82299330) {
+  uint32_t keyframeCount = ctx.r6.u32;
+
+  // Guard against division by zero - prevents infinite loop
+  if (keyframeCount == 0) {
+    static int s_warned = 0;
+    if (s_warned++ < 20) {
+      LOGF_WARNING(
+          "[ANIM] sub_82299330 SKIP #{} - keyframe count r6=0 (uninitialized)",
+          s_warned);
+      LOGF_WARNING("[ANIM]   r3=0x{:08X} r4=0x{:08X} r5=0x{:08X}", ctx.r3.u32,
+                   ctx.r4.u32, ctx.r5.u32);
+    }
+    // Return without modifying result pointer - let caller handle uninitialized
+    // state
+    return;
+  }
+
+  // Normal path - keyframe count is valid
+  __imp__sub_82299330(ctx, base);
+}
+
+// sub_8218C2C0 - loading state check. Calls sub_82856FE0 to check if loading
+// complete. If loading not done, returns 0. If done, returns 1. DO NOT STUB -
+// let it run naturally to get proper loading behavior.
+extern "C" void __imp__sub_8218C2C0(PPCContext &ctx, uint8_t *base);
 PPC_FUNC(sub_8218C2C0) {
   static int s_count = 0;
   ++s_count;
-  if (s_count <= 3)
-    LOGF_WARNING("[8218C2C0] #{} STUBBED - returning ready", s_count);
-  ctx.r3.u32 = 1; // Return ready to break loading loop
+
+  // Call original to check actual loading state
+  __imp__sub_8218C2C0(ctx, base);
+
+  uint32_t result = ctx.r3.u32;
+  if (s_count <= 10 || s_count % 100 == 0)
+    printf("[8218C2C0] #%d loading check: result=%u (0=loading, 1=ready)\n",
+           s_count, result);
 }
 
 PPC_FUNC(sub_8218C1F0) {
@@ -16742,15 +16994,22 @@ PPC_FUNC(sub_821200A8) {
 }
 
 // =========================================================================
-// sub_821219B0 - trace to find blocking point
+// sub_821219B0 - MAIN GAME INIT - must run for game to work!
+// This function initializes all game subsystems (audio, rendering, gameplay).
+// DO NOT STUB - if it blocks, find and fix the blocking function.
 // =========================================================================
 extern "C" void __imp__sub_821219B0(PPCContext &ctx, uint8_t *base);
 PPC_FUNC(sub_821219B0) {
   static int s_count = 0;
   ++s_count;
-  printf("[821219B0] #%d STUBBED - bypassing blocking sync primitive\n",
-         s_count);
-  ctx.r3.u32 = 0; // Stub - bypass blocking
+  printf("[821219B0] #%d ENTER - MAIN GAME INIT (NOT stubbed!)\n", s_count);
+  fflush(stdout);
+
+  // Actually call the original - this is REQUIRED for game to function
+  __imp__sub_821219B0(ctx, base);
+
+  printf("[821219B0] #%d EXIT - MAIN GAME INIT complete\n", s_count);
+  fflush(stdout);
 }
 
 // =========================================================================

@@ -1825,6 +1825,139 @@ No native VSM/ESM - uses standard depth comparison with 2x2 PCF.
 
 ---
 
+## 13. Texture Level Descriptor System (sub_829E5C38)
+
+### 13.1 Overview
+
+The function `sub_829E5C38` is a **texture level descriptor query** function that returns information about a texture resource's dimensions, format, and layout. It's part of the RAGE D3D wrapper layer (Layer 3).
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Layer 4: RAGE Engine (Game Logic)                           │
+│   sub_8286BAE0 (Render Target Backup Creator) ◄── CALLER    │
+├─────────────────────────────────────────────────────────────┤
+│ Layer 3: RAGE D3D Wrapper (State Management)                │
+│   sub_829E5C38 (GetTextureLevelDesc) ◄── THIS FUNCTION      │
+│   sub_829D8D00 (GetTextureType)                             │
+│   sub_829D33F8, sub_829D33E8, sub_829D36E0 (Format helpers) │
+├─────────────────────────────────────────────────────────────┤
+│ Layer 2: PM4 Command Buffer (GPU Commands) - BYPASSED       │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 13.2 Function Signature
+
+```
+sub_829E5C38(texturePtr, mipLevel, outDescPtr)
+    │
+    ├── r3 = texturePtr   (guest pointer to texture resource)
+    ├── r4 = mipLevel     (mip level to query, 0 = base)
+    └── r5 = outDescPtr   (output structure pointer)
+```
+
+**Output Structure (GuestTextureLevelDesc):**
+
+| Offset | Size | Field | Description |
+|--------|------|-------|-------------|
+| +0 | 4 | type | Resource type (3=2D, 4=RT, 17=3D, 18=cube, 19=array) |
+| +4 | 4 | width | Width at specified mip level |
+| +8 | 4 | height | Height at specified mip level |
+| +12 | 4 | depth | Depth (1 for 2D textures) |
+| +16 | 4 | format | Xbox 360 D3DFMT_* code |
+| +56 | 4 | pitch | Row pitch in bytes |
+
+### 13.3 Internal Call Chain
+
+```
+sub_829E5C38
+    │
+    └── sub_829E5820 (internal implementation)
+        │
+        ├── sub_829D8D00 (GetTextureType)
+        │   └── Returns type: 3=2D, 4=RT, 16=linear, 17=3D, 18=cube, 19=array
+        │
+        ├── sub_829D33F8 (GetWidth/Height)
+        │   └── Reads from Xbox 360 GPU texture header
+        │
+        └── sub_829D36E0 (GetFormat)
+            └── Returns Xbox 360 D3DFMT_* code
+```
+
+### 13.4 Callers
+
+| Function | Purpose | How It Uses the Info |
+|----------|---------|---------------------|
+| `sub_8286BAE0` | Render Target Backup Creator | Creates matching RT copies for effects |
+| `sub_82862D40` | Texture Setup | Validates texture dimensions |
+| `sub_828631F8` | Resource Validation | Checks format compatibility |
+
+### 13.5 Host-Side Implementation
+
+**Problem:** The original function reads from Xbox 360-specific GPU memory structures that don't exist on PC.
+
+**Solution:** Return texture info from our host-side `GuestTexture`/`GuestSurface` structures that we populate when textures are created via `CreateTexture`/`CreateSurface`.
+
+```cpp
+// gfx_state.h
+struct TextureLevelInfo {
+    uint32_t type;    // Resource type
+    uint32_t width;   // Width at mip level
+    uint32_t height;  // Height at mip level
+    uint32_t depth;   // Depth at mip level
+    uint32_t format;  // Xbox 360 D3DFMT_* code
+    uint32_t pitch;   // Row pitch in bytes
+    bool valid;       // True if lookup succeeded
+};
+
+TextureLevelInfo GetTextureLevelInfo(uint32_t texturePtr, uint32_t mipLevel);
+```
+
+**Implementation in imports.cpp:**
+```cpp
+PPC_FUNC(sub_829E5C38) {
+    uint32_t texturePtr = ctx.r3.u32;
+    uint32_t mipLevel = ctx.r4.u32;
+    uint32_t outDescPtr = ctx.r5.u32;
+    
+    GTAIV::TextureLevelInfo info = GTAIV::GetTextureLevelInfo(texturePtr, mipLevel);
+    
+    if (info.valid) {
+        PPC_STORE_U32(outDescPtr + 0,  info.type);
+        PPC_STORE_U32(outDescPtr + 4,  info.width);
+        PPC_STORE_U32(outDescPtr + 8,  info.height);
+        PPC_STORE_U32(outDescPtr + 12, info.depth);
+        PPC_STORE_U32(outDescPtr + 16, info.format);
+        PPC_STORE_U32(outDescPtr + 56, info.pitch);
+    } else {
+        // Fall back to original for unknown textures
+        __imp__sub_829E5C38(ctx, base);
+    }
+}
+```
+
+### 13.6 Format Code Reference
+
+| Xbox Format Code | Meaning | Host Equivalent |
+|------------------|---------|-----------------|
+| `0x1A22AB60` | D3DFMT_A16B16G16R16F | RGBA16F (HDR) |
+| `0x1A200186` | D3DFMT_A8B8G8R8 | RGBA8_UNORM |
+| `0x18280186` | D3DFMT_A8R8G8B8 | BGRA8_UNORM |
+| `0x2D200196` | D3DFMT_D24S8 | D24_UNORM_S8_UINT |
+| `0x1A220197` | D3DFMT_D24FS8 | D32_FLOAT_S8X24 |
+| `0x2D22AB9F` | D3DFMT_G16R16F | RG16F |
+| `0x28000102` | D3DFMT_L8 | R8_UNORM |
+| `0x2DA2ABA4` | D3DFMT_R32F | R32_FLOAT |
+
+### 13.7 Hook Priority
+
+| Priority | Function | Action |
+|----------|----------|--------|
+| P3 | `sub_829E5C38` | Return from host-side texture info |
+| P3 | `sub_829D8D00` | Return texture type from host structure |
+| P4 | `sub_82850028` | Stub GPU resource create (return success) |
+
+---
+
 ## Files Referenced
 
 | File | Content |
@@ -1836,6 +1969,7 @@ No native VSM/ESM - uses standard depth comparison with 2x2 PCF.
 | `ppc_recomp.121.cpp` | Water system (sub_828Fxxxx) |
 | `ppc_recomp.134.cpp` | Render targets (sub_829CAxxxx) |
 | `ppc_recomp.135.cpp` | Draw functions, shaders, PM4 |
+| `ppc_recomp.136.cpp` | Texture level desc (sub_829E5C38) |
 | `ppc_recomp.81.cpp` | Present/VdSwap |
 | `ppc_recomp.66.cpp` | Main loop |
 

@@ -229,6 +229,102 @@ struct GuestSurfaceDesc
     be<uint32_t> height;
 };
 
+// =============================================================================
+// GuestTextureLevelDesc - Output structure from sub_829E5C38
+// This is the Xbox 360 D3D texture level descriptor that the game queries
+// when it needs texture dimensions/format info for render target creation.
+//
+// Based on IDA pseudocode analysis at lines 2677830-2677960:
+// - Caller sub_8286BAE0 uses this to create matching render target backups
+// - Returns type, dimensions, format, and pitch for a specific mip level
+// =============================================================================
+struct GuestTextureLevelDesc
+{
+    // Texture type (matches Xbox 360 D3D resource types):
+    //   3  = 2D Texture
+    //   4  = Render Target
+    //   16 = Linear Texture
+    //   17 = Volume/3D Texture
+    //   18 = Cube Map
+    //   19 = Array Texture
+    //   20 = Texture Array
+    uint32_t type;
+    uint32_t width;
+    uint32_t height;
+    uint32_t depth;
+    uint32_t format;      // Xbox 360 D3DFMT_* code (e.g., 0x1A22AB60)
+    uint32_t reserved[9]; // Padding to offset +56
+    uint32_t pitch;       // Row pitch in bytes at offset +56
+};
+
+// =============================================================================
+// GetFormatBytesPerPixel - Calculate bytes per pixel for Xbox 360 formats
+// Used by sub_829E5C38 replacement to compute pitch from width
+// =============================================================================
+inline uint32_t GetFormatBytesPerPixel(uint32_t guestFormat)
+{
+    switch (guestFormat)
+    {
+    // 128-bit formats (16 bytes per pixel)
+    case D3DFMT_A16B16G16R16F:
+    case D3DFMT_A16B16G16R16F_2:
+    case D3DFMT_A16B16G16R16F_EXPAND:
+        return 8; // 4 channels * 16-bit = 64-bit = 8 bytes
+    
+    // 64-bit formats (8 bytes per pixel)
+    case D3DFMT_G16R16F:
+    case D3DFMT_G16R16F_2:
+        return 4; // 2 channels * 16-bit = 32-bit = 4 bytes
+    
+    // 32-bit formats (4 bytes per pixel)
+    case D3DFMT_A8B8G8R8:
+    case D3DFMT_A8R8G8B8:
+    case D3DFMT_LIN_A8R8G8B8:
+    case D3DFMT_X8R8G8B8:
+    case D3DFMT_LE_X8R8G8B8:
+    case D3DFMT_D24FS8:
+    case D3DFMT_D24S8:
+    case D3DFMT_R32F:
+    case D3DFMT_INDEX32:
+        return 4;
+    
+    // 16-bit formats (2 bytes per pixel)
+    case D3DFMT_INDEX16:
+        return 2;
+    
+    // 8-bit formats (1 byte per pixel)
+    case D3DFMT_A8:
+    case D3DFMT_L8:
+    case D3DFMT_L8_2:
+        return 1;
+    
+    // Compressed formats - return block size / pixels per block
+    case D3DFMT_DXT1:
+        return 8;  // 8 bytes per 4x4 block = 0.5 bytes/pixel (handle specially)
+    case D3DFMT_DXT4:
+        return 16; // 16 bytes per 4x4 block = 1 byte/pixel (handle specially)
+    
+    default:
+        return 4;  // Default to 32-bit
+    }
+}
+
+// =============================================================================
+// GetTextureTypeFromResource - Map GuestResource type to Xbox 360 D3D type
+// =============================================================================
+inline uint32_t GetTextureTypeFromResource(ResourceType type)
+{
+    switch (type)
+    {
+    case ResourceType::Texture:        return 3;  // D3DRTYPE_TEXTURE
+    case ResourceType::RenderTarget:   return 4;  // D3DRTYPE_SURFACE (RT)
+    case ResourceType::VolumeTexture:  return 17; // D3DRTYPE_VOLUMETEXTURE
+    case ResourceType::ArrayTexture:   return 19; // D3DRTYPE_ARRAYTEXTURE
+    case ResourceType::DepthStencil:   return 4;  // D3DRTYPE_SURFACE (DS)
+    default:                           return 3;
+    }
+}
+
 struct GuestSurfaceCreateParams
 {
     be<uint32_t> base;

@@ -134,23 +134,44 @@ namespace VFS
         for (const auto& mapping : g_pathMappings)
         {
             std::string mappingNorm = NormalizePath(mapping.guestPrefix);
-            if (stripped.find(mappingNorm) == 0 || normalized.find(mappingNorm) != std::string::npos)
+            
+            // Check if mapping matches via stripped path (prefix already removed) or normalized path (full path)
+            bool matchedViaStripped = (stripped.find(mappingNorm) == 0);
+            bool matchedViaNormalized = (normalized.find(mappingNorm) != std::string::npos);
+            
+            if (matchedViaStripped || matchedViaNormalized)
             {
                 if (isDebugPath) {
-                    printf("[VFS] DEBUG sounds.dat: MATCHED mapping '%s' -> '%s'\n", 
-                           mapping.guestPrefix.c_str(), mapping.hostPrefix.c_str());
+                    printf("[VFS] DEBUG sounds.dat: MATCHED mapping '%s' -> '%s' (via %s)\n", 
+                           mapping.guestPrefix.c_str(), mapping.hostPrefix.c_str(),
+                           matchedViaStripped ? "stripped" : "normalized");
                     fflush(stdout);
                 }
                 
                 // Found a mapping - replace prefix
+                // BUG FIX: Handle the two match cases differently
                 std::string remainder;
-                if (stripped.length() > mappingNorm.length())
+                if (matchedViaStripped)
                 {
-                    remainder = stripped.substr(mappingNorm.length());
-                    if (!remainder.empty() && remainder.front() == '/')
+                    // Match was in stripped path - use stripped for remainder calculation
+                    if (stripped.length() > mappingNorm.length())
                     {
-                        remainder.erase(0, 1);
+                        remainder = stripped.substr(mappingNorm.length());
                     }
+                }
+                else
+                {
+                    // Match was in normalized path (e.g., "platform:/stream.ini" matched "platform:")
+                    // The stripped path already has the drive prefix removed, so use stripped directly as remainder
+                    // For "platform:/stream.ini": normalized="platform:/stream.ini", stripped="stream.ini"
+                    // We want remainder="stream.ini" (the full stripped path)
+                    remainder = stripped;
+                }
+                
+                // Clean up leading slash if present
+                if (!remainder.empty() && remainder.front() == '/')
+                {
+                    remainder.erase(0, 1);
                 }
                 
                 std::filesystem::path resolved = g_extractedRoot / mapping.hostPrefix;
