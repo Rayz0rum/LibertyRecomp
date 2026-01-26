@@ -29,6 +29,8 @@
 #include <os/logger.h>
 
 #include "game_init.h"
+#include "lod_hooks.h"
+#include <patches/postfx_hooks.h>
 
 // =============================================================================
 // External PPC Function Declarations
@@ -253,6 +255,19 @@ uint32_t Initialize(PPCContext& ctx, uint8_t* base)
     // Phase 5: Subsystem Init
     // -------------------------------------------------------------------------
     InitSubsystems(ctx, base);
+    
+    // -------------------------------------------------------------------------
+    // Phase 6: LOD/Render Distance Hooks
+    // -------------------------------------------------------------------------
+    LOG_WARNING("[GameInit] Phase 6: Initializing LOD hooks...");
+    LODHooks::Initialize(base);
+    LODHooks::ApplyConfigPatches(base);
+    
+    // -------------------------------------------------------------------------
+    // Phase 7: PostFX Hooks (for custom bloom, sun shafts, etc.)
+    // -------------------------------------------------------------------------
+    LOG_WARNING("[GameInit] Phase 7: Initializing PostFX hooks...");
+    PostFXHooks::Init(base);
     
     LOG_WARNING("[GameInit] ============================================");
     LOG_WARNING("[GameInit] Game Initialization Complete - SUCCESS");

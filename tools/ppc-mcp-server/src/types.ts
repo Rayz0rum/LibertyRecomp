@@ -232,3 +232,33 @@ export interface VTableUsage {
   }[];
   callSites: number;           // Total call sites using this vtable
 }
+
+// Execution trace types
+export interface UpwardPath {
+  path: string[];              // [entry, ..., function] - from entry to target
+  depth: number;
+  is_entry_point: boolean;
+  entry_type: 'known_entry' | 'root_caller';
+}
+
+export interface DownwardNode {
+  function: string;
+  address: string;
+  depth: number;
+  callees: string[];
+  kernel_apis: string[];
+  is_leaf: boolean;
+  is_hooked: boolean;
+  hook_type?: string;
+}
+
+export interface ExecutionTrace {
+  function: string;
+  address?: string;
+  error?: string;
+  upward_trace: UpwardPath[];
+  downward_trace: DownwardNode[];
+  entry_points?: string[];     // Functions at top of call chain
+  leaf_functions?: string[];   // Functions that don't call anything
+  kernel_apis_reached?: string[]; // All kernel APIs reachable downward
+}

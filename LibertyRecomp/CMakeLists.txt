@@ -82,9 +82,13 @@ set(LIBERTY_RECOMP_KERNEL_CXX_SOURCES
     "kernel/memory.cpp"
     "kernel/xenon_memory.cpp"
     "kernel/xam.cpp"
+    "kernel/user_profile.cpp"
     "kernel/save_system.cpp"
     "kernel/save_hooks.cpp"
+    "kernel/lod_hooks.cpp"
+    "kernel/menu_hooks.cpp"
     "kernel/vfs.cpp"
+    "kernel/button_prompts.cpp"
     "kernel/mod_overlay.cpp"
     "kernel/mapped_file.cpp"
     "kernel/io/file_system.cpp"
@@ -192,6 +196,7 @@ set(LIBERTY_RECOMP_PATCHES_CXX_SOURCES
     "patches/audio_patches.cpp"       # GTA IV audio system (updated for RAGE)
     "patches/memcpy_patches.cpp"  # Native memcpy implementation to fix broken recompiled control flow
     "patches/player_limit_patches.cpp"  # Extended multiplayer - raise player limit from 16 to 32+
+    "patches/postfx_hooks.cpp"        # PostFX hooks for custom effects (bloom, sun shafts)
     
     # Generic/stub patches needed for compilation
     # "patches/aspect_ratio_patches.cpp"  # Has Sonicteam references - replaced by gta4_aspect_ratio_patches.cpp
@@ -681,6 +686,18 @@ BIN2C(TARGET_OBJ LibertyRecomp SOURCE_FILE "${RESOURCES_SOURCE_PATH}/images/inst
 
 ## Game Icon ##
 BIN2C(TARGET_OBJ LibertyRecomp SOURCE_FILE "${RESOURCES_SOURCE_PATH}/images/game_icon.bmp" DEST_FILE "${RESOURCES_OUTPUT_PATH}/images/game_icon.bmp" ARRAY_NAME "g_game_icon")
+
+## Button Prompts (Controller-specific XTD files) ##
+set(BUTTON_PROMPTS_SOURCE "${PROJECT_SOURCE_DIR}/../LibertyRecompLib/private/button_prompts")
+BIN2C(TARGET_OBJ LibertyRecomp SOURCE_FILE "${BUTTON_PROMPTS_SOURCE}/xbox360/buttons_360.xtd" DEST_FILE "${RESOURCES_OUTPUT_PATH}/button_prompts/xbox360.xtd" ARRAY_NAME "g_button_prompts_xbox360" COMPRESSION_TYPE "zstd")
+BIN2C(TARGET_OBJ LibertyRecomp SOURCE_FILE "${BUTTON_PROMPTS_SOURCE}/xbox_one/buttons_360.xtd" DEST_FILE "${RESOURCES_OUTPUT_PATH}/button_prompts/xbox_one.xtd" ARRAY_NAME "g_button_prompts_xbox_one" COMPRESSION_TYPE "zstd")
+BIN2C(TARGET_OBJ LibertyRecomp SOURCE_FILE "${BUTTON_PROMPTS_SOURCE}/xbox_series_x/buttons_360.xtd" DEST_FILE "${RESOURCES_OUTPUT_PATH}/button_prompts/xbox_series_x.xtd" ARRAY_NAME "g_button_prompts_xbox_series_x" COMPRESSION_TYPE "zstd")
+BIN2C(TARGET_OBJ LibertyRecomp SOURCE_FILE "${BUTTON_PROMPTS_SOURCE}/ps3/buttons_360.xtd" DEST_FILE "${RESOURCES_OUTPUT_PATH}/button_prompts/ps3.xtd" ARRAY_NAME "g_button_prompts_ps3" COMPRESSION_TYPE "zstd")
+BIN2C(TARGET_OBJ LibertyRecomp SOURCE_FILE "${BUTTON_PROMPTS_SOURCE}/ps4/buttons_360.xtd" DEST_FILE "${RESOURCES_OUTPUT_PATH}/button_prompts/ps4.xtd" ARRAY_NAME "g_button_prompts_ps4" COMPRESSION_TYPE "zstd")
+BIN2C(TARGET_OBJ LibertyRecomp SOURCE_FILE "${BUTTON_PROMPTS_SOURCE}/ps5/buttons_360.xtd" DEST_FILE "${RESOURCES_OUTPUT_PATH}/button_prompts/ps5.xtd" ARRAY_NAME "g_button_prompts_ps5" COMPRESSION_TYPE "zstd")
+BIN2C(TARGET_OBJ LibertyRecomp SOURCE_FILE "${BUTTON_PROMPTS_SOURCE}/switch/buttons_360.xtd" DEST_FILE "${RESOURCES_OUTPUT_PATH}/button_prompts/switch.xtd" ARRAY_NAME "g_button_prompts_switch" COMPRESSION_TYPE "zstd")
+BIN2C(TARGET_OBJ LibertyRecomp SOURCE_FILE "${BUTTON_PROMPTS_SOURCE}/steam_controller/buttons_360.xtd" DEST_FILE "${RESOURCES_OUTPUT_PATH}/button_prompts/steam_controller.xtd" ARRAY_NAME "g_button_prompts_steam_controller" COMPRESSION_TYPE "zstd")
+BIN2C(TARGET_OBJ LibertyRecomp SOURCE_FILE "${BUTTON_PROMPTS_SOURCE}/steam_deck/buttons_360.xtd" DEST_FILE "${RESOURCES_OUTPUT_PATH}/button_prompts/steam_deck.xtd" ARRAY_NAME "g_button_prompts_steam_deck" COMPRESSION_TYPE "zstd")
 
 ## Audio ##
 BIN2C(TARGET_OBJ LibertyRecomp SOURCE_FILE "${RESOURCES_SOURCE_PATH}/music/installer.ogg" DEST_FILE "${RESOURCES_OUTPUT_PATH}/music/installer.ogg" ARRAY_NAME "g_installer_music")

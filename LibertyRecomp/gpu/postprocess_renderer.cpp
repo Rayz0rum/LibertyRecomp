@@ -56,9 +56,26 @@
 #include "shader/hlsl/ssao_gtao_ps.hlsl.spirv.h"
 #include "shader/hlsl/ssao_blur_ps.hlsl.spirv.h"
 #include "shader/hlsl/ssao_composite_ps.hlsl.spirv.h"
-#include "shader/hlsl/dof_ps.hlsl.spirv.h"
+// DoF multi-pass shaders (FusionFix-style)
+#include "shader/hlsl/dof_prefilter_ps.hlsl.spirv.h"
+#include "shader/hlsl/dof_bokeh_ps.hlsl.spirv.h"
+#include "shader/hlsl/dof_postfilter_ps.hlsl.spirv.h"
+#include "shader/hlsl/dof_combine_ps.hlsl.spirv.h"
 #include "shader/hlsl/ssr_raytrace_ps.hlsl.spirv.h"
 #include "shader/hlsl/ssr_composite_ps.hlsl.spirv.h"
+// Film Grain, Chromatic Aberration, Motion Blur shaders
+#include "shader/hlsl/film_grain_ps.hlsl.spirv.h"
+#include "shader/hlsl/chromatic_aberration_ps.hlsl.spirv.h"
+#include "shader/hlsl/motion_blur_camera_ps.hlsl.spirv.h"
+// Bloom shaders
+#include "shader/hlsl/bloom_extract_ps.hlsl.spirv.h"
+#include "shader/hlsl/bloom_downsample_ps.hlsl.spirv.h"
+#include "shader/hlsl/bloom_upsample_ps.hlsl.spirv.h"
+#include "shader/hlsl/bloom_composite_ps.hlsl.spirv.h"
+// Sun shafts shaders
+#include "shader/hlsl/sunshafts_prepass_ps.hlsl.spirv.h"
+#include "shader/hlsl/sunshafts_radial_ps.hlsl.spirv.h"
+#include "shader/hlsl/sunshafts_composite_ps.hlsl.spirv.h"
 
 // Backend detection (from video.cpp via GetCurrentBackend())
 
@@ -128,6 +145,9 @@ bool PostProcessRenderer::Initialize(RenderDevice* device, RenderPipelineLayout*
     m_ssaoConstantBuffer = m_device->createBuffer(RenderBufferDesc::UploadBuffer(sizeof(SSAOConstants)));
     m_ssaoBlurConstantBuffer = m_device->createBuffer(RenderBufferDesc::UploadBuffer(sizeof(SSAOBlurConstants)));
     m_dofConstantBuffer = m_device->createBuffer(RenderBufferDesc::UploadBuffer(sizeof(DOFConstants)));
+    m_filmGrainConstantBuffer = m_device->createBuffer(RenderBufferDesc::UploadBuffer(sizeof(FilmGrainConstants)));
+    m_chromaticAberrationConstantBuffer = m_device->createBuffer(RenderBufferDesc::UploadBuffer(sizeof(ChromaticAberrationConstants)));
+    m_motionBlurConstantBuffer = m_device->createBuffer(RenderBufferDesc::UploadBuffer(sizeof(MotionBlurConstants)));
     
     if (!m_taaConstantBuffer || !m_smaaConstantBuffer || !m_fsr1ConstantBuffer) {
         LOG_ERROR("[PostProcessRenderer] Failed to create constant buffers");
@@ -193,11 +213,30 @@ void PostProcessRenderer::Shutdown() {
     m_ssaoBlurFramebuffer.reset();
     m_blueNoiseTex.reset();
     
-    // DoF resources
-    m_dofPS.reset();
-    m_dofPipeline.reset();
-    m_dofBuffer.reset();
-    m_dofFramebuffer.reset();
+    // DoF resources (multi-pass)
+    m_dofPrefilterPS.reset();
+    m_dofBokehPS.reset();
+    m_dofPostfilterPS.reset();
+    m_dofCombinePS.reset();
+    m_dofPrefilterPipeline.reset();
+    m_dofBokehPipeline.reset();
+    m_dofPostfilterPipeline.reset();
+    m_dofCombinePipeline.reset();
+    m_dofHalfBuffer0.reset();
+    m_dofHalfBuffer1.reset();
+    m_dofHalfFramebuffer0.reset();
+    m_dofHalfFramebuffer1.reset();
+    
+    // Film Grain, Chromatic Aberration, Motion Blur resources
+    m_filmGrainPS.reset();
+    m_chromaticAberrationPS.reset();
+    m_motionBlurCameraPS.reset();
+    m_filmGrainPipeline.reset();
+    m_chromaticAberrationPipeline.reset();
+    m_motionBlurCameraPipeline.reset();
+    m_filmGrainConstantBuffer.reset();
+    m_chromaticAberrationConstantBuffer.reset();
+    m_motionBlurConstantBuffer.reset();
     
     m_initialized = false;
     LOG_INFO("[PostProcessRenderer] Shutdown complete");
@@ -274,9 +313,28 @@ bool PostProcessRenderer::CreateShaders() {
         m_ssaoPS = m_device->createShader(g_ssao_gtao_ps_spirv, sizeof(g_ssao_gtao_ps_spirv), "shaderMain", shaderFormat);
         m_ssaoBlurPS = m_device->createShader(g_ssao_blur_ps_spirv, sizeof(g_ssao_blur_ps_spirv), "shaderMain", shaderFormat);
         m_ssaoCompositePS = m_device->createShader(g_ssao_composite_ps_spirv, sizeof(g_ssao_composite_ps_spirv), "shaderMain", shaderFormat);
-        m_dofPS = m_device->createShader(g_dof_ps_spirv, sizeof(g_dof_ps_spirv), "shaderMain", shaderFormat);
+        // DoF multi-pass shaders (FusionFix-style)
+        m_dofPrefilterPS = m_device->createShader(g_dof_prefilter_ps_spirv, sizeof(g_dof_prefilter_ps_spirv), "shaderMain", shaderFormat);
+        m_dofBokehPS = m_device->createShader(g_dof_bokeh_ps_spirv, sizeof(g_dof_bokeh_ps_spirv), "shaderMain", shaderFormat);
+        m_dofPostfilterPS = m_device->createShader(g_dof_postfilter_ps_spirv, sizeof(g_dof_postfilter_ps_spirv), "shaderMain", shaderFormat);
+        m_dofCombinePS = m_device->createShader(g_dof_combine_ps_spirv, sizeof(g_dof_combine_ps_spirv), "shaderMain", shaderFormat);
         m_ssrRaytracePS = m_device->createShader(g_ssr_raytrace_ps_spirv, sizeof(g_ssr_raytrace_ps_spirv), "main", shaderFormat);
         m_ssrCompositePS = m_device->createShader(g_ssr_composite_ps_spirv, sizeof(g_ssr_composite_ps_spirv), "main", shaderFormat);
+        // Film Grain, Chromatic Aberration, Motion Blur shaders
+        m_filmGrainPS = m_device->createShader(g_film_grain_ps_spirv, sizeof(g_film_grain_ps_spirv), "shaderMain", shaderFormat);
+        m_chromaticAberrationPS = m_device->createShader(g_chromatic_aberration_ps_spirv, sizeof(g_chromatic_aberration_ps_spirv), "shaderMain", shaderFormat);
+        m_motionBlurCameraPS = m_device->createShader(g_motion_blur_camera_ps_spirv, sizeof(g_motion_blur_camera_ps_spirv), "shaderMain", shaderFormat);
+        
+        // Bloom shaders (MiniEngine-style pyramid)
+        m_bloomExtractPS = m_device->createShader(g_bloom_extract_ps_spirv, sizeof(g_bloom_extract_ps_spirv), "shaderMain", shaderFormat);
+        m_bloomDownsamplePS = m_device->createShader(g_bloom_downsample_ps_spirv, sizeof(g_bloom_downsample_ps_spirv), "shaderMain", shaderFormat);
+        m_bloomUpsamplePS = m_device->createShader(g_bloom_upsample_ps_spirv, sizeof(g_bloom_upsample_ps_spirv), "shaderMain", shaderFormat);
+        m_bloomCompositePS = m_device->createShader(g_bloom_composite_ps_spirv, sizeof(g_bloom_composite_ps_spirv), "shaderMain", shaderFormat);
+        
+        // Sun shafts shaders (FusionFix-style GPU Gems 3)
+        m_sunShaftsPrepassPS = m_device->createShader(g_sunshafts_prepass_ps_spirv, sizeof(g_sunshafts_prepass_ps_spirv), "shaderMain", shaderFormat);
+        m_sunShaftsRadialPS = m_device->createShader(g_sunshafts_radial_ps_spirv, sizeof(g_sunshafts_radial_ps_spirv), "shaderMain", shaderFormat);
+        m_sunShaftsCompositePS = m_device->createShader(g_sunshafts_composite_ps_spirv, sizeof(g_sunshafts_composite_ps_spirv), "shaderMain", shaderFormat);
     }
     
     // Verify all shaders loaded successfully
@@ -372,12 +430,112 @@ bool PostProcessRenderer::CreatePipelines() {
         LOG_INFO("[PostProcessRenderer] SSAO composite pipeline created");
     }
     
-    // DoF Pipeline
-    if (m_dofPS) {
-        desc.pixelShader = m_dofPS.get();
+    // DoF Multi-Pass Pipelines (FusionFix-style)
+    // Pass 1: Prefilter (downsample to half-res with weighted CoC)
+    if (m_dofPrefilterPS) {
+        desc.pixelShader = m_dofPrefilterPS.get();
+        desc.renderTargetFormat[0] = RenderFormat::R16G16B16A16_FLOAT;  // RGB + CoC in alpha
+        m_dofPrefilterPipeline = m_device->createGraphicsPipeline(desc);
+        LOG_INFO("[PostProcessRenderer] DoF prefilter pipeline created");
+    }
+    
+    // Pass 2: Bokeh (disk blur with FG/BG separation)
+    if (m_dofBokehPS) {
+        desc.pixelShader = m_dofBokehPS.get();
+        desc.renderTargetFormat[0] = RenderFormat::R16G16B16A16_FLOAT;  // RGB + FG alpha
+        m_dofBokehPipeline = m_device->createGraphicsPipeline(desc);
+        LOG_INFO("[PostProcessRenderer] DoF bokeh pipeline created");
+    }
+    
+    // Pass 3: Postfilter (tent filter smoothing)
+    if (m_dofPostfilterPS) {
+        desc.pixelShader = m_dofPostfilterPS.get();
         desc.renderTargetFormat[0] = RenderFormat::R16G16B16A16_FLOAT;
-        m_dofPipeline = m_device->createGraphicsPipeline(desc);
-        LOG_INFO("[PostProcessRenderer] DoF pipeline created");
+        m_dofPostfilterPipeline = m_device->createGraphicsPipeline(desc);
+        LOG_INFO("[PostProcessRenderer] DoF postfilter pipeline created");
+    }
+    
+    // Pass 4: Combine (composite bokeh with sharp source)
+    if (m_dofCombinePS) {
+        desc.pixelShader = m_dofCombinePS.get();
+        desc.renderTargetFormat[0] = RenderFormat::R16G16B16A16_FLOAT;
+        m_dofCombinePipeline = m_device->createGraphicsPipeline(desc);
+        LOG_INFO("[PostProcessRenderer] DoF combine pipeline created");
+    }
+    
+    // Film Grain Pipeline
+    if (m_filmGrainPS) {
+        desc.pixelShader = m_filmGrainPS.get();
+        desc.renderTargetFormat[0] = RenderFormat::R16G16B16A16_FLOAT;
+        m_filmGrainPipeline = m_device->createGraphicsPipeline(desc);
+        LOG_INFO("[PostProcessRenderer] Film grain pipeline created");
+    }
+    
+    // Chromatic Aberration Pipeline
+    if (m_chromaticAberrationPS) {
+        desc.pixelShader = m_chromaticAberrationPS.get();
+        desc.renderTargetFormat[0] = RenderFormat::R16G16B16A16_FLOAT;
+        m_chromaticAberrationPipeline = m_device->createGraphicsPipeline(desc);
+        LOG_INFO("[PostProcessRenderer] Chromatic aberration pipeline created");
+    }
+    
+    // Motion Blur Camera Pipeline
+    if (m_motionBlurCameraPS) {
+        desc.pixelShader = m_motionBlurCameraPS.get();
+        desc.renderTargetFormat[0] = RenderFormat::R16G16B16A16_FLOAT;
+        m_motionBlurCameraPipeline = m_device->createGraphicsPipeline(desc);
+        LOG_INFO("[PostProcessRenderer] Motion blur camera pipeline created");
+    }
+    
+    // Bloom Pipelines (MiniEngine-style pyramid)
+    if (m_bloomExtractPS) {
+        desc.pixelShader = m_bloomExtractPS.get();
+        desc.renderTargetFormat[0] = RenderFormat::R16G16B16A16_FLOAT;
+        m_bloomExtractPipeline = m_device->createGraphicsPipeline(desc);
+        LOG_INFO("[PostProcessRenderer] Bloom extract pipeline created");
+    }
+    
+    if (m_bloomDownsamplePS) {
+        desc.pixelShader = m_bloomDownsamplePS.get();
+        desc.renderTargetFormat[0] = RenderFormat::R16G16B16A16_FLOAT;
+        m_bloomDownsamplePipeline = m_device->createGraphicsPipeline(desc);
+        LOG_INFO("[PostProcessRenderer] Bloom downsample pipeline created");
+    }
+    
+    if (m_bloomUpsamplePS) {
+        desc.pixelShader = m_bloomUpsamplePS.get();
+        desc.renderTargetFormat[0] = RenderFormat::R16G16B16A16_FLOAT;
+        m_bloomUpsamplePipeline = m_device->createGraphicsPipeline(desc);
+        LOG_INFO("[PostProcessRenderer] Bloom upsample pipeline created");
+    }
+    
+    if (m_bloomCompositePS) {
+        desc.pixelShader = m_bloomCompositePS.get();
+        desc.renderTargetFormat[0] = RenderFormat::R16G16B16A16_FLOAT;
+        m_bloomCompositePipeline = m_device->createGraphicsPipeline(desc);
+        LOG_INFO("[PostProcessRenderer] Bloom composite pipeline created");
+    }
+    
+    // Sun Shafts Pipelines (FusionFix-style GPU Gems 3)
+    if (m_sunShaftsPrepassPS) {
+        desc.pixelShader = m_sunShaftsPrepassPS.get();
+        desc.renderTargetFormat[0] = RenderFormat::R16G16B16A16_FLOAT;
+        m_sunShaftsPrepassPipeline = m_device->createGraphicsPipeline(desc);
+        LOG_INFO("[PostProcessRenderer] Sun shafts prepass pipeline created");
+    }
+    
+    if (m_sunShaftsRadialPS) {
+        desc.pixelShader = m_sunShaftsRadialPS.get();
+        desc.renderTargetFormat[0] = RenderFormat::R16G16B16A16_FLOAT;
+        m_sunShaftsRadialPipeline = m_device->createGraphicsPipeline(desc);
+        LOG_INFO("[PostProcessRenderer] Sun shafts radial pipeline created");
+    }
+    
+    if (m_sunShaftsCompositePS) {
+        desc.pixelShader = m_sunShaftsCompositePS.get();
+        desc.renderTargetFormat[0] = RenderFormat::R16G16B16A16_FLOAT;
+        m_sunShaftsCompositePipeline = m_device->createGraphicsPipeline(desc);
+        LOG_INFO("[PostProcessRenderer] Sun shafts composite pipeline created");
     }
     
     LOG_INFO("[PostProcessRenderer] Pipelines created");
@@ -450,21 +608,94 @@ bool PostProcessRenderer::CreateRenderTargets(uint32_t width, uint32_t height) {
         LOG_INFO("[PostProcessRenderer] SSAO buffers created");
     }
     
-    // DoF Buffer (full color output)
-    RenderTextureDesc dofDesc = RenderTextureDesc::Texture2D(
+    // DoF Half-Resolution Buffers (FusionFix-style multi-pass)
+    uint32_t halfWidth = width / 2;
+    uint32_t halfHeight = height / 2;
+    
+    RenderTextureDesc dofHalfDesc = RenderTextureDesc::Texture2D(
+        halfWidth, halfHeight, 1, RenderFormat::R16G16B16A16_FLOAT,  // RGB + CoC/alpha
+        RenderTextureFlag::RENDER_TARGET | RenderTextureFlag::STORAGE
+    );
+    
+    m_dofHalfBuffer0 = m_device->createTexture(dofHalfDesc);  // Prefilter output
+    m_dofHalfBuffer1 = m_device->createTexture(dofHalfDesc);  // Bokeh output
+    
+    if (m_dofHalfBuffer0 && m_dofHalfBuffer1) {
+        RenderFramebufferDesc dofFbDesc;
+        
+        const RenderTexture* dofAttachments0[] = { m_dofHalfBuffer0.get() };
+        dofFbDesc.colorAttachments = dofAttachments0;
+        dofFbDesc.colorAttachmentsCount = 1;
+        m_dofHalfFramebuffer0 = m_device->createFramebuffer(dofFbDesc);
+        
+        const RenderTexture* dofAttachments1[] = { m_dofHalfBuffer1.get() };
+        dofFbDesc.colorAttachments = dofAttachments1;
+        m_dofHalfFramebuffer1 = m_device->createFramebuffer(dofFbDesc);
+        
+        LOGF_INFO("[PostProcessRenderer] DoF half-res buffers created ({}x{})", halfWidth, halfHeight);
+    }
+    
+    // Bloom Mip Chain (6 levels: 1/2, 1/4, 1/8, 1/16, 1/32, 1/64)
+    uint32_t mipWidth = width / 2;
+    uint32_t mipHeight = height / 2;
+    
+    for (uint32_t i = 0; i < BLOOM_MIP_COUNT; i++) {
+        RenderTextureDesc bloomMipDesc = RenderTextureDesc::Texture2D(
+            mipWidth, mipHeight, 1, RenderFormat::R16G16B16A16_FLOAT,
+            RenderTextureFlag::RENDER_TARGET | RenderTextureFlag::STORAGE
+        );
+        m_bloomMipChain[i] = m_device->createTexture(bloomMipDesc);
+        
+        if (m_bloomMipChain[i]) {
+            RenderFramebufferDesc bloomFbDesc;
+            const RenderTexture* bloomAttachment[] = { m_bloomMipChain[i].get() };
+            bloomFbDesc.colorAttachments = bloomAttachment;
+            bloomFbDesc.colorAttachmentsCount = 1;
+            m_bloomMipFramebuffers[i] = m_device->createFramebuffer(bloomFbDesc);
+        }
+        
+        mipWidth = std::max(1u, mipWidth / 2);
+        mipHeight = std::max(1u, mipHeight / 2);
+    }
+    
+    // Bloom result buffer (full resolution for composite)
+    RenderTextureDesc bloomResultDesc = RenderTextureDesc::Texture2D(
         width, height, 1, RenderFormat::R16G16B16A16_FLOAT,
         RenderTextureFlag::RENDER_TARGET | RenderTextureFlag::STORAGE
     );
-    m_dofBuffer = m_device->createTexture(dofDesc);
+    m_bloomResult = m_device->createTexture(bloomResultDesc);
     
-    if (m_dofBuffer) {
-        RenderFramebufferDesc dofFbDesc;
-        const RenderTexture* dofAttachments[] = { m_dofBuffer.get() };
-        dofFbDesc.colorAttachments = dofAttachments;
-        dofFbDesc.colorAttachmentsCount = 1;
-        m_dofFramebuffer = m_device->createFramebuffer(dofFbDesc);
+    if (m_bloomResult) {
+        RenderFramebufferDesc bloomResultFbDesc;
+        const RenderTexture* bloomResultAttachment[] = { m_bloomResult.get() };
+        bloomResultFbDesc.colorAttachments = bloomResultAttachment;
+        bloomResultFbDesc.colorAttachmentsCount = 1;
+        m_bloomResultFramebuffer = m_device->createFramebuffer(bloomResultFbDesc);
+        LOG_INFO("[PostProcessRenderer] Bloom mip chain and result buffers created");
+    }
+    
+    // Sun Shafts Half-Resolution Buffers
+    RenderTextureDesc sunShaftsDesc = RenderTextureDesc::Texture2D(
+        halfWidth, halfHeight, 1, RenderFormat::R16G16B16A16_FLOAT,
+        RenderTextureFlag::RENDER_TARGET | RenderTextureFlag::STORAGE
+    );
+    
+    m_sunShaftsPrepassBuffer = m_device->createTexture(sunShaftsDesc);
+    m_sunShaftsRadialBuffer = m_device->createTexture(sunShaftsDesc);
+    
+    if (m_sunShaftsPrepassBuffer && m_sunShaftsRadialBuffer) {
+        RenderFramebufferDesc sunShaftsFbDesc;
         
-        LOG_INFO("[PostProcessRenderer] DoF buffer created");
+        const RenderTexture* prepassAttachment[] = { m_sunShaftsPrepassBuffer.get() };
+        sunShaftsFbDesc.colorAttachments = prepassAttachment;
+        sunShaftsFbDesc.colorAttachmentsCount = 1;
+        m_sunShaftsPrepassFramebuffer = m_device->createFramebuffer(sunShaftsFbDesc);
+        
+        const RenderTexture* radialAttachment[] = { m_sunShaftsRadialBuffer.get() };
+        sunShaftsFbDesc.colorAttachments = radialAttachment;
+        m_sunShaftsRadialFramebuffer = m_device->createFramebuffer(sunShaftsFbDesc);
+        
+        LOGF_INFO("[PostProcessRenderer] Sun shafts buffers created ({}x{})", halfWidth, halfHeight);
     }
     
     LOGF_INFO("[PostProcessRenderer] Render targets created ({}x{})", width, height);
@@ -1059,37 +1290,60 @@ bool PostProcessRenderer::ApplyDoF(RenderCommandList* commandList,
         return false;
     }
     
-    // DoF pipeline not yet available - this is a stub for now
-    if (!m_dofPipeline) {
-        LOG_WARNING("[PostProcessRenderer] DoF pipeline not available - shader may not be compiled");
+    // DoF multi-pass pipelines required
+    if (!m_dofPrefilterPipeline || !m_dofBokehPipeline || 
+        !m_dofPostfilterPipeline || !m_dofCombinePipeline) {
+        LOG_WARNING("[PostProcessRenderer] DoF pipelines not available - shaders may not be compiled");
         return false;
     }
     
-    // Determine kernel size based on quality
-    int kernelSize = 5;
+    // Check half-res buffers exist
+    if (!m_dofHalfBuffer0 || !m_dofHalfBuffer1 || 
+        !m_dofHalfFramebuffer0 || !m_dofHalfFramebuffer1) {
+        LOG_WARNING("[PostProcessRenderer] DoF half-res buffers not available");
+        return false;
+    }
+    
+    // Determine bokeh radius based on quality setting
+    float bokehRadius = 4.0f;
     float maxBlur = 16.0f;
     switch (Config::DepthOfField.Value) {
-        case EDepthOfField::Low:    kernelSize = 3; maxBlur = 8.0f;  break;
-        case EDepthOfField::Medium: kernelSize = 5; maxBlur = 16.0f; break;
-        case EDepthOfField::High:   kernelSize = 7; maxBlur = 24.0f; break;
-        case EDepthOfField::Ultra:  kernelSize = 9; maxBlur = 32.0f; break;
+        case EDepthOfField::Low:    bokehRadius = 2.0f; maxBlur = 8.0f;  break;
+        case EDepthOfField::Medium: bokehRadius = 4.0f; maxBlur = 16.0f; break;
+        case EDepthOfField::High:   bokehRadius = 6.0f; maxBlur = 24.0f; break;
+        case EDepthOfField::Ultra:  bokehRadius = 8.0f; maxBlur = 32.0f; break;
         default: break;
     }
     
-    // Setup DoF constants
+    // Calculate half resolution dimensions
+    uint32_t halfWidth = m_displayWidth / 2;
+    uint32_t halfHeight = m_displayHeight / 2;
+    
+    // Use aperture size to calculate focus range (higher aperture = shallower DoF)
+    float effectiveAperture = apertureSize > 0.0f ? apertureSize : Config::DOFApertureSize;
+    float effectiveFocusDistance = focusDistance > 0.0f ? focusDistance : Config::DOFFocusDistance;
+    // Focus range inversely proportional to aperture (larger aperture = smaller focus range = more blur)
+    float focusRange = effectiveFocusDistance * (0.5f / (effectiveAperture + 0.01f));
+    focusRange = std::max(focusRange, 1.0f);  // Minimum focus range
+    
+    // Setup DoF constants (shared across all passes)
     DOFConstants dofConstants;
     dofConstants.resolutionX = 1.0f / m_displayWidth;
     dofConstants.resolutionY = 1.0f / m_displayHeight;
     dofConstants.width = static_cast<float>(m_displayWidth);
     dofConstants.height = static_cast<float>(m_displayHeight);
-    dofConstants.focusDistance = focusDistance > 0.0f ? focusDistance : Config::DOFFocusDistance;
-    dofConstants.apertureSize = apertureSize > 0.0f ? apertureSize : Config::DOFApertureSize;
+    dofConstants.halfResolutionX = 1.0f / halfWidth;
+    dofConstants.halfResolutionY = 1.0f / halfHeight;
+    dofConstants.halfWidth = static_cast<float>(halfWidth);
+    dofConstants.halfHeight = static_cast<float>(halfHeight);
+    dofConstants.focusDistance = effectiveFocusDistance;
+    dofConstants.focusRange = focusRange;
     dofConstants.nearPlane = cameraNear;
     dofConstants.farPlane = cameraFar;
-    dofConstants.kernelSize = kernelSize;
+    dofConstants.bokehRadius = bokehRadius;
     dofConstants.maxBlur = maxBlur;
-    dofConstants.padding[0] = 0.0f;
-    dofConstants.padding[1] = 0.0f;
+    dofConstants.cocScale = bokehRadius;  // Scale CoC by bokeh radius
+    dofConstants.padding = 0.0f;
     
     // Upload DoF constants
     if (m_dofConstantBuffer) {
@@ -1100,32 +1354,100 @@ bool PostProcessRenderer::ApplyDoF(RenderCommandList* commandList,
         }
     }
     
-    // Transition textures
-    RenderTextureBarrier barriers[] = {
-        RenderTextureBarrier(colorTexture, RenderTextureLayout::SHADER_READ),
-        RenderTextureBarrier(depthTexture, RenderTextureLayout::SHADER_READ),
-        RenderTextureBarrier(outputTexture, RenderTextureLayout::COLOR_WRITE)
-    };
-    commandList->barriers(RenderBarrierStage::GRAPHICS, barriers, 3);
+    // =========================================================================
+    // Pass 1: Prefilter - Downsample to half-res with weighted CoC
+    // Input: Full-res color + depth
+    // Output: Half-res color with CoC in alpha (to m_dofHalfBuffer0)
+    // =========================================================================
+    {
+        RenderTextureBarrier barriers[] = {
+            RenderTextureBarrier(colorTexture, RenderTextureLayout::SHADER_READ),
+            RenderTextureBarrier(depthTexture, RenderTextureLayout::SHADER_READ),
+            RenderTextureBarrier(m_dofHalfBuffer0.get(), RenderTextureLayout::COLOR_WRITE)
+        };
+        commandList->barriers(RenderBarrierStage::GRAPHICS, barriers, 3);
+        
+        commandList->setPipeline(m_dofPrefilterPipeline.get());
+        commandList->setGraphicsPipelineLayout(m_pipelineLayout);
+        commandList->setFramebuffer(m_dofHalfFramebuffer0.get());
+        commandList->setViewports(RenderViewport(0, 0, halfWidth, halfHeight));
+        commandList->setScissors(RenderRect(0, 0, halfWidth, halfHeight));
+        
+        commandList->setGraphicsPushConstants(0, &dofConstants, 0, sizeof(DOFConstants));
+        
+        DrawFullscreenTriangle(commandList);
+    }
     
-    // Create output framebuffer
-    RenderFramebufferDesc fbDesc;
-    const RenderTexture* colorAttachments[] = { outputTexture };
-    fbDesc.colorAttachments = colorAttachments;
-    fbDesc.colorAttachmentsCount = 1;
-    auto outputFramebuffer = m_device->createFramebuffer(fbDesc);
+    // =========================================================================
+    // Pass 2: Bokeh - Apply disk blur with FG/BG separation
+    // Input: m_dofHalfBuffer0 (prefiltered)
+    // Output: m_dofHalfBuffer1 (bokeh result with FG alpha)
+    // =========================================================================
+    {
+        RenderTextureBarrier barriers[] = {
+            RenderTextureBarrier(m_dofHalfBuffer0.get(), RenderTextureLayout::SHADER_READ),
+            RenderTextureBarrier(m_dofHalfBuffer1.get(), RenderTextureLayout::COLOR_WRITE)
+        };
+        commandList->barriers(RenderBarrierStage::GRAPHICS, barriers, 2);
+        
+        commandList->setPipeline(m_dofBokehPipeline.get());
+        commandList->setFramebuffer(m_dofHalfFramebuffer1.get());
+        
+        commandList->setGraphicsPushConstants(0, &dofConstants, 0, sizeof(DOFConstants));
+        
+        DrawFullscreenTriangle(commandList);
+    }
     
-    // Set pipeline and draw
-    commandList->setPipeline(m_dofPipeline.get());
-    commandList->setGraphicsPipelineLayout(m_pipelineLayout);
-    commandList->setFramebuffer(outputFramebuffer.get());
-    commandList->setViewports(RenderViewport(0, 0, m_displayWidth, m_displayHeight));
-    commandList->setScissors(RenderRect(0, 0, m_displayWidth, m_displayHeight));
+    // =========================================================================
+    // Pass 3: Postfilter - Apply tent filter to smooth bokeh samples
+    // Input: m_dofHalfBuffer1 (bokeh)
+    // Output: m_dofHalfBuffer0 (smoothed bokeh)
+    // =========================================================================
+    {
+        RenderTextureBarrier barriers[] = {
+            RenderTextureBarrier(m_dofHalfBuffer1.get(), RenderTextureLayout::SHADER_READ),
+            RenderTextureBarrier(m_dofHalfBuffer0.get(), RenderTextureLayout::COLOR_WRITE)
+        };
+        commandList->barriers(RenderBarrierStage::GRAPHICS, barriers, 2);
+        
+        commandList->setPipeline(m_dofPostfilterPipeline.get());
+        commandList->setFramebuffer(m_dofHalfFramebuffer0.get());
+        
+        commandList->setGraphicsPushConstants(0, &dofConstants, 0, sizeof(DOFConstants));
+        
+        DrawFullscreenTriangle(commandList);
+    }
     
-    // Bind constants via push constants
-    commandList->setGraphicsPushConstants(0, &dofConstants, 0, sizeof(DOFConstants));
-    
-    DrawFullscreenTriangle(commandList);
+    // =========================================================================
+    // Pass 4: Combine - Composite bokeh with sharp source
+    // Input: Full-res source color + depth, half-res bokeh (m_dofHalfBuffer0)
+    // Output: Final DoF result
+    // =========================================================================
+    {
+        RenderTextureBarrier barriers[] = {
+            RenderTextureBarrier(colorTexture, RenderTextureLayout::SHADER_READ),
+            RenderTextureBarrier(depthTexture, RenderTextureLayout::SHADER_READ),
+            RenderTextureBarrier(m_dofHalfBuffer0.get(), RenderTextureLayout::SHADER_READ),
+            RenderTextureBarrier(outputTexture, RenderTextureLayout::COLOR_WRITE)
+        };
+        commandList->barriers(RenderBarrierStage::GRAPHICS, barriers, 4);
+        
+        // Create output framebuffer
+        RenderFramebufferDesc fbDesc;
+        const RenderTexture* colorAttachments[] = { outputTexture };
+        fbDesc.colorAttachments = colorAttachments;
+        fbDesc.colorAttachmentsCount = 1;
+        auto outputFramebuffer = m_device->createFramebuffer(fbDesc);
+        
+        commandList->setPipeline(m_dofCombinePipeline.get());
+        commandList->setFramebuffer(outputFramebuffer.get());
+        commandList->setViewports(RenderViewport(0, 0, m_displayWidth, m_displayHeight));
+        commandList->setScissors(RenderRect(0, 0, m_displayWidth, m_displayHeight));
+        
+        commandList->setGraphicsPushConstants(0, &dofConstants, 0, sizeof(DOFConstants));
+        
+        DrawFullscreenTriangle(commandList);
+    }
     
     m_frameIndex++;
     
@@ -1275,6 +1597,595 @@ bool PostProcessRenderer::ApplySSR(RenderCommandList* commandList,
     }
     
     m_frameIndex++;
+    
+    return true;
+}
+
+// =============================================================================
+// Film Grain Implementation
+// =============================================================================
+bool PostProcessRenderer::ApplyFilmGrain(RenderCommandList* commandList,
+                                          RenderTexture* colorTexture,
+                                          RenderTexture* outputTexture,
+                                          uint32_t textureDescriptorIndex) {
+    if (!m_initialized || !m_filmGrainPipeline) {
+        return false;
+    }
+    
+    if (!colorTexture || !outputTexture) {
+        return false;
+    }
+    
+    // Check if film grain is enabled via config
+    if (Config::FilmGrain == EFilmGrain::Off) {
+        return false;
+    }
+    
+    // Determine intensity based on quality setting
+    float intensityMultiplier = 1.0f;
+    float coloredGrain = 0.0f;  // Default to monochrome
+    switch (Config::FilmGrain.Value) {
+        case EFilmGrain::Light:
+            intensityMultiplier = 0.03f;
+            break;
+        case EFilmGrain::Medium:
+            intensityMultiplier = 0.06f;
+            coloredGrain = 0.3f;  // Slight color grain
+            break;
+        case EFilmGrain::Heavy:
+            intensityMultiplier = 0.12f;
+            coloredGrain = 0.7f;  // Strong color grain
+            break;
+        default:
+            break;
+    }
+    
+    // Setup film grain constants
+    FilmGrainConstants constants;
+    constants.resolutionX = 1.0f / m_displayWidth;
+    constants.resolutionY = 1.0f / m_displayHeight;
+    constants.width = static_cast<float>(m_displayWidth);
+    constants.height = static_cast<float>(m_displayHeight);
+    constants.intensity = Config::FilmGrainIntensity * intensityMultiplier;
+    constants.frameIndex = static_cast<float>(m_frameIndex);
+    constants.luminanceScale = 0.8f;  // 80% luminance-dependent grain
+    constants.coloredGrain = coloredGrain;
+    
+    // Transition textures
+    RenderTextureBarrier barriers[] = {
+        RenderTextureBarrier(colorTexture, RenderTextureLayout::SHADER_READ),
+        RenderTextureBarrier(outputTexture, RenderTextureLayout::COLOR_WRITE)
+    };
+    commandList->barriers(RenderBarrierStage::GRAPHICS, barriers, 2);
+    
+    // Create output framebuffer
+    RenderFramebufferDesc fbDesc;
+    const RenderTexture* colorAttachments[] = { outputTexture };
+    fbDesc.colorAttachments = colorAttachments;
+    fbDesc.colorAttachmentsCount = 1;
+    auto outputFramebuffer = m_device->createFramebuffer(fbDesc);
+    
+    // Set pipeline and draw
+    commandList->setPipeline(m_filmGrainPipeline.get());
+    commandList->setGraphicsPipelineLayout(m_pipelineLayout);
+    commandList->setFramebuffer(outputFramebuffer.get());
+    commandList->setViewports(RenderViewport(0, 0, m_displayWidth, m_displayHeight));
+    commandList->setScissors(RenderRect(0, 0, m_displayWidth, m_displayHeight));
+    
+    // Bind constants via push constants
+    commandList->setGraphicsPushConstants(0, &constants, 0, sizeof(FilmGrainConstants));
+    
+    DrawFullscreenTriangle(commandList);
+    
+    return true;
+}
+
+// =============================================================================
+// Chromatic Aberration Implementation
+// =============================================================================
+bool PostProcessRenderer::ApplyChromaticAberration(RenderCommandList* commandList,
+                                                    RenderTexture* colorTexture,
+                                                    RenderTexture* outputTexture,
+                                                    uint32_t textureDescriptorIndex) {
+    if (!m_initialized || !m_chromaticAberrationPipeline) {
+        return false;
+    }
+    
+    if (!colorTexture || !outputTexture) {
+        return false;
+    }
+    
+    // Check if chromatic aberration is enabled via config
+    if (Config::ChromaticAberration == EChromaticAberration::Off) {
+        return false;
+    }
+    
+    // Determine offsets based on quality setting
+    float redOffset = 1.0f;
+    float blueOffset = 1.0f;
+    float radialFalloff = 2.0f;  // Quadratic falloff (natural lens behavior)
+    switch (Config::ChromaticAberration.Value) {
+        case EChromaticAberration::Subtle:
+            redOffset = 0.5f;
+            blueOffset = 0.5f;
+            break;
+        case EChromaticAberration::Normal:
+            redOffset = 1.0f;
+            blueOffset = 1.0f;
+            break;
+        case EChromaticAberration::Strong:
+            redOffset = 2.0f;
+            blueOffset = 2.0f;
+            radialFalloff = 1.5f;  // More uniform spread
+            break;
+        default:
+            break;
+    }
+    
+    // Setup chromatic aberration constants
+    ChromaticAberrationConstants constants;
+    constants.resolutionX = 1.0f / m_displayWidth;
+    constants.resolutionY = 1.0f / m_displayHeight;
+    constants.width = static_cast<float>(m_displayWidth);
+    constants.height = static_cast<float>(m_displayHeight);
+    constants.intensity = Config::ChromaticAberrationIntensity;
+    constants.redOffset = redOffset;
+    constants.greenOffset = 0.0f;  // Green stays centered
+    constants.blueOffset = blueOffset;
+    constants.radialFalloff = radialFalloff;
+    constants.centerX = 0.5f;
+    constants.centerY = 0.5f;
+    constants.aspectCorrection = static_cast<float>(m_displayWidth) / m_displayHeight;
+    constants.maxOffset = 16.0f;  // Max 16 pixel offset
+    constants.softKnee = 0.5f;
+    constants.padding[0] = 0.0f;
+    constants.padding[1] = 0.0f;
+    
+    // Transition textures
+    RenderTextureBarrier barriers[] = {
+        RenderTextureBarrier(colorTexture, RenderTextureLayout::SHADER_READ),
+        RenderTextureBarrier(outputTexture, RenderTextureLayout::COLOR_WRITE)
+    };
+    commandList->barriers(RenderBarrierStage::GRAPHICS, barriers, 2);
+    
+    // Create output framebuffer
+    RenderFramebufferDesc fbDesc;
+    const RenderTexture* colorAttachments[] = { outputTexture };
+    fbDesc.colorAttachments = colorAttachments;
+    fbDesc.colorAttachmentsCount = 1;
+    auto outputFramebuffer = m_device->createFramebuffer(fbDesc);
+    
+    // Set pipeline and draw
+    commandList->setPipeline(m_chromaticAberrationPipeline.get());
+    commandList->setGraphicsPipelineLayout(m_pipelineLayout);
+    commandList->setFramebuffer(outputFramebuffer.get());
+    commandList->setViewports(RenderViewport(0, 0, m_displayWidth, m_displayHeight));
+    commandList->setScissors(RenderRect(0, 0, m_displayWidth, m_displayHeight));
+    
+    // Bind constants via push constants
+    commandList->setGraphicsPushConstants(0, &constants, 0, sizeof(ChromaticAberrationConstants));
+    
+    DrawFullscreenTriangle(commandList);
+    
+    return true;
+}
+
+// =============================================================================
+// Motion Blur Implementation
+// =============================================================================
+bool PostProcessRenderer::ApplyMotionBlur(RenderCommandList* commandList,
+                                           RenderTexture* colorTexture,
+                                           RenderTexture* depthTexture,
+                                           RenderTexture* outputTexture,
+                                           const float* invViewProj, const float* prevViewProj) {
+    if (!m_initialized || !m_motionBlurCameraPipeline) {
+        return false;
+    }
+    
+    if (!colorTexture || !depthTexture || !outputTexture) {
+        return false;
+    }
+    
+    // Check if motion blur is enabled via config
+    if (Config::MotionBlur == EMotionBlur::Off) {
+        return false;
+    }
+    
+    // Setup motion blur constants
+    MotionBlurConstants constants;
+    
+    // Copy matrices
+    if (invViewProj) {
+        memcpy(constants.invViewProj, invViewProj, sizeof(float) * 16);
+    } else {
+        // Identity matrix fallback
+        for (int i = 0; i < 16; i++) {
+            constants.invViewProj[i] = (i % 5 == 0) ? 1.0f : 0.0f;
+        }
+    }
+    
+    if (prevViewProj) {
+        memcpy(constants.prevViewProj, prevViewProj, sizeof(float) * 16);
+    } else {
+        // Use stored previous view-projection matrix
+        memcpy(constants.prevViewProj, m_prevViewProj, sizeof(float) * 16);
+    }
+    
+    constants.resolutionX = 1.0f / m_displayWidth;
+    constants.resolutionY = 1.0f / m_displayHeight;
+    constants.width = static_cast<float>(m_displayWidth);
+    constants.height = static_cast<float>(m_displayHeight);
+    constants.blurStrength = Config::MotionBlurStrength;
+    constants.maxBlurRadius = 32.0f;
+    constants.depthThreshold = 0.01f;
+    constants.padding = 0.0f;
+    
+    // Transition textures
+    RenderTextureBarrier barriers[] = {
+        RenderTextureBarrier(colorTexture, RenderTextureLayout::SHADER_READ),
+        RenderTextureBarrier(depthTexture, RenderTextureLayout::SHADER_READ),
+        RenderTextureBarrier(outputTexture, RenderTextureLayout::COLOR_WRITE)
+    };
+    commandList->barriers(RenderBarrierStage::GRAPHICS, barriers, 3);
+    
+    // Create output framebuffer
+    RenderFramebufferDesc fbDesc;
+    const RenderTexture* colorAttachments[] = { outputTexture };
+    fbDesc.colorAttachments = colorAttachments;
+    fbDesc.colorAttachmentsCount = 1;
+    auto outputFramebuffer = m_device->createFramebuffer(fbDesc);
+    
+    // Set pipeline and draw
+    commandList->setPipeline(m_motionBlurCameraPipeline.get());
+    commandList->setGraphicsPipelineLayout(m_pipelineLayout);
+    commandList->setFramebuffer(outputFramebuffer.get());
+    commandList->setViewports(RenderViewport(0, 0, m_displayWidth, m_displayHeight));
+    commandList->setScissors(RenderRect(0, 0, m_displayWidth, m_displayHeight));
+    
+    // Bind constants via push constants
+    commandList->setGraphicsPushConstants(0, &constants, 0, sizeof(MotionBlurConstants));
+    
+    DrawFullscreenTriangle(commandList);
+    
+    // Store current view-projection for next frame
+    if (invViewProj) {
+        // We actually need to store the current view-proj, not inv
+        // For now, we'll rely on the caller to provide prevViewProj
+    }
+    
+    return true;
+}
+
+// =============================================================================
+// Bloom Implementation (MiniEngine-style pyramid)
+// =============================================================================
+
+bool PostProcessRenderer::ApplyBloom(RenderCommandList* commandList,
+                                      RenderTexture* colorTexture,
+                                      RenderTexture* outputTexture,
+                                      float threshold, float intensity) {
+    if (!m_initialized) {
+        return false;
+    }
+    
+    // Check if bloom is enabled via config
+    if (!Config::EnableBloom) {
+        return false;
+    }
+    
+    if (!colorTexture || !outputTexture) {
+        return false;
+    }
+    
+    // Check bloom pipelines available
+    if (!m_bloomExtractPipeline || !m_bloomDownsamplePipeline || 
+        !m_bloomUpsamplePipeline || !m_bloomCompositePipeline) {
+        LOG_WARNING("[PostProcessRenderer] Bloom pipelines not available");
+        return false;
+    }
+    
+    // Check mip chain buffers exist
+    bool mipChainValid = true;
+    for (int i = 0; i < BLOOM_MIP_COUNT; i++) {
+        if (!m_bloomMipChain[i] || !m_bloomMipFramebuffers[i]) {
+            mipChainValid = false;
+            break;
+        }
+    }
+    if (!mipChainValid || !m_bloomResult || !m_bloomResultFramebuffer) {
+        LOG_WARNING("[PostProcessRenderer] Bloom buffers not available");
+        return false;
+    }
+    
+    // Use config values if not overridden
+    float effectiveThreshold = threshold > 0.0f ? threshold : Config::BloomThreshold;
+    float effectiveIntensity = intensity > 0.0f ? intensity : Config::BloomIntensity;
+    
+    // =========================================================================
+    // Pass 1: Extract bright pixels with Karis average anti-firefly
+    // Input: Full-res color
+    // Output: Half-res bloom (to m_bloomMipChain[0])
+    // =========================================================================
+    {
+        BloomExtractConstants extractConstants;
+        extractConstants.threshold = effectiveThreshold;
+        extractConstants.softThreshold = effectiveThreshold * 0.5f;
+        extractConstants.invWidth = 1.0f / m_displayWidth;
+        extractConstants.invHeight = 1.0f / m_displayHeight;
+        extractConstants.useKarisAverage = 1.0f;
+        extractConstants.padding1 = 0.0f;
+        extractConstants.padding2 = 0.0f;
+        extractConstants.padding3 = 0.0f;
+        
+        uint32_t mipWidth = m_displayWidth / 2;
+        uint32_t mipHeight = m_displayHeight / 2;
+        
+        RenderTextureBarrier barriers[] = {
+            RenderTextureBarrier(colorTexture, RenderTextureLayout::SHADER_READ),
+            RenderTextureBarrier(m_bloomMipChain[0].get(), RenderTextureLayout::COLOR_WRITE)
+        };
+        commandList->barriers(RenderBarrierStage::GRAPHICS, barriers, 2);
+        
+        commandList->setPipeline(m_bloomExtractPipeline.get());
+        commandList->setGraphicsPipelineLayout(m_pipelineLayout);
+        commandList->setFramebuffer(m_bloomMipFramebuffers[0].get());
+        commandList->setViewports(RenderViewport(0, 0, mipWidth, mipHeight));
+        commandList->setScissors(RenderRect(0, 0, mipWidth, mipHeight));
+        
+        commandList->setGraphicsPushConstants(0, &extractConstants, 0, sizeof(BloomExtractConstants));
+        
+        DrawFullscreenTriangle(commandList);
+    }
+    
+    // =========================================================================
+    // Pass 2: Downsample chain (mip 0 -> 1 -> 2 -> 3 -> 4 -> 5)
+    // =========================================================================
+    for (int mipLevel = 1; mipLevel < BLOOM_MIP_COUNT; mipLevel++) {
+        BloomDownsampleConstants downsampleConstants;
+        
+        // Calculate source dimensions (previous mip)
+        uint32_t srcWidth = m_displayWidth >> mipLevel;
+        uint32_t srcHeight = m_displayHeight >> mipLevel;
+        uint32_t dstWidth = m_displayWidth >> (mipLevel + 1);
+        uint32_t dstHeight = m_displayHeight >> (mipLevel + 1);
+        
+        downsampleConstants.invWidth = 1.0f / srcWidth;
+        downsampleConstants.invHeight = 1.0f / srcHeight;
+        downsampleConstants.mipLevel = static_cast<float>(mipLevel);
+        downsampleConstants.useKarisAverage = (mipLevel == 1) ? 1.0f : 0.0f; // Karis on first downsample
+        
+        RenderTextureBarrier barriers[] = {
+            RenderTextureBarrier(m_bloomMipChain[mipLevel - 1].get(), RenderTextureLayout::SHADER_READ),
+            RenderTextureBarrier(m_bloomMipChain[mipLevel].get(), RenderTextureLayout::COLOR_WRITE)
+        };
+        commandList->barriers(RenderBarrierStage::GRAPHICS, barriers, 2);
+        
+        commandList->setPipeline(m_bloomDownsamplePipeline.get());
+        commandList->setFramebuffer(m_bloomMipFramebuffers[mipLevel].get());
+        commandList->setViewports(RenderViewport(0, 0, dstWidth, dstHeight));
+        commandList->setScissors(RenderRect(0, 0, dstWidth, dstHeight));
+        
+        commandList->setGraphicsPushConstants(0, &downsampleConstants, 0, sizeof(BloomDownsampleConstants));
+        
+        DrawFullscreenTriangle(commandList);
+    }
+    
+    // =========================================================================
+    // Pass 3: Upsample chain (mip 5 -> 4 -> 3 -> 2 -> 1 -> 0)
+    // Each level blends with the next higher resolution mip
+    // =========================================================================
+    for (int mipLevel = BLOOM_MIP_COUNT - 2; mipLevel >= 0; mipLevel--) {
+        BloomUpsampleConstants upsampleConstants;
+        
+        // Destination is the higher resolution mip
+        uint32_t dstWidth = m_displayWidth >> (mipLevel + 1);
+        uint32_t dstHeight = m_displayHeight >> (mipLevel + 1);
+        
+        upsampleConstants.invWidth = 1.0f / dstWidth;
+        upsampleConstants.invHeight = 1.0f / dstHeight;
+        upsampleConstants.filterRadius = 1.0f;  // Tent filter radius
+        upsampleConstants.bloomIntensity = effectiveIntensity;
+        
+        RenderTextureBarrier barriers[] = {
+            RenderTextureBarrier(m_bloomMipChain[mipLevel + 1].get(), RenderTextureLayout::SHADER_READ),
+            RenderTextureBarrier(m_bloomMipChain[mipLevel].get(), RenderTextureLayout::COLOR_WRITE)
+        };
+        commandList->barriers(RenderBarrierStage::GRAPHICS, barriers, 2);
+        
+        commandList->setPipeline(m_bloomUpsamplePipeline.get());
+        commandList->setFramebuffer(m_bloomMipFramebuffers[mipLevel].get());
+        commandList->setViewports(RenderViewport(0, 0, dstWidth, dstHeight));
+        commandList->setScissors(RenderRect(0, 0, dstWidth, dstHeight));
+        
+        commandList->setGraphicsPushConstants(0, &upsampleConstants, 0, sizeof(BloomUpsampleConstants));
+        
+        DrawFullscreenTriangle(commandList);
+    }
+    
+    // =========================================================================
+    // Pass 4: Composite bloom with original scene
+    // =========================================================================
+    {
+        BloomCompositeConstants compositeConstants;
+        compositeConstants.bloomIntensity = effectiveIntensity;
+        compositeConstants.saturation = 1.0f;
+        compositeConstants.blendMode = 0.0f;  // 0 = additive, 1 = screen
+        compositeConstants.padding = 0.0f;
+        
+        RenderTextureBarrier barriers[] = {
+            RenderTextureBarrier(colorTexture, RenderTextureLayout::SHADER_READ),
+            RenderTextureBarrier(m_bloomMipChain[0].get(), RenderTextureLayout::SHADER_READ),
+            RenderTextureBarrier(outputTexture, RenderTextureLayout::COLOR_WRITE)
+        };
+        commandList->barriers(RenderBarrierStage::GRAPHICS, barriers, 3);
+        
+        // Create output framebuffer
+        RenderFramebufferDesc fbDesc;
+        const RenderTexture* colorAttachments[] = { outputTexture };
+        fbDesc.colorAttachments = colorAttachments;
+        fbDesc.colorAttachmentsCount = 1;
+        auto outputFramebuffer = m_device->createFramebuffer(fbDesc);
+        
+        commandList->setPipeline(m_bloomCompositePipeline.get());
+        commandList->setFramebuffer(outputFramebuffer.get());
+        commandList->setViewports(RenderViewport(0, 0, m_displayWidth, m_displayHeight));
+        commandList->setScissors(RenderRect(0, 0, m_displayWidth, m_displayHeight));
+        
+        commandList->setGraphicsPushConstants(0, &compositeConstants, 0, sizeof(BloomCompositeConstants));
+        
+        DrawFullscreenTriangle(commandList);
+    }
+    
+    return true;
+}
+
+// =============================================================================
+// Sun Shafts Implementation (FusionFix-style GPU Gems 3)
+// =============================================================================
+
+bool PostProcessRenderer::ApplySunShafts(RenderCommandList* commandList,
+                                          RenderTexture* colorTexture,
+                                          RenderTexture* depthTexture,
+                                          RenderTexture* outputTexture,
+                                          float sunScreenX, float sunScreenY,
+                                          float density, float weight, float decay, float exposure) {
+    if (!m_initialized) {
+        return false;
+    }
+    
+    // Check if sun shafts are enabled via config
+    if (!Config::EnableSunShafts) {
+        return false;
+    }
+    
+    if (!colorTexture || !depthTexture || !outputTexture) {
+        return false;
+    }
+    
+    // Check sun shafts pipelines available
+    if (!m_sunShaftsPrepassPipeline || !m_sunShaftsRadialPipeline || !m_sunShaftsCompositePipeline) {
+        LOG_WARNING("[PostProcessRenderer] Sun shafts pipelines not available");
+        return false;
+    }
+    
+    // Check buffers exist
+    if (!m_sunShaftsPrepassBuffer || !m_sunShaftsRadialBuffer ||
+        !m_sunShaftsPrepassFramebuffer || !m_sunShaftsRadialFramebuffer) {
+        LOG_WARNING("[PostProcessRenderer] Sun shafts buffers not available");
+        return false;
+    }
+    
+    // Use config values if not overridden
+    float effectiveDensity = density > 0.0f ? density : Config::SunShaftsDensity;
+    float effectiveWeight = weight > 0.0f ? weight : Config::SunShaftsWeight;
+    float effectiveDecay = decay > 0.0f ? decay : Config::SunShaftsDecay;
+    float effectiveExposure = exposure > 0.0f ? exposure : Config::SunShaftsExposure;
+    
+    // Half resolution for performance
+    uint32_t halfWidth = m_displayWidth / 2;
+    uint32_t halfHeight = m_displayHeight / 2;
+    
+    // =========================================================================
+    // Pass 1: Prepass - Extract sun/sky pixels with depth masking
+    // Input: Full-res color + depth
+    // Output: Half-res sun mask (to m_sunShaftsPrepassBuffer)
+    // =========================================================================
+    {
+        SunShaftsPrepassConstants prepassConstants;
+        prepassConstants.sunPosX = sunScreenX;
+        prepassConstants.sunPosY = sunScreenY;
+        prepassConstants.sunRadius = 0.1f;  // Sun disk radius in screen space
+        prepassConstants.skyDepthThreshold = 0.9999f;  // Depth values above this are sky
+        prepassConstants.invWidth = 1.0f / m_displayWidth;
+        prepassConstants.invHeight = 1.0f / m_displayHeight;
+        prepassConstants.horizonFade = 1.0f;
+        prepassConstants.padding = 0.0f;
+        
+        RenderTextureBarrier barriers[] = {
+            RenderTextureBarrier(colorTexture, RenderTextureLayout::SHADER_READ),
+            RenderTextureBarrier(depthTexture, RenderTextureLayout::SHADER_READ),
+            RenderTextureBarrier(m_sunShaftsPrepassBuffer.get(), RenderTextureLayout::COLOR_WRITE)
+        };
+        commandList->barriers(RenderBarrierStage::GRAPHICS, barriers, 3);
+        
+        commandList->setPipeline(m_sunShaftsPrepassPipeline.get());
+        commandList->setGraphicsPipelineLayout(m_pipelineLayout);
+        commandList->setFramebuffer(m_sunShaftsPrepassFramebuffer.get());
+        commandList->setViewports(RenderViewport(0, 0, halfWidth, halfHeight));
+        commandList->setScissors(RenderRect(0, 0, halfWidth, halfHeight));
+        
+        commandList->setGraphicsPushConstants(0, &prepassConstants, 0, sizeof(SunShaftsPrepassConstants));
+        
+        DrawFullscreenTriangle(commandList);
+    }
+    
+    // =========================================================================
+    // Pass 2: Radial blur - GPU Gems 3 ray march toward sun
+    // Input: m_sunShaftsPrepassBuffer
+    // Output: m_sunShaftsRadialBuffer
+    // =========================================================================
+    {
+        SunShaftsRadialConstants radialConstants;
+        radialConstants.sunPosX = sunScreenX;
+        radialConstants.sunPosY = sunScreenY;
+        radialConstants.density = effectiveDensity;
+        radialConstants.weight = effectiveWeight;
+        radialConstants.decay = effectiveDecay;
+        radialConstants.exposure = effectiveExposure;
+        radialConstants.numSamples = 32.0f;  // 32 samples for quality/performance balance
+        radialConstants.padding = 0.0f;
+        
+        RenderTextureBarrier barriers[] = {
+            RenderTextureBarrier(m_sunShaftsPrepassBuffer.get(), RenderTextureLayout::SHADER_READ),
+            RenderTextureBarrier(m_sunShaftsRadialBuffer.get(), RenderTextureLayout::COLOR_WRITE)
+        };
+        commandList->barriers(RenderBarrierStage::GRAPHICS, barriers, 2);
+        
+        commandList->setPipeline(m_sunShaftsRadialPipeline.get());
+        commandList->setFramebuffer(m_sunShaftsRadialFramebuffer.get());
+        commandList->setViewports(RenderViewport(0, 0, halfWidth, halfHeight));
+        commandList->setScissors(RenderRect(0, 0, halfWidth, halfHeight));
+        
+        commandList->setGraphicsPushConstants(0, &radialConstants, 0, sizeof(SunShaftsRadialConstants));
+        
+        DrawFullscreenTriangle(commandList);
+    }
+    
+    // =========================================================================
+    // Pass 3: Composite - Additive blend with scene
+    // Input: Full-res color + half-res radial blur result
+    // Output: Final scene with sun shafts
+    // =========================================================================
+    {
+        SunShaftsCompositeConstants compositeConstants;
+        compositeConstants.sunColorR = 1.0f;  // Sun color tint
+        compositeConstants.sunColorG = 0.95f;
+        compositeConstants.sunColorB = 0.8f;
+        compositeConstants.blendStrength = 1.0f;
+        
+        RenderTextureBarrier barriers[] = {
+            RenderTextureBarrier(colorTexture, RenderTextureLayout::SHADER_READ),
+            RenderTextureBarrier(m_sunShaftsRadialBuffer.get(), RenderTextureLayout::SHADER_READ),
+            RenderTextureBarrier(outputTexture, RenderTextureLayout::COLOR_WRITE)
+        };
+        commandList->barriers(RenderBarrierStage::GRAPHICS, barriers, 3);
+        
+        // Create output framebuffer
+        RenderFramebufferDesc fbDesc;
+        const RenderTexture* colorAttachments[] = { outputTexture };
+        fbDesc.colorAttachments = colorAttachments;
+        fbDesc.colorAttachmentsCount = 1;
+        auto outputFramebuffer = m_device->createFramebuffer(fbDesc);
+        
+        commandList->setPipeline(m_sunShaftsCompositePipeline.get());
+        commandList->setFramebuffer(outputFramebuffer.get());
+        commandList->setViewports(RenderViewport(0, 0, m_displayWidth, m_displayHeight));
+        commandList->setScissors(RenderRect(0, 0, m_displayWidth, m_displayHeight));
+        
+        commandList->setGraphicsPushConstants(0, &compositeConstants, 0, sizeof(SunShaftsCompositeConstants));
+        
+        DrawFullscreenTriangle(commandList);
+    }
     
     return true;
 }

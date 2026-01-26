@@ -5,6 +5,12 @@
 #endif
 #ifdef __APPLE__
 #include <sys/mman.h>
+#include <signal.h>
+#include <execinfo.h>
+#include <unistd.h>
+#endif
+#ifndef _WIN32
+#include <signal.h>
 #endif
 #include <cpu/guest_thread.h>
 #include <gpu/video.h>
@@ -57,6 +63,77 @@ Memory g_memory;
 Heap g_userHeap;
 XDBFWrapper g_xdbfWrapper;
 std::unordered_map<uint16_t, GuestTexture*> g_xdbfTextureCache;
+
+// ============================================================================
+// Crash Signal Handler for debugging
+// ============================================================================
+#ifndef _WIN32
+static void CrashSignalHandler(int sig, siginfo_t *info, void *ucontext) {
+    // Prevent recursive signals
+    static volatile sig_atomic_t crashed = 0;
+    if (crashed) _exit(128 + sig);
+    crashed = 1;
+    
+    const char* signame = "UNKNOWN";
+    switch (sig) {
+        case SIGSEGV: signame = "SIGSEGV (Segmentation Fault)"; break;
+        case SIGBUS:  signame = "SIGBUS (Bus Error)"; break;
+        case SIGABRT: signame = "SIGABRT (Abort)"; break;
+        case SIGFPE:  signame = "SIGFPE (Floating Point Exception)"; break;
+        case SIGILL:  signame = "SIGILL (Illegal Instruction)"; break;
+    }
+    
+    fprintf(stderr, "\n");
+    fprintf(stderr, "============================================================\n");
+    fprintf(stderr, "CRASH DETECTED: %s (signal %d)\n", signame, sig);
+    fprintf(stderr, "============================================================\n");
+    
+    if (info) {
+        fprintf(stderr, "Fault address: %p\n", info->si_addr);
+        fprintf(stderr, "Signal code:   %d\n", info->si_code);
+    }
+    
+#ifdef __APPLE__
+    // Print stack trace on macOS
+    void* callstack[128];
+    int frames = backtrace(callstack, 128);
+    fprintf(stderr, "\nStack trace (%d frames):\n", frames);
+    backtrace_symbols_fd(callstack, frames, STDERR_FILENO);
+#endif
+    
+    fprintf(stderr, "\nHeap state at crash:\n");
+    fprintf(stderr, "  Normal heap:   %p\n", (void*)g_userHeap.heap);
+    fprintf(stderr, "  Physical heap: %p\n", (void*)g_userHeap.physicalHeap);
+    fprintf(stderr, "============================================================\n");
+    fflush(stderr);
+    
+    // Re-raise the signal with default handler to generate core dump
+    signal(sig, SIG_DFL);
+    raise(sig);
+}
+
+static void InstallCrashHandlers() {
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_sigaction = CrashSignalHandler;
+    sa.sa_flags = SA_SIGINFO | SA_RESETHAND;
+    sigemptyset(&sa.sa_mask);
+    
+    sigaction(SIGSEGV, &sa, nullptr);
+    sigaction(SIGBUS, &sa, nullptr);
+    sigaction(SIGABRT, &sa, nullptr);
+    sigaction(SIGFPE, &sa, nullptr);
+    sigaction(SIGILL, &sa, nullptr);
+    
+    fprintf(stderr, "[CrashHandler] Installed signal handlers for crash detection\n");
+    fflush(stderr);
+}
+#else
+static void InstallCrashHandlers() {
+    // Windows would use SetUnhandledExceptionFilter
+}
+#endif
+// ============================================================================
 
 void HostStartup()
 {
@@ -215,6 +292,12 @@ void KiSystemStartup()
         }
     }
 
+    // NOTE: Startup notifications (including XN_LIVE_CONNECTIONCHANGED) are now sent
+    // directly to listeners when they register, following Xenia's pattern.
+    // See XamNotifyCreateListener() in xam.cpp for the implementation.
+    // This solves the timing problem where notifications sent here would be lost
+    // because the content enumeration listener doesn't exist yet.
+
     XAudioInitializeSystem();
 }
 
@@ -329,6 +412,9 @@ void init()
 
 int main(int argc, char *argv[])
 {
+    // Install crash handlers FIRST for better debugging
+    InstallCrashHandlers();
+    
 #ifdef _WIN32
     timeBeginPeriod(1);
 #endif

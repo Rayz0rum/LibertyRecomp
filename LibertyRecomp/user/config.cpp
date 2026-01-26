@@ -1090,3 +1090,46 @@ bool Config::IsControllerIconsPS3()
     return result;
 }
 
+std::string Config::GetButtonPromptsSubdir()
+{
+    // Check user override first
+    if (Config::ControllerIcons != EControllerIcons::Auto) {
+        switch (Config::ControllerIcons) {
+            case EControllerIcons::Xbox:
+                return "xbox360";  // Default Xbox uses 360 prompts
+            case EControllerIcons::PlayStation:
+                return "ps4";      // Default PlayStation uses PS4 prompts
+            default:
+                break;
+        }
+    }
+    
+    // Auto mode: use detected controller with granular type
+    switch (hid::g_inputDeviceExplicit) {
+        case hid::EInputDeviceExplicit::Xbox360:
+            return "xbox360";
+        case hid::EInputDeviceExplicit::XboxOne:
+            return "xbox_one";
+        case hid::EInputDeviceExplicit::DualShock3:
+            return "ps3";
+        case hid::EInputDeviceExplicit::DualShock4:
+            return "ps4";
+        case hid::EInputDeviceExplicit::DualSense:
+            return "ps5";
+        case hid::EInputDeviceExplicit::SwitchPro:
+        case hid::EInputDeviceExplicit::SwitchJCLeft:
+        case hid::EInputDeviceExplicit::SwitchJCRight:
+        case hid::EInputDeviceExplicit::SwitchJCPair:
+            return "switch";
+        case hid::EInputDeviceExplicit::Stadia:
+        case hid::EInputDeviceExplicit::Luna:
+        case hid::EInputDeviceExplicit::NvShield:
+            return "xbox_one";  // Cloud/TV controllers use Xbox One style
+        default:
+            // Fallback: check generic input device
+            if (hid::g_inputDeviceController == hid::EInputDevice::PlayStation)
+                return "ps4";
+            return "xbox360";  // Default fallback
+    }
+}
+

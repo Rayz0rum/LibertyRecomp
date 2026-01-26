@@ -147,6 +147,18 @@ void SyncTable_Signal(uint32_t addr, int32_t count, uint32_t callerLR) {
     if (obj) obj->Signal(count);
 }
 
+std::vector<uint32_t> SyncTable_GetAllSemaphores() {
+    std::lock_guard<std::mutex> lock(g_syncTableMutex);
+    std::vector<uint32_t> result;
+    result.reserve(g_syncObjectTable.size());
+    for (const auto& [addr, obj] : g_syncObjectTable) {
+        if (obj->type == SyncType::Semaphore) {
+            result.push_back(addr);
+        }
+    }
+    return result;
+}
+
 void SyncTable_DumpBroken() {
     std::lock_guard<std::mutex> lock(g_syncTableMutex);
     printf("\n=== SYNC TABLE DUMP ===\nTotal: %zu\n", g_syncObjectTable.size());

@@ -381,10 +381,11 @@ export class PPCParser {
       const line = lines[i];
       
       // Match: ctx.rXX.s64 = -NNNNN; (lis instruction - load immediate shifted)
-      const lisMatch = line.match(/ctx\.(r\d+)\.s64\s*=\s*(-?\d+);/);
+      // Also match: ctx.rXX.s32 = -NNNNN; and hex values like ctx.rXX.s64 = 0x82A00000;
+      const lisMatch = line.match(/ctx\.(r\d+)\.s(?:32|64)\s*=\s*(-?\d+|0x[0-9A-Fa-f]+);/);
       if (lisMatch) {
         const [, reg, valStr] = lisMatch;
-        const val = parseInt(valStr, 10);
+        const val = valStr.startsWith('0x') ? parseInt(valStr, 16) : parseInt(valStr, 10);
         // lis loads into upper 16 bits, so value is already shifted
         regValues.set(reg, val >>> 0); // Convert to unsigned
       }

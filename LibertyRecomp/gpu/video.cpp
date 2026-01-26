@@ -49,6 +49,8 @@ namespace GTAIV {
 #include <decompressor.h>
 #include <kernel/function.h>
 #include <kernel/heap.h>
+#include <kernel/lod_hooks.h>
+#include <patches/postfx_hooks.h>
 #include <hid/hid.h>
 #include <kernel/memory.h>
 #include <kernel/xdbf.h>
@@ -3539,7 +3541,26 @@ void Video::Present()
             cameraFovY
         );
         
-        // Apply DoF if enabled
+        // CRITICAL: Disable game's native post-processing effects when custom ones are active
+        // to prevent double-processing (game's effect + our effect both running)
+        
+        // Disable native DoF when custom DoF is enabled
+        bool customDofEnabled = (Config::DepthOfField != EDepthOfField::Off);
+        if (customDofEnabled) {
+            LODHooks::DisableNativeDoF(nullptr);  // Uses cached base address
+        } else {
+            LODHooks::RestoreNativeDoF(nullptr);  // Restore if disabled
+        }
+        
+        // Disable native Edge AA (EAA) when modern AA (TAA/SMAA/FSR) is enabled
+        // GTA IV uses EAA through rage_postfx shader, not hardware MSAA
+        bool customAAEnabled = (Config::ModernAA != EModernAA::Off);
+        if (customAAEnabled) {
+            LODHooks::DisableNativeAA(nullptr);  // Zeros EAA_PARAMS2 in PostFX manager
+        } else {
+            LODHooks::RestoreNativeAA(nullptr);  // Let game reinitialize EAA
+        }
+        
         PostProcess::g_postProcessRenderer.ApplyDoF(
             commandList.get(),
             g_renderTarget->texture,
@@ -3564,6 +3585,59 @@ void Video::Present()
                 viewMatrix,
                 projMatrix
             );
+        }
+        
+        // ======================================================================
+        // Bloom Effect
+        // ======================================================================
+        // Disable native bloom when custom bloom is enabled
+        bool customBloomEnabled = Config::EnableBloom;
+        if (customBloomEnabled) {
+            PostFXHooks::DisableNativeBloom(nullptr);  // Uses cached base address
+            
+            PostProcess::g_postProcessRenderer.ApplyBloom(
+                commandList.get(),
+                g_renderTarget->texture,
+                g_renderTarget->texture
+            );
+        }
+        
+        // ======================================================================
+        // Sun Shafts (God Rays)
+        // ======================================================================
+        // Requires sun direction from game's timecycle system
+        bool customSunShaftsEnabled = Config::EnableSunShafts;
+        if (customSunShaftsEnabled && projValid) {
+            // Extract sun direction from game memory
+            float sunDirX, sunDirY, sunDirZ;
+            PostFXHooks::ExtractSunDirection(nullptr, sunDirX, sunDirY, sunDirZ);
+            
+            // Extract sun color from timecycle
+            float sunR, sunG, sunB, sunIntensity;
+            PostFXHooks::ExtractSunColor(nullptr, sunR, sunG, sunB, sunIntensity);
+            
+            // Compute sun screen position by projecting sun direction
+            float sunDirection[3] = { sunDirX, sunDirY, sunDirZ };
+            float sunScreenPos[3];
+            PostFXHooks::ComputeSunScreenPosition(
+                sunDirection,
+                Camera::g_cameraData.viewProjMatrix,
+                sunScreenPos
+            );
+            
+            // Only apply sun shafts if sun is in front of camera
+            if (sunScreenPos[2] > 0.0f) {
+                float sunColor[4] = { sunR, sunG, sunB, sunIntensity };
+                
+                PostProcess::g_postProcessRenderer.ApplySunShafts(
+                    commandList.get(),
+                    g_renderTarget->texture,
+                    g_depthStencil->texture,
+                    g_renderTarget->texture,
+                    sunScreenPos[0], sunScreenPos[1],
+                    0.9f, 0.4f, 0.95f, sunIntensity
+                );
+            }
         }
     }
 

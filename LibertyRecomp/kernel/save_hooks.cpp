@@ -18,6 +18,15 @@
 #include <cstdio>
 #include <thread>
 #include <chrono>
+#include <atomic>
+#include <os/logger.h>
+
+// =============================================================================
+// KERNEL PHASE - extern declarations from imports.cpp
+// =============================================================================
+enum class KernelPhase { Boot, Init, Runtime };
+extern std::atomic<KernelPhase> g_kernelPhase;
+extern void KernelPhase_EnterRuntime();
 
 // Debug logging control
 #define SAVE_HOOKS_DEBUG_LOGGING 1
@@ -161,15 +170,31 @@ PPC_FUNC(sub_82122CA0)
 extern "C" void __imp__sub_821200D0(PPCContext& ctx, uint8_t* base);
 extern void ShutdownAllWorkers();  // From imports.cpp - sets exit flags and signals workers
 
-// sub_821200D0 - Post-init loading / cleanup phase
-// Now that sub_82857240 is fixed, let this run properly
+// sub_821200D0 - Main game loop entry point
+// This is the correct point to enter Runtime phase:
+// - All 63 subsystems initialized
+// - GPU device created, shaders loaded
+// - About to start main render loop
+// 
+// CRITICAL FIX: Force Runtime phase HERE to break circular dependency:
+//   Runtime Phase requires Proper Sync requires Render Loop requires VdSwap requires Runtime Phase
+// By forcing Runtime at main loop entry, semaphore waits become real waits instead of fail-open bypasses.
 PPC_FUNC(sub_821200D0)
 {
     static int s_count = 0;
+    static bool s_runtimeForced = false;
     ++s_count;
     
     printf("[821200D0] #%d ENTER\n", s_count); fflush(stdout);
     
+    // PHASE 1 FIX: Force Runtime phase at main loop entry to break circular dependency
+    if (!s_runtimeForced) {
+        s_runtimeForced = true;
+        if (g_kernelPhase.load(std::memory_order_acquire) != KernelPhase::Runtime) {
+            KernelPhase_EnterRuntime();
+            LOG_WARNING("[KERNEL_PHASE] Forced Init -> Runtime at sub_821200D0 (main loop entry)");
+        }
+    }
     
     // Run the actual function
     __imp__sub_821200D0(ctx, base);

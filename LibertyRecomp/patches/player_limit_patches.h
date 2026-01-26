@@ -61,15 +61,34 @@ namespace PlayerLimitPatches
     
     // Memory expansion hooks
     namespace Memory {
-        // Intercept and expand player manager allocation
-        void* ExpandPlayerManagerAlloc(size_t originalSize);
+        // Check if allocation size matches a player array pattern
+        bool IsPlayerArraySize(uint32_t size);
         
-        // Intercept and expand player struct array allocations
-        void* ExpandPlayerStructArray(size_t structSize, size_t originalCount);
+        // Get expanded size for player array (returns original if not player array)
+        uint32_t GetExpandedSize(uint32_t size);
         
-        // Zero-initialize expanded player slots
-        void InitializeExpandedSlots(void* playerManager);
+        // Allocation size patterns for 16 players
+        static constexpr uint32_t ALLOC_NETWORK_STATE = ORIGINAL_MAX_PLAYERS * PLAYER_STRUCT_SIZE_56;   // 896
+        static constexpr uint32_t ALLOC_COMPACT_STATE = ORIGINAL_MAX_PLAYERS * PLAYER_STRUCT_SIZE_44;   // 704
+        static constexpr uint32_t ALLOC_EXTENDED_DATA = ORIGINAL_MAX_PLAYERS * PLAYER_STRUCT_SIZE_136;  // 2176
+        static constexpr uint32_t ALLOC_FULL_ENTITY = ORIGINAL_MAX_PLAYERS * PLAYER_STRUCT_SIZE_1032;   // 16512
+        static constexpr uint32_t ALLOC_PTR_ARRAY = ORIGINAL_MAX_PLAYERS * 4;                           // 64
+        
+        // Track expansion statistics
+        struct ExpansionStats {
+            uint32_t networkStateExpansions;
+            uint32_t compactStateExpansions;
+            uint32_t extendedDataExpansions;
+            uint32_t fullEntityExpansions;
+            uint32_t ptrArrayExpansions;
+        };
+        
+        const ExpansionStats& GetExpansionStats();
     }
+    
+    // Global enable flag (can be used to disable expansion for debugging)
+    bool IsEnabled();
+    void SetEnabled(bool enabled);
 }
 
 // =============================================================================

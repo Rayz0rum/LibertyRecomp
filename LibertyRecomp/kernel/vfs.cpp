@@ -1,5 +1,9 @@
 #include "vfs.h"
+#include "button_prompts.h"
 #include <os/logger.h>
+#include <user/config.h>
+#include <user/paths.h>
+#include <hid/hid.h>
 #include <algorithm>
 #include <cctype>
 
@@ -127,6 +131,29 @@ namespace VFS
         bool isDebugPath = (guestPath.find("sounds.dat") != std::string::npos);
         if (isDebugPath) {
             printf("[VFS] DEBUG sounds.dat: Starting path mapping loop, %zu mappings\n", g_pathMappings.size());
+            fflush(stdout);
+        }
+        
+        // === BUTTON PROMPT DYNAMIC SWITCHING ===
+        // Intercept requests for buttons_360.xtd and redirect to controller-specific version
+        // This enables dynamic button prompts based on detected controller type
+        if (stripped.find("textures/buttons_360") != std::string::npos ||
+            stripped.find("buttons_360.xtd") != std::string::npos)
+        {
+            std::filesystem::path buttonPromptPath = ButtonPrompts::GetCurrentButtonPromptsPath();
+            
+            if (!buttonPromptPath.empty())
+            {
+                std::string platform = ButtonPrompts::GetCurrentPlatformName();
+                printf("[VFS] BUTTON_PROMPT: Using %s prompts from '%s'\n", 
+                       platform.c_str(), buttonPromptPath.string().c_str());
+                fflush(stdout);
+                g_stats.cacheHits++;
+                return buttonPromptPath;
+            }
+            
+            // If ButtonPrompts module failed, continue to normal resolution (original game file)
+            printf("[VFS] BUTTON_PROMPT: Module returned empty path, falling back to default resolution\n");
             fflush(stdout);
         }
         

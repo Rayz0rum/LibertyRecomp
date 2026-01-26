@@ -1493,3 +1493,134 @@ CONFIG_DEFINE_LOCALE(FSR1Sharpness)
     { ELanguage::Spanish,  { "Nitidez FSR 1.0", "Fuerza de nitidez para FSR 1.0 RCAS." } },
     { ELanguage::Italian,  { "Nitidezza FSR 1.0", "Forza nitidezza per FSR 1.0 RCAS." } }
 };
+
+// LOD and Render Distance Settings
+CONFIG_DEFINE_LOCALE(RenderDistanceMultiplier)
+{
+    { ELanguage::English,  { "Render Distance", "Multiplier for all render distances (1.0 = default, higher = farther)." } },
+    { ELanguage::Japanese, { "描画距離", "全ての描画距離の乗数（1.0=デフォルト）" } },
+    { ELanguage::German,   { "Renderdistanz", "Multiplikator für alle Renderdistanzen (1.0 = Standard)." } },
+    { ELanguage::French,   { "Distance de rendu", "Multiplicateur pour toutes les distances de rendu (1.0 = défaut)." } },
+    { ELanguage::Spanish,  { "Distancia de renderizado", "Multiplicador para todas las distancias de renderizado (1.0 = defecto)." } },
+    { ELanguage::Italian,  { "Distanza di rendering", "Moltiplicatore per tutte le distanze di rendering (1.0 = default)." } }
+};
+
+CONFIG_DEFINE_LOCALE(LODDistanceMultiplier)
+{
+    { ELanguage::English,  { "LOD Distance", "Multiplier for LOD switch thresholds (higher = more detail at distance)." } },
+    { ELanguage::Japanese, { "LOD距離", "LOD切り替え閾値の乗数（高い=遠くでも高品質）" } },
+    { ELanguage::German,   { "LOD-Distanz", "Multiplikator für LOD-Schwellenwerte (höher = mehr Detail)." } },
+    { ELanguage::French,   { "Distance LOD", "Multiplicateur pour les seuils LOD (plus haut = plus de détails)." } },
+    { ELanguage::Spanish,  { "Distancia LOD", "Multiplicador para umbrales LOD (mayor = más detalle)." } },
+    { ELanguage::Italian,  { "Distanza LOD", "Moltiplicatore per soglie LOD (maggiore = più dettagli)." } }
+};
+
+CONFIG_DEFINE_LOCALE(StreamingDistanceMultiplier)
+{
+    { ELanguage::English,  { "Streaming Distance", "Multiplier for asset streaming distances." } },
+    { ELanguage::Japanese, { "ストリーミング距離", "アセットストリーミング距離の乗数" } },
+    { ELanguage::German,   { "Streaming-Distanz", "Multiplikator für Asset-Streaming-Distanzen." } },
+    { ELanguage::French,   { "Distance de streaming", "Multiplicateur pour les distances de streaming." } },
+    { ELanguage::Spanish,  { "Distancia de streaming", "Multiplicador para distancias de streaming." } },
+    { ELanguage::Italian,  { "Distanza di streaming", "Moltiplicatore per distanze di streaming." } }
+};
+
+CONFIG_DEFINE_LOCALE(FarClipMultiplier)
+{
+    { ELanguage::English,  { "Far Clip Distance", "Multiplier for the far clipping plane distance." } },
+    { ELanguage::Japanese, { "遠クリップ距離", "遠クリッピング面距離の乗数" } },
+    { ELanguage::German,   { "Entfernte Clipping-Distanz", "Multiplikator für die entfernte Clipping-Ebene." } },
+    { ELanguage::French,   { "Distance de clipping lointain", "Multiplicateur pour la distance de clipping lointain." } },
+    { ELanguage::Spanish,  { "Distancia de recorte lejano", "Multiplicador para la distancia de recorte lejano." } },
+    { ELanguage::Italian,  { "Distanza di clipping lontano", "Moltiplicatore per la distanza di clipping lontano." } }
+};
+
+CONFIG_DEFINE_LOCALE(DisableLOD)
+{
+    { ELanguage::English,  { "Disable LOD", "Completely disable LOD switching (always use highest detail models)." } },
+    { ELanguage::Japanese, { "LOD無効", "LOD切り替えを完全に無効にする（常に最高品質モデルを使用）" } },
+    { ELanguage::German,   { "LOD deaktivieren", "LOD-Umschaltung komplett deaktivieren (immer höchste Detailstufe)." } },
+    { ELanguage::French,   { "Désactiver LOD", "Désactiver complètement le LOD (toujours les modèles les plus détaillés)." } },
+    { ELanguage::Spanish,  { "Desactivar LOD", "Desactivar completamente el cambio de LOD (siempre máximo detalle)." } },
+    { ELanguage::Italian,  { "Disabilita LOD", "Disabilita completamente il cambio LOD (sempre massimo dettaglio)." } }
+};
+
+CONFIG_DEFINE_LOCALE(EnableBloom)
+{
+    { ELanguage::English,  { "Bloom", "Enable bloom post-processing effect." } },
+    { ELanguage::Japanese, { "ブルーム", "ブルームポストプロセス効果を有効にする" } },
+    { ELanguage::German,   { "Bloom", "Bloom-Nachbearbeitungseffekt aktivieren." } },
+    { ELanguage::French,   { "Bloom", "Activer l'effet de post-traitement bloom." } },
+    { ELanguage::Spanish,  { "Bloom", "Activar el efecto de post-procesado bloom." } },
+    { ELanguage::Italian,  { "Bloom", "Abilita l'effetto post-processing bloom." } }
+};
+
+CONFIG_DEFINE_LOCALE(BloomThreshold)
+{
+    { ELanguage::English,  { "Bloom Threshold", "Brightness threshold for bloom extraction." } },
+    { ELanguage::Japanese, { "ブルーム閾値", "ブルーム抽出の明るさ閾値" } },
+    { ELanguage::German,   { "Bloom-Schwellenwert", "Helligkeitsschwelle für Bloom-Extraktion." } },
+    { ELanguage::French,   { "Seuil de bloom", "Seuil de luminosité pour l'extraction du bloom." } },
+    { ELanguage::Spanish,  { "Umbral de bloom", "Umbral de brillo para la extracción de bloom." } },
+    { ELanguage::Italian,  { "Soglia bloom", "Soglia di luminosità per l'estrazione del bloom." } }
+};
+
+CONFIG_DEFINE_LOCALE(BloomIntensity)
+{
+    { ELanguage::English,  { "Bloom Intensity", "Intensity of the bloom effect." } },
+    { ELanguage::Japanese, { "ブルーム強度", "ブルーム効果の強度" } },
+    { ELanguage::German,   { "Bloom-Intensität", "Intensität des Bloom-Effekts." } },
+    { ELanguage::French,   { "Intensité du bloom", "Intensité de l'effet bloom." } },
+    { ELanguage::Spanish,  { "Intensidad de bloom", "Intensidad del efecto bloom." } },
+    { ELanguage::Italian,  { "Intensità bloom", "Intensità dell'effetto bloom." } }
+};
+
+CONFIG_DEFINE_LOCALE(EnableSunShafts)
+{
+    { ELanguage::English,  { "Sun Shafts", "Enable volumetric light scattering (god rays)." } },
+    { ELanguage::Japanese, { "サンシャフト", "ボリューメトリックライトスキャタリング（ゴッドレイ）を有効にする" } },
+    { ELanguage::German,   { "Sonnenstrahlen", "Volumetrische Lichtstreuung (Gottstrahlen) aktivieren." } },
+    { ELanguage::French,   { "Rayons du soleil", "Activer la diffusion de lumière volumétrique." } },
+    { ELanguage::Spanish,  { "Rayos de sol", "Activar la dispersión de luz volumétrica." } },
+    { ELanguage::Italian,  { "Raggi solari", "Abilita lo scattering volumetrico della luce." } }
+};
+
+CONFIG_DEFINE_LOCALE(SunShaftsDensity)
+{
+    { ELanguage::English,  { "Sun Shafts Density", "Density of the sun shaft rays." } },
+    { ELanguage::Japanese, { "サンシャフト密度", "サンシャフト光線の密度" } },
+    { ELanguage::German,   { "Sonnenstrahlen-Dichte", "Dichte der Sonnenstrahlen." } },
+    { ELanguage::French,   { "Densité des rayons", "Densité des rayons du soleil." } },
+    { ELanguage::Spanish,  { "Densidad de rayos", "Densidad de los rayos de sol." } },
+    { ELanguage::Italian,  { "Densità raggi", "Densità dei raggi solari." } }
+};
+
+CONFIG_DEFINE_LOCALE(SunShaftsWeight)
+{
+    { ELanguage::English,  { "Sun Shafts Weight", "Weight of each sample in sun shaft calculation." } },
+    { ELanguage::Japanese, { "サンシャフト重み", "サンシャフト計算における各サンプルの重み" } },
+    { ELanguage::German,   { "Sonnenstrahlen-Gewicht", "Gewicht jeder Probe in der Berechnung." } },
+    { ELanguage::French,   { "Poids des rayons", "Poids de chaque échantillon dans le calcul." } },
+    { ELanguage::Spanish,  { "Peso de rayos", "Peso de cada muestra en el cálculo." } },
+    { ELanguage::Italian,  { "Peso raggi", "Peso di ogni campione nel calcolo." } }
+};
+
+CONFIG_DEFINE_LOCALE(SunShaftsDecay)
+{
+    { ELanguage::English,  { "Sun Shafts Decay", "How quickly sun shafts fade with distance." } },
+    { ELanguage::Japanese, { "サンシャフト減衰", "サンシャフトが距離に応じてどれだけ早く減衰するか" } },
+    { ELanguage::German,   { "Sonnenstrahlen-Abklingen", "Wie schnell Sonnenstrahlen mit Entfernung verblassen." } },
+    { ELanguage::French,   { "Déclin des rayons", "Vitesse de disparition des rayons avec la distance." } },
+    { ELanguage::Spanish,  { "Decaimiento de rayos", "Qué tan rápido se desvanecen los rayos con la distancia." } },
+    { ELanguage::Italian,  { "Decadimento raggi", "Quanto velocemente i raggi svaniscono con la distanza." } }
+};
+
+CONFIG_DEFINE_LOCALE(SunShaftsExposure)
+{
+    { ELanguage::English,  { "Sun Shafts Exposure", "Exposure/brightness of the sun shaft effect." } },
+    { ELanguage::Japanese, { "サンシャフト露出", "サンシャフト効果の露出/明るさ" } },
+    { ELanguage::German,   { "Sonnenstrahlen-Belichtung", "Belichtung/Helligkeit des Effekts." } },
+    { ELanguage::French,   { "Exposition des rayons", "Exposition/luminosité de l'effet." } },
+    { ELanguage::Spanish,  { "Exposición de rayos", "Exposición/brillo del efecto." } },
+    { ELanguage::Italian,  { "Esposizione raggi", "Esposizione/luminosità dell'effetto." } }
+};

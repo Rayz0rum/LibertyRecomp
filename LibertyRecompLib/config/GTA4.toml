@@ -58,9 +58,46 @@ invalid_instructions = [
     { data = 0x00000000, size = 4 }, # Padding
 ]
 
+# =============================================================================
 # Mid-asm hooks for intercepting game functions
-# Example:
+# =============================================================================
+# Format:
 # [[midasm_hook]]
-# name = "MyHookFunction"
-# address = 0x82XXXXXX
-# registers = ["r3", "r4"]
+# name = "FunctionName"            # C++ function to call
+# address = 0x82XXXXXX             # Address in guest code to hook
+# registers = ["r3", "r4"]         # Registers to pass to hook function
+# after_instruction = true/false   # Hook after vs before instruction
+# jump_address = 0x82XXXXXX        # Optional: jump to this address after hook
+# jump_address_on_true = 0x82XXXX  # Jump if hook returns true
+# jump_address_on_false = 0x82XXX  # Jump if hook returns false
+
+# =============================================================================
+# LOD and Render Distance Hooks
+# =============================================================================
+# These hooks allow modification of the game's LOD system to increase
+# draw distances and reduce model pop-in.
+
+# Hook for LOD multiplier calculation (sub_822F6B40)
+# This function calculates height-based LOD multipliers each frame
+# We hook after the final store to flt_82A2E908 to apply our multiplier
+[[midasm_hook]]
+name = "LODMultiplierCalculationHook"
+address = 0x822F6D30
+registers = ["f12"]
+after_instruction = true
+
+# Hook for render settings application (sub_822F4EC0)  
+# This function applies LOD multipliers to the render settings buffer
+# We hook where it multiplies the far clip distance
+[[midasm_hook]]
+name = "RenderSettingsApplyHook"
+address = 0x822F4F70
+registers = ["f0", "f13"]
+
+# Hook for streaming distance initialization (sub_824E5148)
+# This function initializes the IplStore with streaming distance
+# f1 register contains the distance value (default 200.0)
+[[midasm_hook]]
+name = "StreamingDistanceInitHook"
+address = 0x824E5154
+registers = ["f1"]

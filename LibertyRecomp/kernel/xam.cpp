@@ -3,6 +3,7 @@
 #include <stdafx.h>
 #include "xam.h"
 #include "xdm.h"
+#include "user_profile.h"
 #include <hid/hid.h>
 #include <hid/mouse_camera.h>
 #include <ui/game_window.h>
@@ -145,9 +146,42 @@ void XamRegisterContent(uint32_t type, const std::string_view name, const std::s
 
 uint32_t XamNotifyCreateListener(uint64_t qwAreas)
 {
+    // Xenia-style pattern: Track if we've sent general startup notifications
+    static bool has_notified_startup = false;
+    
     auto* listener = CreateKernelObject<XamListener>();
-
     listener->areas = qwAreas;
+
+    // Xenia pattern: Send startup notifications directly to the listener when it registers.
+    // This solves the timing problem where notifications sent before listeners exist are lost.
+    // Reference: xenia/kernel/kernel_state.cc:650-671
+    if (qwAreas & 0x00000001) {
+        // General startup notifications - only send to first listener (Xenia pattern)
+        if (!has_notified_startup) {
+            has_notified_startup = true;
+            
+            // XN_SYS_UI (on, off) - Xenia sends these
+            listener->notifications.emplace_back(0x00000009, 1);
+            listener->notifications.emplace_back(0x00000009, 0);
+            
+            // XN_SYS_SIGNINCHANGED x2 - Xenia sends these
+            listener->notifications.emplace_back(0x0000000A, 1);
+            listener->notifications.emplace_back(0x0000000A, 1);
+            
+            // XN_SYS_INPUTDEVICESCHANGED x2 - Xenia sends these
+            listener->notifications.emplace_back(0x00000012, 0);
+            listener->notifications.emplace_back(0x00000012, 0);
+            
+            // XN_SYS_INPUTDEVICECONFIGCHANGED x2 - Xenia sends these
+            listener->notifications.emplace_back(0x00000013, 0);
+            listener->notifications.emplace_back(0x00000013, 0);
+        }
+        
+        // XN_LIVE_CONNECTIONCHANGED - Send to EVERY listener with mask bit 0
+        // GTA IV's content enumeration listener needs this specifically, and it may not
+        // be the first listener created. Different listeners are created at different times.
+        listener->notifications.emplace_back(0x0000000B, 0);
+    }
 
     return GetKernelHandle(listener);
 }
@@ -165,7 +199,22 @@ void XamNotifyEnqueueEvent(uint32_t dwId, uint32_t dwParam)
 
 bool XNotifyGetNext(uint32_t hNotification, uint32_t dwMsgFilter, be<uint32_t>* pdwId, be<uint32_t>* pParam)
 {
-    auto& listener = *GetKernelObject<XamListener>(hNotification);
+    // Validate handle before dereferencing
+    if (hNotification == 0 || hNotification == GUEST_INVALID_HANDLE_VALUE) {
+        return false;
+    }
+    
+    // Check if handle is in valid kernel object range (should have high bit set)
+    if (!IsKernelObject(hNotification)) {
+        return false;
+    }
+    
+    auto* listenerPtr = GetKernelObject<XamListener>(hNotification);
+    if (listenerPtr == nullptr || listenerPtr == GetInvalidKernelObject<XamListener>()) {
+        return false;
+    }
+    
+    auto& listener = *listenerPtr;
 
     if (dwMsgFilter)
     {
@@ -724,9 +773,59 @@ uint32_t XamUserWriteProfileSettings(uint32_t dwUserIndex, uint32_t dwNumSetting
     printf("[XamUserWriteProfileSettings] User: %u, NumSettings: %u\n",
            dwUserIndex, dwNumSettings);
 #endif
-    
-    // Stub: Accept all writes
-    // TODO: Implement profile settings storage
+
+    // Only support user 0
+    if (dwUserIndex != 0) {
+        return 0x80070057; // E_INVALIDARG
+    }
+
+    if (dwNumSettings > 0 && pSettings != nullptr) {
+        auto& profile = Liberty::GetUserProfile();
+
+        // X_USER_PROFILE_SETTING structure (40 bytes each):
+        // Offset 0:  from (uint32_t)
+        // Offset 4:  unk04 (uint32_t)
+        // Offset 8:  user_index/xuid (8 bytes)
+        // Offset 16: setting_id (uint32_t)
+        // Offset 20: unk14 (uint32_t)
+        // Offset 24: data.type (uint8_t)
+        // Offset 28: data.unk_4 (uint32_t)
+        // Offset 32: data.value (8 bytes)
+        constexpr uint32_t SETTING_SIZE = 40;
+
+        const uint8_t* settingPtr = reinterpret_cast<const uint8_t*>(pSettings);
+
+        for (uint32_t i = 0; i < dwNumSettings; ++i) {
+            uint32_t settingId = *reinterpret_cast<const be<uint32_t>*>(settingPtr + 16);
+            uint8_t type = settingPtr[24];
+            
+#if SAVE_SYSTEM_DEBUG_LOGGING
+            printf("[XamUserWriteProfileSettings] Setting[%u]: id=0x%08X type=%u\n",
+                   i, settingId, type);
+#endif
+
+            // Update our profile based on type
+            switch (type) {
+                case 1: { // Int32
+                    int32_t value = *reinterpret_cast<const be<int32_t>*>(settingPtr + 32);
+                    profile.addSetting(std::make_unique<Liberty::Int32Setting>(settingId, value));
+                    break;
+                }
+                case 5: { // Float
+                    float value = *reinterpret_cast<const be<float>*>(settingPtr + 32);
+                    profile.addSetting(std::make_unique<Liberty::FloatSetting>(settingId, value));
+                    break;
+                }
+                default:
+                    // Skip unsupported types for now
+                    break;
+            }
+
+            settingPtr += SETTING_SIZE;
+        }
+    }
+
+    // Complete overlapped operation if provided
     if (pOverlapped)
     {
         pOverlapped->dwCompletionContext = GuestThread::GetCurrentThreadId();
@@ -737,15 +836,18 @@ uint32_t XamUserWriteProfileSettings(uint32_t dwUserIndex, uint32_t dwNumSetting
     return ERROR_SUCCESS;
 }
 
-// User signin state - always return signed in
+// User signin state - use centralized UserProfile
 PPC_FUNC(__imp__XamUserGetSigninState)
 {
     uint32_t dwUserIndex = ctx.r3.u32;
     
-    if (dwUserIndex != 0)
-        ctx.r3.u32 = 0; // Not signed in
-    else
-        ctx.r3.u32 = 1; // eXUserSigninState_SignedInToLive
+    if (dwUserIndex != 0) {
+        ctx.r3.u32 = 0; // Not signed in (only user 0 is supported)
+    } else {
+        // Return the signin state from our centralized profile
+        auto& profile = Liberty::GetUserProfile();
+        ctx.r3.u32 = static_cast<uint32_t>(profile.signinState());
+    }
 }
 
 uint32_t XamUserGetSigninInfo(uint32_t dwUserIndex, uint32_t dwFlags, void* pInfo)

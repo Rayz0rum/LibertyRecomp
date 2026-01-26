@@ -4,8 +4,121 @@
 #include <kernel/memory.h>
 #include <os/logger.h>
 #include <vector>
+#include <chrono>
+
+#ifdef __APPLE__
+#include <sys/sysctl.h>
+#include <net/if.h>
+#include <net/if_dl.h>
+#include <ifaddrs.h>
+#endif
 
 namespace Net {
+
+// ============================================================================
+// Network Logging Implementation
+// ============================================================================
+
+std::atomic<NetLogLevel> g_netLogLevel{NetLogLevel::Info};
+
+void SetNetLogLevel(NetLogLevel level) {
+    g_netLogLevel.store(level, std::memory_order_relaxed);
+    LOGF_INFO("[Net] Log level set to {}", static_cast<uint32_t>(level));
+}
+
+NetLogLevel GetNetLogLevel() {
+    return g_netLogLevel.load(std::memory_order_relaxed);
+}
+
+// ============================================================================
+// NetworkIdentity Implementation (Consistent fake addresses)
+// ============================================================================
+
+NetworkIdentity NetworkIdentity::s_instance;
+bool NetworkIdentity::s_initialized = false;
+
+NetworkIdentity NetworkIdentity::Generate() {
+    NetworkIdentity identity;
+    
+    // Seed with something machine-specific
+    uint64_t seed = 0;
+    
+#ifdef __APPLE__
+    // Use machine serial number or similar for consistent identity
+    size_t len = 0;
+    sysctlbyname("kern.uuid", nullptr, &len, nullptr, 0);
+    if (len > 0) {
+        std::string uuid(len, '\0');
+        sysctlbyname("kern.uuid", uuid.data(), &len, nullptr, 0);
+        for (char c : uuid) {
+            seed = seed * 31 + static_cast<uint8_t>(c);
+        }
+    }
+#else
+    // Use system time as fallback seed
+    seed = std::chrono::steady_clock::now().time_since_epoch().count();
+#endif
+    
+    // Add session uniqueness
+    seed ^= std::hash<std::thread::id>{}(std::this_thread::get_id());
+    
+    std::mt19937_64 rng(seed);
+    
+    // Generate consistent local IP (192.168.1.x)
+    uint8_t lastOctet = 100 + (rng() % 100);  // 192.168.1.100-199
+    identity.localIp = (192 << 24) | (168 << 16) | (1 << 8) | lastOctet;
+    // Store in network byte order (big-endian)
+    identity.localIp = htonl(identity.localIp);
+    
+    // Online IP same as local for offline mode
+    identity.onlineIp = identity.localIp;
+    identity.onlinePort = htons(3074);  // Xbox Live default port
+    
+    // Generate fake MAC address (locally administered bit set)
+    identity.macAddress[0] = 0x02;  // Locally administered, unicast
+    for (int i = 1; i < 6; ++i) {
+        identity.macAddress[i] = static_cast<uint8_t>(rng() & 0xFF);
+    }
+    
+    // Generate fake online key
+    for (int i = 0; i < 20; ++i) {
+        identity.onlineKey[i] = static_cast<uint8_t>(rng() & 0xFF);
+    }
+    
+    return identity;
+}
+
+const NetworkIdentity& NetworkIdentity::Get() {
+    if (!s_initialized) {
+        s_instance = Generate();
+        s_initialized = true;
+        NET_LOG_INFO("Generated network identity: IP={}.{}.{}.{} MAC={:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
+            (ntohl(s_instance.localIp) >> 24) & 0xFF,
+            (ntohl(s_instance.localIp) >> 16) & 0xFF,
+            (ntohl(s_instance.localIp) >> 8) & 0xFF,
+            ntohl(s_instance.localIp) & 0xFF,
+            s_instance.macAddress[0], s_instance.macAddress[1],
+            s_instance.macAddress[2], s_instance.macAddress[3],
+            s_instance.macAddress[4], s_instance.macAddress[5]);
+    }
+    return s_instance;
+}
+
+// ============================================================================
+// NAT Type Detection
+// ============================================================================
+
+NatType GetDetectedNatType() {
+    // If P2P is initialized and has done connectivity tests, use that
+    if (P2PManager::Instance().IsInitialized()) {
+        // For now, assume Open if P2P is working
+        // TODO: Integrate with GNS connection quality feedback
+        return NatType::Open;
+    }
+    
+    // Default to Open for offline play (doesn't matter)
+    return NatType::Open;
+}
 
 // ============================================================================
 // SocketManager Implementation
@@ -408,14 +521,29 @@ int SocketManager::RecvFrom(uint32_t handle, void *buf, int len, int flags,
         from->sin_port = ByteSwap(static_cast<uint16_t>(3074)); // Game port
         *fromlen = sizeof(XSOCKADDR_IN);
       }
+      NET_LOG_VERBOSE("RecvFrom: P2P data from 192.168.100.{} ({} bytes)",
+                      peerId & 0xFF, p2pResult);
       return p2pResult;
     }
+    // No P2P data available, fall through to check native socket
   }
 
   native_socket_t sock = GetNativeHandle(handle);
   if (sock == INVALID_NATIVE_SOCKET) {
     lastError_ = 0x2736; // WSAENOTSOCK
     return -1;
+  }
+
+  // GRACEFUL FALLBACK: If P2P is NOT active, use non-blocking check
+  // to prevent indefinite blocking when the game expects network data
+  // but we have no P2P session (offline mode). This follows Xenia's approach.
+  if (!P2PManager::Instance().IsInSession()) {
+    // Check if there's actually data to read using select with zero timeout
+    if (!HasPendingData(handle)) {
+      // No data available - return WSAEWOULDBLOCK instead of blocking
+      lastError_ = 0x2733; // WSAEWOULDBLOCK (10035)
+      return -1;
+    }
   }
 
   sockaddr_in native;
@@ -435,6 +563,24 @@ int SocketManager::RecvFrom(uint32_t handle, void *buf, int len, int flags,
   }
 
   return result;
+}
+
+// Non-blocking check for pending data (used for graceful fallback)
+bool SocketManager::HasPendingData(uint32_t handle) {
+  native_socket_t sock = GetNativeHandle(handle);
+  if (sock == INVALID_NATIVE_SOCKET) {
+    return false;
+  }
+  
+  fd_set readfds;
+  FD_ZERO(&readfds);
+  FD_SET(sock, &readfds);
+  
+  // Zero timeout = immediate return (non-blocking poll)
+  struct timeval tv = {0, 0};
+  
+  int result = ::select(static_cast<int>(sock) + 1, &readfds, nullptr, nullptr, &tv);
+  return (result > 0 && FD_ISSET(sock, &readfds));
 }
 
 int SocketManager::Select(int nfds, void *readfds, void *writefds,
@@ -734,35 +880,38 @@ uint32_t XNetGetTitleXnAddr(uint32_t caller, XNADDR *addr) {
   if (addr) {
     std::memset(addr, 0, sizeof(*addr));
 
-    // Use P2P virtual IP if in a session, otherwise use fake LAN IP
-    uint32_t localIp;
+    // Use P2P virtual IP if in a session, otherwise use consistent fake identity
     if (P2PManager::Instance().IsInSession()) {
-      localIp = P2PManager::Instance().GetLocalVirtualIp();
+      uint32_t localIp = P2PManager::Instance().GetLocalVirtualIp();
+      addr->ina = localIp;
+      addr->inaOnline = localIp;
+      addr->wPortOnline = ByteSwap(static_cast<uint16_t>(3074));
+      
+      // Still use consistent MAC/key from identity
+      const NetworkIdentity& identity = NetworkIdentity::Get();
+      std::memcpy(addr->abEnet, identity.macAddress, 6);
+      std::memcpy(addr->abOnline, identity.onlineKey, 20);
     } else {
-      localIp = 0x6401A8C0; // 192.168.1.100 (fallback for LAN)
+      // Use consistent fake identity (generated once per session)
+      const NetworkIdentity& identity = NetworkIdentity::Get();
+      addr->ina = identity.localIp;
+      addr->inaOnline = identity.onlineIp;
+      addr->wPortOnline = identity.onlinePort;
+      std::memcpy(addr->abEnet, identity.macAddress, 6);
+      std::memcpy(addr->abOnline, identity.onlineKey, 20);
     }
-
-    addr->ina = localIp;
-    addr->inaOnline = localIp;
-    addr->wPortOnline = ByteSwap(static_cast<uint16_t>(3074));
-
-    // Fake MAC address
-    addr->abEnet[0] = 0x00;
-    addr->abEnet[1] = 0x11;
-    addr->abEnet[2] = 0x22;
-    addr->abEnet[3] = 0x33;
-    addr->abEnet[4] = 0x44;
-    addr->abEnet[5] = 0x55;
   }
 
   if (s_count <= 5) {
     if (P2PManager::Instance().IsInSession()) {
-      LOGF_WARNING("[Net] XNetGetTitleXnAddr #{} -> P2P (192.168.100.x)",
-                   s_count);
+      NET_LOG_VERBOSE("XNetGetTitleXnAddr #{} -> P2P (192.168.100.x)", s_count);
     } else {
-      LOGF_WARNING(
-          "[Net] XNetGetTitleXnAddr #{} -> STATIC (fake 192.168.1.100)",
-          s_count);
+      const NetworkIdentity& identity = NetworkIdentity::Get();
+      NET_LOG_VERBOSE("XNetGetTitleXnAddr #{} -> STATIC ({}.{}.{}.{})", s_count,
+          (ntohl(identity.localIp) >> 24) & 0xFF,
+          (ntohl(identity.localIp) >> 16) & 0xFF,
+          (ntohl(identity.localIp) >> 8) & 0xFF,
+          ntohl(identity.localIp) & 0xFF);
     }
   }
 
@@ -829,8 +978,44 @@ int XNetQosLookup(uint32_t caller, uint32_t cxna, void *apxna, void *apxnkid,
 }
 
 int XNetQosRelease(uint32_t caller, void *pxnqos) {
-  LOG_WARNING("[Net] XNetQosRelease - stub");
+  NET_LOG_VERBOSE("XNetQosRelease - stub caller=0x{:08X}", caller);
   return 0;
+}
+
+// ============================================================================
+// XLive Base API Implementation
+// ============================================================================
+
+uint32_t XLiveBaseGetNatType(uint32_t caller) {
+  static int s_count = 0;
+  ++s_count;
+  
+  // Convert our NatType to Xbox XONLINE_NAT_* value
+  NatType natType = GetDetectedNatType();
+  uint32_t result;
+  
+  switch (natType) {
+    case NatType::Open:
+      result = XONLINE_NAT_OPEN;
+      break;
+    case NatType::Moderate:
+      result = XONLINE_NAT_MODERATE;
+      break;
+    case NatType::Strict:
+      result = XONLINE_NAT_STRICT;
+      break;
+    default:
+      result = XONLINE_NAT_OPEN;  // Default to Open for offline
+      break;
+  }
+  
+  if (s_count <= 5) {
+    NET_LOG_VERBOSE("XLiveBaseGetNatType #{} -> {} ({})", s_count, result,
+        natType == NatType::Open ? "OPEN" :
+        natType == NatType::Moderate ? "MODERATE" : "STRICT");
+  }
+  
+  return result;
 }
 
 } // namespace Net

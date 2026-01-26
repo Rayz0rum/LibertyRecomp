@@ -1,6 +1,7 @@
 #include "function.h"
 #include "heap.h"
 #include "memory.h"
+#include "user_profile.h"
 #include "xam.h"
 #include "xbox.h"
 #include "xdm.h"
@@ -33,6 +34,7 @@
 #include "io/net_session.h"
 #include "io/net_socket.h"
 #include "io/voice_chat.h"
+#include "menu_hooks.h"
 
 // =============================================================================
 // KERNEL PHASE SYSTEM - Fail-open waits during Boot/Init (Xenia-style)
@@ -133,6 +135,12 @@ extern "C" void sub_829D8568_hook(PPCContext &ctx,
 
 extern "C" void sub_82300C78_hook(PPCContext &ctx, uint8_t *base);
 
+// Menu hooks - monitor menu state and sync Config values
+// NOTE: sub_8213B268/B350 are lookup helpers, NOT value accessors - do not hook!
+extern "C" void sub_8212FCC8_hook(PPCContext &ctx, uint8_t *base);  // Menu frame update (monitors byte_82BEC62A)
+extern "C" void sub_821485D8_hook(PPCContext &ctx, uint8_t *base);  // Menu XML parser (Phase 2)
+extern "C" void sub_82273620_hook(PPCContext &ctx, uint8_t *base);  // GXT string lookup (Phase 3)
+
 namespace {
 
 // Patch a single entry in PPCFuncMappings by guest address
@@ -186,6 +194,12 @@ void PatchSyncPrimitives() {
   PatchFuncMapping(
       0x829D8568,
       &sub_829D8568_hook); // GPU command buffer flush - simulate consumption
+
+  // Menu hooks - monitor menu state via byte_82BEC62A and sync Config values
+  // NOTE: sub_8213B268/B350 are lookup helpers, NOT value accessors - do not hook!
+  PatchFuncMapping(0x8212FCC8, &sub_8212FCC8_hook);  // Menu frame update (monitors byte_82BEC62A)
+  PatchFuncMapping(0x821485D8, &sub_821485D8_hook);  // Menu XML parser (Phase 2 - item injection)
+  PatchFuncMapping(0x82273620, &sub_82273620_hook);  // GXT string lookup (Phase 3 - custom strings)
 
   printf("[PATCH] Sync primitive patching complete.\n");
   fflush(stdout);
@@ -243,29 +257,9 @@ inline bool IsKnownSpinWait(uint32_t funcAddr) {
 // 3. Proper synchronization that matches reference projects
 // =============================================================================
 
-// Forward declarations - actual tracking functions defined after Semaphore
-// struct
-static std::mutex g_semaphoreTrackMutex;
-static std::unordered_set<uint32_t>
-    g_blockingSemaphoreAddrs; // Guest addresses of blocking semaphores
-static std::atomic<bool> g_initComplete{false};
-static std::atomic<int> g_semaphoreWaitCount{0};
-
-// Track a semaphore address that was initialized with count=0
-void TrackBlockingSemaphoreAddr(uint32_t addr) {
-  std::lock_guard<std::mutex> lock(g_semaphoreTrackMutex);
-  g_blockingSemaphoreAddrs.insert(addr);
-}
-
-bool IsBlockingSemaphore(uint32_t addr) {
-  std::lock_guard<std::mutex> lock(g_semaphoreTrackMutex);
-  return g_blockingSemaphoreAddrs.count(addr) > 0;
-}
-
-bool IsInitComplete() { return g_initComplete.load(); }
-
-// SetInitComplete and SignalAllBlockingSemaphores defined after Semaphore
-// struct
+// PHASE 3: Downstream workarounds removed - Runtime phase now entered at
+// sub_821200D0 which breaks the circular dependency. Semaphores work properly
+// during Runtime phase so tracking/signaling workarounds are no longer needed.
 
 // =============================================================================
 // SDL Event Pumping Helper
@@ -1750,57 +1744,11 @@ struct Semaphore final : KernelObject, HostObject<XKSEMAPHORE> {
 };
 
 // =============================================================================
-// SEMAPHORE SIGNALING FUNCTIONS (defined after Semaphore struct)
+// PHASE 3: SignalAllBlockingSemaphores and SetInitComplete REMOVED
 // =============================================================================
-
-// Signal all tracked blocking semaphores - called after init completes
-// Signals unconditionally to wake workers that may have acquired and are
-// waiting again
-void SignalAllBlockingSemaphores() {
-  // Copy the set while holding the lock, then release lock before signaling
-  // This prevents deadlock when awakened threads try to track new semaphores
-  std::unordered_set<uint32_t> addrsCopy;
-  {
-    std::lock_guard<std::mutex> lock(g_semaphoreTrackMutex);
-    addrsCopy = g_blockingSemaphoreAddrs;
-  }
-
-  int signaled = 0;
-  for (uint32_t addr : addrsCopy) {
-    // Try as kernel handle first (from NtCreateSemaphore)
-    if (IsKernelObject(addr)) {
-      Semaphore *sem = GetKernelObject<Semaphore>(addr);
-      if (sem) {
-        sem->Release(1, nullptr);
-        signaled++;
-      }
-      continue;
-    }
-    // Try as guest address (from KeInitializeSemaphore)
-    XKSEMAPHORE *semaphore =
-        reinterpret_cast<XKSEMAPHORE *>(g_memory.Translate(addr));
-    if (semaphore && semaphore->Header.Type == 5) {
-      auto *object = QueryKernelObject<Semaphore>(semaphore->Header);
-      if (object) {
-        object->Release(1, nullptr);
-        signaled++;
-      }
-    }
-  }
-  if (signaled > 0) {
-    LOGF_WARNING("[SEMAPHORE_FIX] Signaled {} semaphores", signaled);
-  }
-}
-
-// Mark init as complete and signal blocked semaphores
-void SetInitComplete() {
-  if (!g_initComplete.exchange(true)) {
-    LOGF_WARNING(
-        "[SEMAPHORE_FIX] Init complete - signaling {} blocked semaphores",
-        g_blockingSemaphoreAddrs.size());
-    SignalAllBlockingSemaphores();
-  }
-}
+// These workarounds are no longer needed since Phase 1 fix ensures Runtime
+// phase is entered at sub_821200D0 (main loop entry). Semaphores work properly
+// during Runtime phase, breaking the circular dependency.
 
 // =============================================================================
 // WORKER CONTEXT REGISTRY AND SHUTDOWN
@@ -1951,11 +1899,14 @@ uint32_t XamContentGetCreator(uint32_t userIndex,
                               const XCONTENT_DATA *contentData,
                               be<uint32_t> *isCreator, be<uint64_t> *xuid,
                               XXOVERLAPPED *overlapped) {
+  // Use centralized UserProfile
+  auto& profile = Liberty::GetUserProfile();
+  
   if (isCreator)
     *isCreator = true;
 
   if (xuid)
-    *xuid = 0xB13EBABEBABEBABE;
+    *xuid = profile.xuid();
 
   return 0;
 }
@@ -1965,10 +1916,14 @@ uint32_t XamContentGetDeviceState() { return 0; }
 uint32_t XamUserGetSigninInfo(uint32_t userIndex, uint32_t flags,
                               XUSER_SIGNIN_INFO *info) {
   if (userIndex == 0) {
+    // Use centralized UserProfile ("Niko" profile)
+    auto& profile = Liberty::GetUserProfile();
+    
     memset(info, 0, sizeof(*info));
-    info->xuid = 0xB13EBABEBABEBABE;
-    info->SigninState = 1;
-    strcpy(info->Name, "SWA");
+    info->xuid = profile.xuid();
+    info->SigninState = static_cast<uint32_t>(profile.signinState());
+    strncpy(info->Name, profile.name().c_str(), sizeof(info->Name) - 1);
+    info->Name[sizeof(info->Name) - 1] = '\0';
     return 0;
   }
 
@@ -2586,6 +2541,24 @@ uint32_t NtWaitForSingleObjectEx(uint32_t Handle, uint32_t WaitMode,
     // 2. A guest dispatcher object address (XKSEMAPHORE/XKEVENT from
     // KeInitialize*) - needs QueryKernelObject
 
+    // FIX: Validate handle is in valid guest memory range before translating
+    // Valid ranges: 0x82000000-0x84000000 (heap/BSS), 0xA0000000+ (physical),
+    // 0xB0000000+ (kernel objects from NtCreate*)
+    // Reject handles in invalid ranges like 0xC0000000-0xFFFFFFFF (garbage)
+    bool isValidRange = (Handle >= 0x82000000 && Handle < 0x84000000) ||
+                        (Handle >= 0xA0000000 && Handle < 0xC0000000) ||
+                        (Handle >= 0xB0000000 && Handle < 0xC0000000);
+    if (!isValidRange) {
+      static int s_invalidHandleCount = 0;
+      static std::unordered_set<uint32_t> s_reportedHandles;
+      if (s_reportedHandles.find(Handle) == s_reportedHandles.end()) {
+        s_reportedHandles.insert(Handle);
+        LOGF_WARNING("[NtWaitEx] Unrecognized handle 0x{:08X} (occurrence #{})",
+                     Handle, ++s_invalidHandleCount);
+      }
+      return STATUS_TIMEOUT; // Return timeout to let caller retry/proceed
+    }
+
     // Check if this is a guest dispatcher object by looking at the header
     XDISPATCHER_HEADER *header =
         reinterpret_cast<XDISPATCHER_HEADER *>(g_memory.Translate(Handle));
@@ -2627,28 +2600,9 @@ uint32_t NtWaitForSingleObjectEx(uint32_t Handle, uint32_t WaitMode,
       return STATUS_TIMEOUT;
     }
 
-    // KERNEL POLICY: Handle timeout=0 polling that goes on too long
-    // Some game code busy-waits with timeout=0 polls on events that may never
-    // be signaled After excessive polling, return SUCCESS to allow progress
+    // KERNEL POLICY: Handle timeout=0 polling
     if (timeout == 0) {
-      static int s_totalPolls = 0;
-      ++s_totalPolls;
-
-      // First try the actual wait
-      uint32_t result = obj->Wait(0);
-      if (result == STATUS_SUCCESS) {
-        return result;
-      }
-
-      // If polling excessively overall, force success to break loops
-      if (s_totalPolls > 50000 && s_totalPolls % 10000 == 0) {
-        LOGF_WARNING("[NtWaitEx] POLL LIMIT: total polls={}, forcing SUCCESS "
-                     "for handle=0x{:08X}",
-                     s_totalPolls, Handle);
-        return STATUS_SUCCESS;
-      }
-
-      return result;
+      return obj->Wait(0);
     }
 
     // KERNEL POLICY: Fail-open during Boot/Init
@@ -2816,6 +2770,82 @@ void MmQueryStatistics() { LOG_UTILITY("!!! STUB !!!"); }
 // Track all created Event handles so VdSwap can signal them to unblock workers
 static std::mutex g_eventTrackMutex;
 static std::vector<uint32_t> g_trackedEventHandles;
+
+// Track all created Semaphore kernel handles so VdSwap can signal them
+static std::mutex g_semaphoreTrackMutex;
+static std::vector<uint32_t> g_trackedSemaphoreHandles;
+
+// =============================================================================
+// PHASE 3: Track guest address to kernel handle mapping
+// =============================================================================
+// Problem: VdSwap signals kernel object handles (0xA824xxxx) but workers wait
+// on guest memory addresses (0x83137B80). These may not be the same primitives.
+// Solution: Track the mapping when sync primitives are created.
+// =============================================================================
+static std::mutex g_syncPrimitiveMapMutex;
+static std::unordered_map<uint32_t, uint32_t> g_guestAddrToHandle; // guest_addr -> kernel_handle
+
+// Helper: Signal event by guest address
+static void SignalEventByGuestAddr(uint32_t guestAddr) {
+  // First try the mapping
+  {
+    std::lock_guard lock(g_syncPrimitiveMapMutex);
+    auto it = g_guestAddrToHandle.find(guestAddr);
+    if (it != g_guestAddrToHandle.end()) {
+      uint32_t handle = it->second;
+      if (IsKernelObject(handle)) {
+        Event *evt = GetKernelObject<Event>(handle);
+        if (evt) {
+          evt->Set();
+          return;
+        }
+      }
+    }
+  }
+  
+  // Fallback: Try to signal directly from guest memory
+  uint8_t *ptr = static_cast<uint8_t *>(g_memory.Translate(guestAddr));
+  if (ptr) {
+    XDISPATCHER_HEADER *header = reinterpret_cast<XDISPATCHER_HEADER *>(ptr);
+    if (header->Type == 0 || header->Type == 1) { // Event types
+      Event *evt = QueryKernelObject<Event>(*header);
+      if (evt) {
+        evt->Set();
+      }
+    }
+  }
+}
+
+// Helper: Signal semaphore by guest address
+static void SignalSemaphoreByGuestAddr(uint32_t guestAddr, int32_t count = 1) {
+  // First try the mapping
+  {
+    std::lock_guard lock(g_syncPrimitiveMapMutex);
+    auto it = g_guestAddrToHandle.find(guestAddr);
+    if (it != g_guestAddrToHandle.end()) {
+      uint32_t handle = it->second;
+      if (IsKernelObject(handle)) {
+        Semaphore *sem = GetKernelObject<Semaphore>(handle);
+        if (sem) {
+          sem->Release(count, nullptr);
+          return;
+        }
+      }
+    }
+  }
+  
+  // Fallback: Try to signal directly from guest memory
+  uint8_t *ptr = static_cast<uint8_t *>(g_memory.Translate(guestAddr));
+  if (ptr) {
+    XKSEMAPHORE *semStruct = reinterpret_cast<XKSEMAPHORE *>(ptr);
+    if (semStruct->Header.Type == 5) { // Semaphore type
+      Semaphore *sem = QueryKernelObject<Semaphore>(semStruct->Header);
+      if (sem) {
+        sem->Release(count, nullptr);
+      }
+    }
+  }
+}
 
 uint32_t NtCreateEvent(be<uint32_t> *handle, void *objAttributes,
                        uint32_t eventType, uint32_t initialState) {
@@ -3808,6 +3838,9 @@ void RtlEnterCriticalSection(XRTL_CRITICAL_SECTION *cs) {
 
   std::atomic_ref owningThread(cs->OwningThread);
 
+  // Debug: Log contention to find deadlock root cause
+  int spinCount = 0;
+  
   while (true) {
     uint32_t previousOwner = 0;
 
@@ -3815,6 +3848,16 @@ void RtlEnterCriticalSection(XRTL_CRITICAL_SECTION *cs) {
         previousOwner == thisThread) {
       cs->RecursionCount = cs->RecursionCount.get() + 1;
       return;
+    }
+
+    ++spinCount;
+    // Log at specific intervals to trace deadlock
+    if (spinCount == 1000 || spinCount == 10000 || spinCount == 50000) {
+      uint32_t csAddr = g_memory.MapVirtual(cs);
+      std::fprintf(stderr, "[CS_CONTENTION] cs=0x%08X: thisThread=0x%08X "
+                   "waiting for owner=0x%08X spins=%d\n",
+                   csAddr, thisThread, previousOwner, spinCount);
+      std::fflush(stderr);
     }
 
     owningThread.wait(previousOwner);
@@ -3857,10 +3900,12 @@ void KfReleaseSpinLock(uint32_t *spinLock) {
 
 void KfAcquireSpinLock(uint32_t *spinLock) {
   std::atomic_ref spinLockRef(*spinLock);
-
+  // Get owner ID from context, or use thread ID as fallback
+  uint32_t ownerId = g_ppcContext ? g_ppcContext->r13.u32 
+                                  : static_cast<uint32_t>(std::hash<std::thread::id>{}(std::this_thread::get_id()));
   while (true) {
     uint32_t expected = 0;
-    if (spinLockRef.compare_exchange_weak(expected, g_ppcContext->r13.u32))
+    if (spinLockRef.compare_exchange_weak(expected, ownerId))
       break;
 
     std::this_thread::yield();
@@ -3929,27 +3974,88 @@ void VdSwap() {
   }
 
   // Signal worker semaphores to process queued work
-  // Based on PPC analysis: workers wait on semaphores created during init
-  // These semaphores need periodic signaling to drive worker processing
-  static const std::vector<uint32_t> workerSemaphores = {
-      0xA8240270, 0xA82402B0, 0xA82402F0, 0xA8240370, 0xA82403B0, 0xA82403F0,
-      0xA8240430, 0xA8240470, 0xA82404B0, 0xA82404F0, 0xA8240530, 0xA8240570};
-
+  // FIX: Use dynamic tracking via SyncTable instead of hardcoded handles
+  // ROOT CAUSE: Hardcoded handles 0xA824xxxx don't match runtime 0xC834xxxx
+  // The semaphores are created at different addresses due to kernel heap relocation
   static int s_semSignalCount = 0;
-  for (uint32_t semHandle : workerSemaphores) {
-    if (IsKernelObject(semHandle)) {
-      Semaphore *sem = GetKernelObject<Semaphore>(semHandle);
-      if (sem && sem->count.load() == 0) {
-        sem->Release(1, nullptr); // Signal one worker
+  
+  // Signal SyncTable semaphores
+  auto trackedSemaphores = SyncTable_GetAllSemaphores();
+  int signaled = 0;
+  for (uint32_t semAddr : trackedSemaphores) {
+      SyncObject* obj = SyncTable_Get(semAddr);
+      if (obj && obj->signalState.load() == 0) {
+          obj->Signal(1);
+          ++signaled;
       }
-    }
   }
-
+  
+  // Also signal kernel semaphores (created via NtCreateSemaphore)
+  int kernelSignaled = 0;
+  {
+      std::lock_guard lock(g_semaphoreTrackMutex);
+      for (uint32_t semHandle : g_trackedSemaphoreHandles) {
+          if (IsKernelObject(semHandle)) {
+              Semaphore *sem = GetKernelObject<Semaphore>(semHandle);
+              if (sem && sem->count.load() == 0) {
+                  sem->Release(1, nullptr);
+                  ++kernelSignaled;
+              }
+          }
+      }
+  }
+  
   if (s_semSignalCount < 5) {
-    ++s_semSignalCount;
-    LOGF_UTILITY("VdSwap signaled {} worker semaphores",
-                 workerSemaphores.size());
+      ++s_semSignalCount;
+      LOGF_UTILITY("VdSwap signaled {}/{} SyncTable + {}/{} kernel semaphores",
+                   signaled, trackedSemaphores.size(),
+                   kernelSignaled, g_trackedSemaphoreHandles.size());
   }
+  
+  // ==========================================================================
+  // PHASE 2: Signal audio worker event at 0x83137B80 every frame
+  // ==========================================================================
+  // ROOT CAUSE: Workers wait on event at 0x83137B80 (offset 31616 from 0x83130000)
+  // but signalers (sub_82168EE8, sub_82169B00) are only called from INSIDE worker
+  // loops. This creates chicken-and-egg: workers can't wake up to signal themselves.
+  // On Xbox 360: APU interrupt handler would signal this event when audio is consumed.
+  // FIX: Signal from VdSwap every frame to simulate APU interrupt behavior.
+  // ==========================================================================
+  constexpr uint32_t AUDIO_WORKER_EVENT_ADDR = 0x83137B80;
+  SignalEventByGuestAddr(AUDIO_WORKER_EVENT_ADDR);
+  
+  // ==========================================================================
+  // PHASE 4: Signal additional NEVER_SIGNALED primitives
+  // ==========================================================================
+  // These sync primitives are supposed to be signaled by Xbox hardware/kernel
+  // callbacks that don't exist in static recompilation.
+  // ==========================================================================
+  
+  // Audio work queue semaphore
+  constexpr uint32_t AUDIO_WORK_QUEUE_SEM = 0x83130008;
+  SignalSemaphoreByGuestAddr(AUDIO_WORK_QUEUE_SEM);
+  
+  // File I/O completion events (if file ops have completed)
+  constexpr uint32_t FILE_IO_EVENT_1 = 0x82A9800C;
+  constexpr uint32_t FILE_IO_EVENT_2 = 0x82AA0010;
+  constexpr uint32_t FILE_IO_EVENT_3 = 0x82AA0014;
+  constexpr uint32_t FILE_IO_EVENT_4 = 0x82AA0018;
+  SignalEventByGuestAddr(FILE_IO_EVENT_1);
+  SignalEventByGuestAddr(FILE_IO_EVENT_2);
+  SignalEventByGuestAddr(FILE_IO_EVENT_3);
+  SignalEventByGuestAddr(FILE_IO_EVENT_4);
+  
+  // Streaming I/O event
+  constexpr uint32_t STREAMING_IO_EVENT = 0x83131E10;
+  SignalEventByGuestAddr(STREAMING_IO_EVENT);
+  
+  // XamTaskSchedule completion event
+  constexpr uint32_t XAM_TASK_EVENT = 0x83131B34;
+  SignalEventByGuestAddr(XAM_TASK_EVENT);
+  
+  // GPU/D3D sync event
+  constexpr uint32_t GPU_SYNC_EVENT = 0x82000768;
+  SignalEventByGuestAddr(GPU_SYNC_EVENT);
 }
 
 void VdGetSystemCommandBuffer() {
@@ -4219,6 +4325,39 @@ void VdSetDisplayMode() { LOG_UTILITY("!!! STUB !!!"); }
 // The timer fires the registered graphics interrupt callback and wakes event
 // waiters.
 
+// =============================================================================
+// OPTION B: Read GPU context dynamically from global variable
+// =============================================================================
+// The game stores the GPU context pointer at a global variable accessed via
+// double-dereference: *[*[0x82000768]]. This is the same pattern used by
+// 13+ PPC functions including sub_829D7368 and sub_829D4C48.
+//
+// Memory layout: PPC_MEMORY_SIZE = 0x100000000 (4GB)
+// Guest address X maps directly to host: base + X
+// =============================================================================
+static uint32_t ReadGpuContextFromGlobal() {
+    // GOT entry at guest address 0x82000768 contains pointer to global variable
+    // The global variable contains the GPU context pointer
+    constexpr uint32_t GOT_ENTRY_GUEST = 0x82000768;
+
+    if (!g_memory.base) return 0;
+
+    // Step 1: Read GOT entry (big-endian pointer to global variable)
+    // Direct mapping: guest address -> base + address
+    uint32_t* gotEntryHost = reinterpret_cast<uint32_t*>(g_memory.base + GOT_ENTRY_GUEST);
+    uint32_t globalAddr = __builtin_bswap32(*gotEntryHost);
+
+    // Validate global address is in valid Xbox memory range
+    if (globalAddr == 0 || globalAddr >= 0xF0000000) return 0;
+
+    // Step 2: Read GPU context pointer from global (big-endian)
+    // Direct mapping: guest address -> base + address
+    uint32_t* globalHost = reinterpret_cast<uint32_t*>(g_memory.base + globalAddr);
+    uint32_t gpuContext = __builtin_bswap32(*globalHost);
+
+    return gpuContext;
+}
+
 static std::atomic<bool> g_vblankThreadRunning{false};
 static std::thread g_vblankThread;
 
@@ -4273,18 +4412,38 @@ void StartVBlankTimer() {
             g_memory.FindFunction(g_gpuRingBuffer.interruptCallback);
         if (callback) {
           // Create a minimal context for VBlank callback
-          // Cannot use g_ppcContext - it's thread_local and null here
           static PPCContext vblankCtx{};
           vblankCtx.r3.u32 = 0; // Interrupt type 0 = VBlank
           vblankCtx.r4.u32 = g_gpuRingBuffer.interruptUserData;
           vblankCtx.r1.u64 = 0x80080000;  // Minimal stack pointer
           vblankCtx.r13.u64 = 0x80000D20; // Minimal TLS base
+          // CRITICAL: Set thread-local g_ppcContext so spinlocks work
+          SetPPCContext(vblankCtx);
           callback(vblankCtx, g_memory.base);
 
           if (vblankCount <= 5 || vblankCount % 60 == 0) {
             LOGF_UTILITY("[VBlank] Fired callback #{} at 60Hz", vblankCount);
           }
         }
+      }
+
+      // =================================================================
+      // CRITICAL FIX: Signal tracked kernel semaphores on VBlank
+      // =================================================================
+      // The game threads wait on semaphores but VdSwap only gets called when
+      // the game presents a frame. If the game is blocked waiting for
+      // semaphores, it can't call VdSwap. Signal semaphores here to break
+      // the deadlock cycle.
+      {
+          std::lock_guard lock(g_semaphoreTrackMutex);
+          for (uint32_t semHandle : g_trackedSemaphoreHandles) {
+              if (IsKernelObject(semHandle)) {
+                  Semaphore *sem = GetKernelObject<Semaphore>(semHandle);
+                  if (sem && sem->count.load() == 0) {
+                      sem->Release(1, nullptr);
+                  }
+              }
+          }
       }
 
       // Increment event generation to wake any waiters
@@ -4745,62 +4904,144 @@ uint32_t XMsgInProcessCall(uint32_t app, uint32_t message, be<uint32_t> *param1,
 }
 
 uint32_t XamUserReadProfileSettings(uint32_t titleId, uint32_t userIndex,
-                                uint32_t xuidCount, uint64_t *xuids,
-                                uint32_t settingCount, uint32_t *settingIds,
-                                be<uint32_t> *bufferSize, void *buffer,
-                                void *overlapped) {
-  // XUSER_READ_PROFILE_SETTING_RESULT structure layout (Xbox 360 SDK):
-  // Offset 0:   dwSettingsLen (total buffer size used)
-  // Offset 4:   pSettings (pointer to settings data area)
-  // Offset 192: dwNumSettings (NUMBER OF SETTINGS - CRITICAL)
-  // Offset 196: pSettingsArray (pointer to XUSER_PROFILE_SETTING array)
-  //
-  // The game reads offset 192 in sub_822EF570 as a loop count.
-  // If this is garbage, the loop runs 100k+ times causing runaway allocations.
-  
+                                    uint32_t xuidCount, uint64_t *xuids,
+                                    uint32_t settingCount, uint32_t *settingIds,
+                                    be<uint32_t> *bufferSize, void *buffer,
+                                    void *overlapped) {
+  // Xbox 360 structure layout (from Xenia/XDK):
+  // X_USER_READ_PROFILE_SETTINGS (8 bytes):
+  //   Offset 0: setting_count (uint32_t)
+  //   Offset 4: settings_ptr (uint32_t - guest pointer to settings array)
+  // X_USER_PROFILE_SETTING (40 bytes each):
+  //   Offset 0:  from (uint32_t - 0=not set, 1=global, 2=title-specific)
+  //   Offset 4:  unk04 (uint32_t)
+  //   Offset 8:  user_index or xuid (8 bytes)
+  //   Offset 16: setting_id (uint32_t)
+  //   Offset 20: unk14 (uint32_t)
+  //   Offset 24: data (X_USER_PROFILE_SETTING_DATA - 16 bytes)
+  //     Offset 24+0: type (uint8_t)
+  //     Offset 24+4: unk_4 (uint32_t)
+  //     Offset 24+8: value (int32/float/pointer based on type)
+
   constexpr uint32_t ERROR_INSUFFICIENT_BUFFER = 122;
-  constexpr uint32_t MIN_BUFFER_SIZE = 320; // Need enough for all offsets the game reads
-  
-  if (buffer != nullptr && bufferSize != nullptr && *bufferSize >= MIN_BUFFER_SIZE) {
-    // Zero the entire buffer first
-    memset(buffer, 0, *bufferSize);
-    
-    uint8_t* resultBytes = reinterpret_cast<uint8_t*>(buffer);
-    
-    // Offset 0: dwSettingsLen = minimal header size (big-endian)
-    *reinterpret_cast<be<uint32_t>*>(resultBytes + 0) = MIN_BUFFER_SIZE;
-    
-    // Offset 4: pSettings = offset to settings area after header (big-endian)
-    *reinterpret_cast<be<uint32_t>*>(resultBytes + 4) = MIN_BUFFER_SIZE;
-    
-    // Offset 192: dwNumSettings = 0 (NO SETTINGS RETURNED) - CRITICAL FIX
-    // This prevents the runaway allocation loop in sub_822EF570
-    *reinterpret_cast<be<uint32_t>*>(resultBytes + 192) = 0;
-    
-    // Offset 196: pSettingsArray = NULL (no settings)
-    *reinterpret_cast<be<uint32_t>*>(resultBytes + 196) = 0;
-    
-    printf("[XamUserReadProfileSettings] SUCCESS: Initialized buffer size=%u, dwNumSettings=0 at offset 192\n", 
-           bufferSize->get());
-    
-    // Handle overlapped completion if provided
-    if (overlapped != nullptr) {
-      XXOVERLAPPED* pOverlapped = reinterpret_cast<XXOVERLAPPED*>(overlapped);
-      pOverlapped->dwCompletionContext = GuestThread::GetCurrentThreadId();
-      pOverlapped->Error = 0;
-      pOverlapped->Length = 0;
+  constexpr uint32_t HEADER_SIZE = 8;  // X_USER_READ_PROFILE_SETTINGS
+  constexpr uint32_t SETTING_SIZE = 40;  // X_USER_PROFILE_SETTING
+
+  // Validate inputs
+  if (settingCount < 1 || settingCount > 32) {
+    printf("[XamUserReadProfileSettings] Invalid settingCount=%u\n", settingCount);
+    return 0x80070057;  // E_INVALIDARG
+  }
+
+  if (!bufferSize) {
+    printf("[XamUserReadProfileSettings] bufferSize is NULL\n");
+    return 0x80070057;  // E_INVALIDARG
+  }
+
+  // Calculate required buffer size
+  // Header (8) + settings array (40 * count) + extra for data pointers
+  uint32_t neededSize = HEADER_SIZE + (SETTING_SIZE * settingCount) + 256;
+
+  // If buffer too small or NULL, return required size
+  if (!buffer || *bufferSize < neededSize) {
+    if (*bufferSize == 0) {
+      *bufferSize = neededSize;
     }
-    
-    return 0; // ERROR_SUCCESS
-  } else if (bufferSize != nullptr) {
-    // Buffer too small or NULL - return required size and ERROR_INSUFFICIENT_BUFFER
-    *bufferSize = MIN_BUFFER_SIZE;
-    printf("[XamUserReadProfileSettings] Buffer too small/NULL, returning required size=%u, error=122\n", 
-           MIN_BUFFER_SIZE);
+    printf("[XamUserReadProfileSettings] Buffer insufficient: have=%u need=%u\n",
+           bufferSize->get(), neededSize);
     return ERROR_INSUFFICIENT_BUFFER;
   }
-  
-  return 0; // ERROR_SUCCESS (no buffer size pointer provided)
+
+  // Get our user profile
+  auto& profile = Liberty::GetUserProfile();
+
+  // Zero the buffer
+  memset(buffer, 0, *bufferSize);
+
+  uint8_t* bufPtr = reinterpret_cast<uint8_t*>(buffer);
+
+  // Write header (X_USER_READ_PROFILE_SETTINGS)
+  // Offset 0: setting_count
+  *reinterpret_cast<be<uint32_t>*>(bufPtr + 0) = settingCount;
+
+  // Offset 4: settings_ptr - offset from buffer start (relative pointer)
+  // Xbox 360 code will add this to buffer base address to get settings array
+  *reinterpret_cast<be<uint32_t>*>(bufPtr + 4) = HEADER_SIZE;
+
+  // Write each setting (X_USER_PROFILE_SETTING array starting at offset 8)
+  uint8_t* settingPtr = bufPtr + HEADER_SIZE;
+
+  for (uint32_t i = 0; i < settingCount; ++i) {
+    uint32_t settingId = settingIds[i];
+    auto* setting = profile.getSetting(settingId);
+
+    // Offset 0: from (0=not set, 1=global, 2=title-specific)
+    if (setting && setting->isSet) {
+      uint32_t from = setting->isTitleSpecific() ? 2 : 1;
+      *reinterpret_cast<be<uint32_t>*>(settingPtr + 0) = from;
+    } else {
+      *reinterpret_cast<be<uint32_t>*>(settingPtr + 0) = 0;
+    }
+
+    // Offset 4: unk04 = 0
+    *reinterpret_cast<be<uint32_t>*>(settingPtr + 4) = 0;
+
+    // Offset 8: xuid or user_index
+    if (xuidCount > 0 && xuids != nullptr) {
+      *reinterpret_cast<be<uint64_t>*>(settingPtr + 8) = profile.xuid();
+    } else {
+      *reinterpret_cast<be<uint32_t>*>(settingPtr + 8) = userIndex;
+    }
+
+    // Offset 16: setting_id
+    *reinterpret_cast<be<uint32_t>*>(settingPtr + 16) = settingId;
+
+    // Offset 20: unk14 = 0
+    *reinterpret_cast<be<uint32_t>*>(settingPtr + 20) = 0;
+
+    // Offset 24: data (X_USER_PROFILE_SETTING_DATA)
+    if (setting && setting->isSet) {
+      // Write type byte at offset 24
+      settingPtr[24] = static_cast<uint8_t>(setting->type);
+
+      // Write value starting at offset 24+8 (based on type)
+      switch (setting->type) {
+        case Liberty::ProfileSettingType::Int32: {
+          auto* intSetting = static_cast<Liberty::Int32Setting*>(setting);
+          *reinterpret_cast<be<int32_t>*>(settingPtr + 32) = intSetting->value;
+          break;
+        }
+        case Liberty::ProfileSettingType::Float: {
+          auto* floatSetting = static_cast<Liberty::FloatSetting*>(setting);
+          *reinterpret_cast<be<float>*>(settingPtr + 32) = floatSetting->value;
+          break;
+        }
+        case Liberty::ProfileSettingType::Int64: {
+          auto* int64Setting = static_cast<Liberty::Int64Setting*>(setting);
+          *reinterpret_cast<be<int64_t>*>(settingPtr + 32) = int64Setting->value;
+          break;
+        }
+        default:
+          // For complex types (unicode, binary), leave as 0 for now
+          break;
+      }
+    }
+
+    settingPtr += SETTING_SIZE;
+  }
+
+  printf("[XamUserReadProfileSettings] SUCCESS: Returned %u settings for "
+         "profile \"%s\"\n", settingCount, profile.name().c_str());
+
+  // Handle overlapped completion if provided
+  if (overlapped != nullptr) {
+    XXOVERLAPPED *pOverlapped = reinterpret_cast<XXOVERLAPPED *>(overlapped);
+    pOverlapped->dwCompletionContext = GuestThread::GetCurrentThreadId();
+    pOverlapped->Error = 0;
+    pOverlapped->Length = neededSize;
+  }
+
+  return 0; // ERROR_SUCCESS
 }
 
 // =============================================================================
@@ -4965,15 +5206,13 @@ uint32_t NtCreateSemaphore(be<uint32_t> *Handle,
   *Handle = GetKernelHandle(sem);
   uint32_t handle = *Handle;
 
-  // Track blocking semaphores (count=0) for signaling after init
-  if (InitialCount == 0) {
-    // Store the kernel handle for later signaling
-    std::lock_guard<std::mutex> lock(g_semaphoreTrackMutex);
-    g_blockingSemaphoreAddrs.insert(handle); // Track handle directly
-    LOGF_WARNING("[NtCreateSemaphore] #{} handle=0x{:08X} count=0 max={} - "
-                 "TRACKED for signaling",
-                 s_count, handle, MaximumCount);
-  } else if (s_count <= 50) {
+  // Track semaphore handle for VdSwap signaling
+  {
+    std::lock_guard lock(g_semaphoreTrackMutex);
+    g_trackedSemaphoreHandles.push_back(handle);
+  }
+
+  if (s_count <= 50) {
     LOGF_WARNING("[NtCreateSemaphore] #{} handle=0x{:08X} count={} max={}",
                  s_count, handle, InitialCount, MaximumCount);
   }
@@ -5424,14 +5663,15 @@ void KeInitializeSemaphore(XKSEMAPHORE *semaphore, uint32_t count,
 
   auto *object = QueryKernelObject<Semaphore>(semaphore->Header);
 
-  // Track semaphores initialized with count=0 (will block immediately)
+  // PHASE 3: Track guest address to kernel handle mapping
   uint32_t semAddr = (uint32_t)((uint8_t *)semaphore - g_memory.base);
-  if (count == 0) {
-    TrackBlockingSemaphoreAddr(semAddr);
-    LOGF_WARNING("[KeInitializeSemaphore] #{} BLOCKING sem=0x{:08X} count=0 "
-                 "limit={} - TRACKED",
-                 s_count, semAddr, limit);
-  } else if (s_count <= 30) {
+  if (object) {
+    uint32_t handle = GetKernelHandle(object);
+    std::lock_guard lock(g_syncPrimitiveMapMutex);
+    g_guestAddrToHandle[semAddr] = handle;
+  }
+  
+  if (s_count <= 30) {
     LOGF_WARNING(
         "[KeInitializeSemaphore] #{} sem=0x{:08X} count={} limit={} object={}",
         s_count, semAddr, count, limit, object ? "OK" : "NULL");
@@ -5589,9 +5829,12 @@ uint32_t XamUserCreateStatsEnumerator(uint32_t titleId, uint32_t userIndex,
 uint32_t XamUserGetName(uint32_t userIndex, char *buffer, uint32_t bufferSize) {
   if (userIndex != 0)
     return ERROR_NO_SUCH_USER;
+  
+  // Use centralized UserProfile ("Niko" profile)
+  auto& profile = Liberty::GetUserProfile();
+  
   if (buffer && bufferSize > 0) {
-    const char *name = "Player";
-    strncpy(buffer, name, bufferSize - 1);
+    strncpy(buffer, profile.name().c_str(), bufferSize - 1);
     buffer[bufferSize - 1] = '\0';
   }
   return ERROR_SUCCESS;
@@ -5600,8 +5843,12 @@ uint32_t XamUserGetName(uint32_t userIndex, char *buffer, uint32_t bufferSize) {
 uint32_t XamUserGetXUID(uint32_t userIndex, uint64_t *xuid) {
   if (userIndex != 0)
     return ERROR_NO_SUCH_USER;
+  
+  // Use centralized UserProfile
+  auto& profile = Liberty::GetUserProfile();
+  
   if (xuid)
-    *xuid = 0x0001000000000001ULL; // Fake XUID
+    *xuid = profile.xuid();
   return ERROR_SUCCESS;
 }
 
@@ -5820,71 +6067,10 @@ int32_t NetDll_WSAGetLastError() {
 // sub_829A1F00 - the actual file loading function
 // =============================================================================
 
-// Hook sub_827DAE40 - Worker thread entry point (streaming workers)
-// Previously STUBBED: This function called an indirect task function that
-// blocks forever FIX: Execute the task function ONCE synchronously, then return
-// This allows resource loading to complete while avoiding the infinite
-// semaphore-wait loop
-//
-// CRITICAL: Startup context structure is:
-//   [0] = task function pointer
-//   [1] = REAL worker context (with semaphores at +36, +40)
-// Must pass ctxData[1] to task function, NOT the startup context!
+// Hook sub_827DAE40 - Worker thread entry point (pass-through)
 extern "C" void __imp__sub_827DAE40(PPCContext &ctx, uint8_t *base);
 PPC_FUNC(sub_827DAE40) {
-  static int s_count = 0;
-  ++s_count;
-
-  uint32_t startupContext = ctx.r3.u32; // Startup context pointer
-
-  // Validate context pointer
-  if (startupContext < 0x80000000 || startupContext >= 0x90000000) {
-    LOGF_WARNING("[STREAMING_WORKER] sub_827DAE40 #{} INVALID context 0x{:08X} "
-                 "- skipping",
-                 s_count, startupContext);
-    ctx.r3.u32 = 0;
-    return;
-  }
-
-  uint32_t *ctxData = reinterpret_cast<uint32_t *>(base + startupContext);
-  uint32_t taskFunc = ByteSwap(ctxData[0]);    // [0] = task function
-  uint32_t realContext = ByteSwap(ctxData[1]); // [1] = REAL worker context
-
-  LOGF_WARNING("[STREAMING_WORKER] sub_827DAE40 #{} startupCtx=0x{:08X} "
-               "taskFunc=0x{:08X} realCtx=0x{:08X}",
-               s_count, startupContext, taskFunc, realContext);
-
-  // Execute the task function synchronously instead of blocking on semaphore
-  if (taskFunc != 0 && taskFunc >= 0x82000000 && taskFunc < 0x83000000) {
-    auto func = g_memory.FindFunction(taskFunc);
-    if (func) {
-      LOGF_WARNING("[STREAMING_WORKER] sub_827DAE40 #{} EXECUTING taskFunc "
-                   "0x{:08X} with realCtx=0x{:08X}",
-                   s_count, taskFunc, realContext);
-
-      // Execute task with REAL context (has semaphores), not startup context
-      PPCContext taskCtx = ctx;
-      taskCtx.r3.u32 =
-          realContext; // FIX: Pass real context, not startup context
-      func(taskCtx, base);
-
-      LOGF_WARNING(
-          "[STREAMING_WORKER] sub_827DAE40 #{} taskFunc 0x{:08X} COMPLETED",
-          s_count, taskFunc);
-    } else {
-      LOGF_WARNING("[STREAMING_WORKER] sub_827DAE40 #{} taskFunc 0x{:08X} NOT "
-                   "FOUND - skipping",
-                   s_count, taskFunc);
-    }
-  } else {
-    LOGF_WARNING("[STREAMING_WORKER] sub_827DAE40 #{} taskFunc 0x{:08X} OUT OF "
-                 "RANGE - skipping",
-                 s_count, taskFunc);
-  }
-
-  // Return success - don't loop (original would block forever on semaphore)
-  ctx.r3.u32 = 0;
-  return;
+  __imp__sub_827DAE40(ctx, base);
 }
 
 // =============================================================================
@@ -6196,6 +6382,11 @@ PPC_FUNC(sub_829A64C0) {
   ++s_count;
   static int s_fixCount = 0;
 
+  // Force HEAP_ZERO_MEMORY flag (0x8) on ALL allocations
+  // Xbox 360 allocators return zeroed memory, game code expects this behavior
+  // Without this, reused memory blocks contain garbage causing hash table corruption
+  ctx.r4.u32 |= 0x8;
+
   uint32_t heapArg = ctx.r3.u32;
 
   if (heapArg == 0) {
@@ -6271,53 +6462,9 @@ PPC_FUNC(sub_829A64C0) {
 // addr!)
 // - The inner loop iterates billions of times causing hang
 //
-// FIX: Detect garbage dimensions and skip the call entirely
+// sub_829E4970 - Texture tiling (pass-through)
 extern "C" void __imp__sub_829E4970(PPCContext &ctx, uint8_t *base);
 PPC_FUNC(sub_829E4970) {
-  static int s_count = 0;
-  ++s_count;
-  static int s_skipCount = 0;
-
-  uint32_t dest = ctx.r3.u32;
-  uint32_t width = ctx.r4.u32;
-  uint32_t height = ctx.r5.u32;
-  uint32_t offsetStruct = ctx.r6.u32;
-  uint32_t src = ctx.r7.u32;
-  uint32_t bpp = ctx.r10.u32;
-
-  // CRITICAL: Detect garbage parameters that would cause infinite loop
-  // Valid texture dimensions: 1-8192, valid bpp: 1-16
-  // Garbage indicators: dimensions > 16384, or dimensions look like addresses
-  // (> 0x80000000)
-  bool hasGarbageParams = false;
-
-  if (width > 16384 || height > 16384) {
-    hasGarbageParams = true;
-  }
-  if (width > 0x80000000 || height > 0x80000000) {
-    hasGarbageParams = true;
-  }
-  if (bpp == 0 || bpp > 16) {
-    hasGarbageParams = true;
-  }
-
-  // Log parameters (first few and periodically)
-  if (s_count <= 5 || s_count % 500 == 0) {
-    LOGF_WARNING(
-        "[TEXTURE_TILE] #{} w={} h={} bpp={} dest=0x{:08X} src=0x{:08X}",
-        s_count, width, height, bpp, dest, src);
-  }
-
-  if (hasGarbageParams) {
-    if (++s_skipCount <= 10) {
-      LOGF_WARNING("[TEXTURE_TILE] #{} SKIPPING - garbage params: w=0x{:08X} "
-                   "h=0x{:08X} bpp={}",
-                   s_count, width, height, bpp);
-    }
-    // Skip the call - don't process garbage dimensions
-    return;
-  }
-
   __imp__sub_829E4970(ctx, base);
 }
 
@@ -6401,53 +6548,10 @@ PPC_FUNC(sub_829CFED0) {
 // =============================================================================
 // sub_82859E98 - Dictionary/Hash Table Lookup with Pointer Validation
 // =============================================================================
-// This function looks up entries in a structure. It crashes because:
-// - r31+20 contains a pointer that's garbage (0x100000000+)
-// - When added to base, this gives 0x400000000 causing EXC_BAD_ACCESS
-//
-// FIX: Validate pointers before dereferencing
+// sub_82859E98 - Structure lookup (pass-through)
+// =============================================================================
 extern "C" void __imp__sub_82859E98(PPCContext &ctx, uint8_t *base);
 PPC_FUNC(sub_82859E98) {
-  static int s_count = 0;
-  ++s_count;
-
-  uint32_t a1 = ctx.r3.u32; // Structure pointer
-  uint32_t a2 = ctx.r4.u32; // Index/key
-
-  // Early return if a2 is 0 (matches decompiled logic)
-  if (a2 == 0) {
-    ctx.r3.u32 = 0;
-    return;
-  }
-
-  // Compute v5 = 48 * a2 + *(a1 + 8) - 48
-  uint32_t basePtr = PPC_LOAD_U32(a1 + 8);
-  uint32_t v5 = 48 * a2 + basePtr - 48;
-
-  // Validate v5 is in a reasonable range
-  if (v5 < 0x80000000 || v5 > 0xE0000000) {
-    if (s_count <= 10) {
-      LOGF_WARNING("[sub_82859E98] #{} INVALID v5=0x{:08X} (a1=0x{:08X} a2={} "
-                   "basePtr=0x{:08X}) - returning 0",
-                   s_count, v5, a1, a2, basePtr);
-    }
-    ctx.r3.u32 = 0;
-    return;
-  }
-
-  // Check the pointer at v5+20
-  uint32_t ptrAtV5_20 = PPC_LOAD_U32(v5 + 20);
-  if (ptrAtV5_20 < 0x80000000 || ptrAtV5_20 > 0xE0000000) {
-    if (s_count <= 10) {
-      LOGF_WARNING("[sub_82859E98] #{} INVALID ptr at v5+20=0x{:08X} "
-                   "(v5=0x{:08X}) - returning 0",
-                   s_count, ptrAtV5_20, v5);
-    }
-    ctx.r3.u32 = 0;
-    return;
-  }
-
-  // Pointers look valid, proceed with original function
   __imp__sub_82859E98(ctx, base);
 }
 
@@ -7938,8 +8042,94 @@ PPC_FUNC(sub_8297B8C0) {
 // =============================================================================
 // FIXED: Let original run - no blocking detected in call tree.
 // This triggers XAudioRegisterRenderDriverClient via vtable call.
+// AUDIO FIX: Also initialize audio manager (sub_82168C08) here since
+// XAudioRegisterRenderDriverClient is never reached in practice.
 // =============================================================================
 extern "C" void __imp__sub_829735C8(PPCContext &ctx, uint8_t *base);
+
+// Helper to initialize audio manager - called from sub_829735C8
+// Audio manager pointer address: 0x83137CA8 = 0x83130000 + 31912
+constexpr uint32_t AUDIO_MGR_PTR = 0x83137CA8;
+
+static std::atomic<bool> s_audioManagerInitAttempted{false};
+static void TryInitializeAudioManager(PPCContext &ctx, uint8_t *base) {
+  // Only attempt once
+  if (s_audioManagerInitAttempted.exchange(true)) {
+    return;
+  }
+  
+  // Check if already initialized
+  uint32_t existingPtr = PPC_LOAD_U32(AUDIO_MGR_PTR);
+  if (existingPtr != 0) {
+    printf("[AUDIO] Audio manager already set to 0x%08X, skipping init\n", existingPtr);
+    fflush(stdout);
+    return;
+  }
+  
+  printf("[AUDIO] Attempting audio manager init (sub_82168C08)...\n");
+  fflush(stdout);
+  
+  // Allocate minimal audio config structure
+  // sub_82168D10 reads from offsets 0, 1, 2, 4
+  struct AudioConfig {
+    uint8_t channelCount;     // offset 0 - min 6
+    uint8_t multiplier;       // offset 1
+    uint8_t formatIndex;      // offset 2
+    uint8_t padding;          // offset 3
+    uint32_t formatTable;     // offset 4 (big-endian, 0 = use default)
+  };
+  
+  auto* config = static_cast<AudioConfig*>(g_userHeap.Alloc(sizeof(AudioConfig)));
+  if (!config) {
+    printf("[AUDIO] Failed to allocate audio config!\n");
+    fflush(stdout);
+    s_audioManagerInitAttempted = false;
+    return;
+  }
+  
+  config->channelCount = 6;
+  config->multiplier = 0;
+  config->formatIndex = 0;
+  config->padding = 0;
+  config->formatTable = 0;  // NULL = use default at 0x820ADC70
+  
+  uint32_t configAddr = g_memory.MapVirtual(config);
+  printf("[AUDIO] Audio config at 0x%08X, calling sub_82168C08...\n", configAddr);
+  fflush(stdout);
+  
+  // Find and call sub_82168C08
+  auto audioInitFunc = g_memory.FindFunction(0x82168C08);
+  if (!audioInitFunc) {
+    printf("[AUDIO] ERROR: Could not find sub_82168C08!\n");
+    fflush(stdout);
+    s_audioManagerInitAttempted = false;
+    return;
+  }
+  
+  // Set up context for call
+  // Save current context
+  uint32_t saved_r3 = ctx.r3.u32;
+  uint32_t saved_r4 = ctx.r4.u32;
+  
+  ctx.r3.u32 = configAddr;
+  ctx.r4.u32 = 0;  // No callback param needed
+  
+  audioInitFunc(ctx, base);
+  
+  // Restore context
+  ctx.r3.u32 = saved_r3;
+  ctx.r4.u32 = saved_r4;
+  
+  // Check result
+  uint32_t audioMgrPtr = PPC_LOAD_U32(AUDIO_MGR_PTR);
+  if (audioMgrPtr != 0) {
+    printf("[AUDIO] Audio manager initialized! Pointer=0x%08X\n", audioMgrPtr);
+  } else {
+    printf("[AUDIO] Audio manager init FAILED - pointer still NULL\n");
+  }
+  fflush(stdout);
+}
+
 PPC_FUNC(sub_829735C8) {
   static int s_count = 0;
   ++s_count;
@@ -7952,6 +8142,12 @@ PPC_FUNC(sub_829735C8) {
 
   if (s_count <= 3) {
     LOG_WARNING("[AUDIO] sub_829735C8 EXIT - audio init complete");
+  }
+  
+  // After media init completes, try to initialize the audio manager
+  // This ensures 0x83137CA8 is set before any workers try to read it
+  if (s_count == 1) {
+    TryInitializeAudioManager(ctx, base);
   }
 }
 
@@ -8161,12 +8357,11 @@ PPC_FUNC(sub_827DAC78) {
     printf("[SYNC-TABLE] CREATE semaphore @ 0x%08X (caller=0x%08X) total=%d\n",
            resultHandle, callerLR, s_count);
     fflush(stdout);
-    if (originalCount == 0) {
-      TrackBlockingSemaphoreAddr(resultHandle); // Also track for fail-open
-      if (s_count <= 50)
-        printf("[sub_827DAC78] [SEM_CREATE] sub_827DAC78 #%d SYNC_TABLE "
-               "handle=0x%08X count=0 max=0\n",
-               s_count, resultHandle);
+    // PHASE 3: Tracking removed - semaphores work properly during Runtime
+    if (originalCount == 0 && s_count <= 50) {
+      printf("[sub_827DAC78] [SEM_CREATE] sub_827DAC78 #%d SYNC_TABLE "
+             "handle=0x%08X count=0 max=0\n",
+             s_count, resultHandle);
     }
   }
 }
@@ -8187,29 +8382,10 @@ PPC_FUNC(sub_827DAF50) {
                s_count, ctx.r3.u32);
 }
 
-// sub_827DACD8 - Semaphore wait with timeout fallback
-// This wraps the original function but adds timeout to prevent infinite blocks
+// sub_827DACD8 - Semaphore wait (pass-through to original)
 extern "C" void __imp__sub_827DACD8(PPCContext &ctx, uint8_t *base);
 PPC_FUNC(sub_827DACD8) {
-  static int s_count = 0;
-  ++s_count;
-  uint32_t semHandle = ctx.r3.u32;
-
-  // Null handle - return success immediately (matches original behavior)
-  if (semHandle == 0) {
-    ctx.r3.u32 = 1;
-    return;
-  }
-
-  // Log first few calls
-  if (s_count <= 20 || s_count % 500 == 0) {
-    printf("[sub_827DACD8] #%d sem=0x%08X\n", s_count, semHandle);
-    fflush(stdout);
-  }
-
-  // Call original with a short internal timeout mechanism
-  // The original function calls sub_829A2380 which we've hooked to return
-  // immediately So this should not block
+  // Pass through to original implementation
   __imp__sub_827DACD8(ctx, base);
 }
 
@@ -8254,7 +8430,7 @@ PPC_FUNC(sub_827DE858) {
   return;
 }
 
-// MarkInitComplete is now deprecated - use SetInitComplete() directly
+// PHASE 3: MarkInitComplete and SetInitComplete removed - Runtime entered at sub_821200D0
 
 PPC_FUNC(sub_827DADB0) {
   static int s_count = 0;
@@ -9950,9 +10126,33 @@ extern "C" void __imp__sub_82851F30(PPCContext &ctx, uint8_t *base);
 PPC_FUNC(sub_82851F30) {
   static int s_count = 0;
   ++s_count;
-  LOGF_WARNING("[sub_82856C90] sub_82851F30 ENTER #{}", s_count);
+  
+  printf("[GPU_INIT_DEBUG] sub_82851F30 ENTER #%d\n", s_count);
+  
+  // Check the GPU skip flag at 0x83124DF0
+  // If this is non-zero, sub_829D0268 (GPU init) is skipped!
+  constexpr uint32_t GPU_SKIP_FLAG_GUEST = 0x83124DF0;
+  constexpr uint32_t GPU_SKIP_FLAG_OFFSET = GPU_SKIP_FLAG_GUEST - 0x80000000;
+  
+  uint32_t skipFlagBefore = 0;
+  if (g_memory.base) {
+    uint32_t* skipFlag = reinterpret_cast<uint32_t*>(g_memory.base + GPU_SKIP_FLAG_OFFSET);
+    skipFlagBefore = __builtin_bswap32(*skipFlag);
+    
+    printf("[GPU_INIT_DEBUG] GPU_SKIP_FLAG=0x%08X (at 0x%08X)\n", skipFlagBefore, GPU_SKIP_FLAG_GUEST);
+    
+    // FORCE GPU INIT: Clear the skip flag so GPU init runs
+    if (skipFlagBefore != 0) {
+      *skipFlag = 0;  // Clear flag to force GPU init
+      printf("[GPU_INIT_DEBUG] FORCING GPU_SKIP_FLAG to 0 (was 0x%08X)\n", skipFlagBefore);
+    }
+  }
+  
   __imp__sub_82851F30(ctx, base);
-  LOGF_WARNING("[sub_82856C90] sub_82851F30 EXIT #{}", s_count);
+  
+  // Check what GPU context global looks like after
+  uint32_t gpuContext = ReadGpuContextFromGlobal();
+  printf("[GPU_INIT_DEBUG] sub_82851F30 EXIT #%d GPU_CONTEXT=0x%08X\n", s_count, gpuContext);
 }
 
 // Trace internal calls of sub_82851F30 to find blocker
@@ -9983,14 +10183,91 @@ PPC_FUNC(sub_828508B8) {
   LOGF_WARNING("[sub_82851F30] sub_828508B8 EXIT #{}", s_count);
 }
 
+// Hook sub_829DF358 - Called inside sub_829DF440
+// If this returns ZERO, GPU init bails out before writing context!
+// (bne means "branch if not equal to 0", so non-zero continues)
+extern "C" void __imp__sub_829DF358(PPCContext &ctx, uint8_t *base);
+PPC_FUNC(sub_829DF358) {
+  static int s_count = 0;
+  ++s_count;
+  printf("[GPU_INIT_DEBUG] sub_829DF358 ENTER #%d r3=0x%08X\n", s_count, ctx.r3.u32);
+  __imp__sub_829DF358(ctx, base);
+  printf("[GPU_INIT_DEBUG] sub_829DF358 EXIT #%d r3=%d\n", s_count, ctx.r3.s32);
+  
+  // FORCE SUCCESS: If this returns 0, force it to non-zero so init continues
+  if (ctx.r3.s32 == 0) {
+    printf("[GPU_INIT_DEBUG] FORCING sub_829DF358 to return 1 (was 0) - needed for init to continue\n");
+    ctx.r3.s64 = 1;  // Force success (non-zero = continue)
+  }
+}
+
+// Hook sub_829DF3D0 - GPU device validation (called from sub_829D0268)
+// If this returns 0, GPU init fails!
+extern "C" void __imp__sub_829DF3D0(PPCContext &ctx, uint8_t *base);
+PPC_FUNC(sub_829DF3D0) {
+  static int s_count = 0;
+  ++s_count;
+  printf("[GPU_INIT_DEBUG] sub_829DF3D0 ENTER #%d r3=0x%08X\n", s_count, ctx.r3.u32);
+  __imp__sub_829DF3D0(ctx, base);
+  printf("[GPU_INIT_DEBUG] sub_829DF3D0 EXIT #%d r3=%d\n", s_count, ctx.r3.s32);
+  
+  // FORCE SUCCESS: If GPU device validation fails, force it to succeed
+  if (ctx.r3.s32 == 0) {
+    printf("[GPU_INIT_DEBUG] FORCING sub_829DF3D0 to return 1 (was 0)\n");
+    ctx.r3.s64 = 1;  // Force success
+  }
+}
+
 extern "C" void __imp__sub_829D0268(PPCContext &ctx, uint8_t *base);
 PPC_FUNC(sub_829D0268) {
   static int s_count = 0;
   ++s_count;
-  LOGF_WARNING("[sub_82851F30] sub_829D0268 ENTER #{}", s_count);
+  printf("[GPU_INIT_DEBUG] sub_829D0268 ENTER #%d r4=%d r6=0x%08X\n", s_count, ctx.r4.s32, ctx.r6.u32);
   __imp__sub_829D0268(ctx, base);
-  LOGF_WARNING("[sub_82851F30] sub_829D0268 EXIT #{} r3={}", s_count,
-               ctx.r3.s32);
+  printf("[GPU_INIT_DEBUG] sub_829D0268 EXIT #%d r3=%d\n", s_count, ctx.r3.s32);
+}
+
+// Hook sub_829DF440 - This is the ACTUAL GPU context setter!
+// It writes GPU context to *[*[0x82000768]]
+extern "C" void __imp__sub_829DF440(PPCContext &ctx, uint8_t *base);
+PPC_FUNC(sub_829DF440) {
+  static int s_count = 0;
+  ++s_count;
+  printf("[GPU_INIT_DEBUG] *** sub_829DF440 GPU CONTEXT SETTER ENTER #%d ***\n", s_count);
+  printf("[GPU_INIT_DEBUG]   r3=0x%08X (GPU context ptr) r4=0x%08X\n",
+         ctx.r3.u32, ctx.r4.u32);
+  
+  // TRACE: Show what GOT entry points to BEFORE the call
+  constexpr uint32_t GOT_ENTRY_GUEST = 0x82000768;
+  // Direct mapping: guest address -> base + address
+  uint32_t* gotEntryHost = reinterpret_cast<uint32_t*>(base + GOT_ENTRY_GUEST);
+  uint32_t globalAddr = __builtin_bswap32(*gotEntryHost);
+  printf("[GPU_INIT_DEBUG]   BEFORE: GOT[0x82000768]=0x%08X\n", globalAddr);
+  if (globalAddr != 0 && globalAddr < 0xF0000000) {
+    uint32_t* globalHost = reinterpret_cast<uint32_t*>(base + globalAddr);
+    uint32_t gpuCtx = __builtin_bswap32(*globalHost);
+    printf("[GPU_INIT_DEBUG]   BEFORE: *[0x%08X]=0x%08X\n", globalAddr, gpuCtx);
+  }
+  
+  __imp__sub_829DF440(ctx, base);
+  
+  // TRACE: Show what GOT entry points to AFTER the call
+  globalAddr = __builtin_bswap32(*gotEntryHost);
+  printf("[GPU_INIT_DEBUG]   AFTER: GOT[0x82000768]=0x%08X\n", globalAddr);
+  if (globalAddr != 0 && globalAddr < 0xF0000000) {
+    uint32_t* globalHost = reinterpret_cast<uint32_t*>(base + globalAddr);
+    uint32_t gpuCtx = __builtin_bswap32(*globalHost);
+    printf("[GPU_INIT_DEBUG]   AFTER: *[0x%08X]=0x%08X r3=%d\n", globalAddr, gpuCtx, ctx.r3.s32);
+  }
+  
+  // Check the global after call using our helper
+  uint32_t gpuContext = ReadGpuContextFromGlobal();
+  printf("[GPU_INIT_DEBUG] *** sub_829DF440 EXIT #%d ReadGpuContextFromGlobal()=0x%08X ***\n", s_count, gpuContext);
+  
+  // If the function failed but the GPU context WAS stored, VBlank can still use it!
+  if (gpuContext != 0 && ctx.r3.s32 == 0) {
+    printf("[GPU_INIT_DEBUG] *** GPU context stored despite sub_829DF440 returning failure ***\n");
+  }
 }
 
 extern "C" void __imp__sub_82850630(PPCContext &ctx, uint8_t *base);
@@ -10373,7 +10650,7 @@ PPC_FUNC(sub_827E8180) {
     printf("[sub_827E8180] #%d -> SHADER BYPASS: '%s' - using embedded cache\n",
            s_count, pathBuf);
     fflush(stdout);
-    ctx.r3.u32 =
+    ctx.r3.u64 =
         0; // Not found via storage device - forces use of embedded cache
     return;
   }
@@ -10383,7 +10660,7 @@ PPC_FUNC(sub_827E8180) {
   if (pathBuf[0] == 0) {
     printf("[sub_827E8180] #%d -> EMPTY PATH, returning 0\n", s_count);
     fflush(stdout);
-    ctx.r3.u32 = 0; // File not found
+    ctx.r3.u64 = 0; // File not found
     return;
   }
 
@@ -10413,6 +10690,17 @@ PPC_FUNC(sub_827E8180) {
         std::string addrStr =
             guestPath.substr(dollarPos + 1, commaPos - dollarPos - 1);
         memAddr = (uint32_t)strtoul(addrStr.c_str(), nullptr, 16);
+
+        // VALIDATION: Check if memAddr is in valid guest memory range
+        // Valid guest addresses are >= 0x82000000. Addresses like 0xFFFF020E
+        // indicate corrupted calculations and should be rejected.
+        if (memAddr < 0x82000000) {
+          LOGF_WARNING("[sub_827E8180] #{} MEMORY URL REJECTED: invalid "
+                       "addr=0x{:08X} (expected >= 0x82000000) path='{}'",
+                       s_count, memAddr, pathBuf);
+          ctx.r3.u64 = 0; // Return 0 = file not found
+          return;
+        }
 
         // Parse size (second parameter)
         size_t comma2Pos = guestPath.find(',', commaPos + 1);
@@ -10459,7 +10747,7 @@ PPC_FUNC(sub_827E8180) {
       fflush(stdout);
     }
 
-    ctx.r3.u32 = streamAddr;
+    ctx.r3.u64 = streamAddr;
     return;
   }
 
@@ -10577,7 +10865,7 @@ PPC_FUNC(sub_827E8180) {
         fflush(stdout);
       }
 
-      ctx.r3.u32 = streamAddr; // Return FileStream pointer
+      ctx.r3.u64 = streamAddr; // Return FileStream pointer
       return;
     }
   }
@@ -10587,7 +10875,7 @@ PPC_FUNC(sub_827E8180) {
     printf("[sub_827E8180] #%d -> NOT FOUND via VFS: '%s'\n", s_count, pathBuf);
     fflush(stdout);
   }
-  ctx.r3.u32 = 0; // File not found
+  ctx.r3.u64 = 0; // File not found
 }
 
 extern "C" void __imp__sub_827E8880(PPCContext &ctx, uint8_t *base);
@@ -10821,6 +11109,239 @@ PPC_FUNC(sub_822214E0) {
     LOGF_WARNING("[sub_8218C600] sub_822214E0 EXIT #{}", s_count);
 }
 
+// =============================================================================
+// sub_82859690 - Structure Data Copy/Setup (pass-through)
+// =============================================================================
+extern "C" void __imp__sub_82859690(PPCContext &ctx, uint8_t *base);
+PPC_FUNC(sub_82859690) {
+  __imp__sub_82859690(ctx, base);
+}
+
+// =============================================================================
+// sub_82858758 - Shader Type Registration (POPULATES the table at 0x82CE5900)
+// =============================================================================
+// This function finds an empty slot in the table and stores a new type descriptor.
+// If this is never called, the table remains empty and all lookups return NULL.
+// =============================================================================
+extern "C" void __imp__sub_82858758(PPCContext &ctx, uint8_t *base);
+PPC_FUNC(sub_82858758) {
+  static int s_count = 0;
+  static bool s_tableChecked = false;
+  ++s_count;
+  
+  // Check table contents on first call
+  constexpr uint32_t TABLE_BASE = 0x82CE5900;
+  constexpr uint32_t TABLE_SIZE = 128;  // 512 bytes / 4 bytes per entry
+  
+  if (!s_tableChecked) {
+    s_tableChecked = true;
+    int nonZeroCount = 0;
+    uint32_t firstNonZero = 0;
+    uint32_t firstNonZeroVal = 0;
+    
+    for (uint32_t i = 0; i < TABLE_SIZE; ++i) {
+      uint32_t val = PPC_LOAD_U32(TABLE_BASE + i * 4);
+      if (val != 0) {
+        ++nonZeroCount;
+        if (firstNonZero == 0) {
+          firstNonZero = i;
+          firstNonZeroVal = val;
+        }
+      }
+    }
+    
+    if (nonZeroCount > 0) {
+      LOGF_WARNING("[sub_82858758] TABLE CHECK: {} of {} slots contain GARBAGE!",
+                   nonZeroCount, TABLE_SIZE);
+      LOGF_WARNING("[sub_82858758] First garbage at slot {}: 0x{:08X}",
+                   firstNonZero, firstNonZeroVal);
+      LOGF_WARNING("[sub_82858758] FIXING: Zeroing table at 0x{:08X}", TABLE_BASE);
+      
+      // FIX: Clear the table so registration can succeed
+      for (uint32_t i = 0; i < TABLE_SIZE; ++i) {
+        PPC_STORE_U32(TABLE_BASE + i * 4, 0);
+      }
+    } else {
+      LOGF_WARNING("[sub_82858758] TABLE CHECK: All {} slots are empty (OK)", TABLE_SIZE);
+    }
+  }
+  
+  // Manually trace the function logic to find failure point
+  // The function scans table for empty slot, allocates 112 bytes, stores descriptor
+  
+  // Step 1: Find first empty slot
+  uint32_t slotIndex = 0;
+  bool foundEmptySlot = false;
+  for (uint32_t i = 0; i < TABLE_SIZE; ++i) {
+    uint32_t val = PPC_LOAD_U32(TABLE_BASE + i * 4);
+    if (val == 0) {
+      slotIndex = i;
+      foundEmptySlot = true;
+      break;
+    }
+  }
+  
+  if (s_count <= 10) {
+    if (foundEmptySlot) {
+      LOGF_WARNING("[sub_82858758] #{} Found empty slot {} for r3=0x{:08X}",
+                   s_count, slotIndex, ctx.r3.u32);
+    } else {
+      LOGF_WARNING("[sub_82858758] #{} NO EMPTY SLOT! Table full for r3=0x{:08X}",
+                   s_count, ctx.r3.u32);
+    }
+  }
+  
+  __imp__sub_82858758(ctx, base);
+  
+  // Check what was stored in the slot after registration
+  if (s_count <= 10 && foundEmptySlot) {
+    uint32_t storedVal = PPC_LOAD_U32(TABLE_BASE + slotIndex * 4);
+    LOGF_WARNING("[sub_82858758] #{} RESULT r3={}, slot[{}]=0x{:08X}", 
+                 s_count, (int32_t)ctx.r3.s32, slotIndex, storedVal);
+  }
+}
+
+// =============================================================================
+// sub_82858D98 - Material/Shader Setup (calls sub_82859690)
+// =============================================================================
+// This function does table lookup: table[typeID] at 0x82CE5900
+// If table entry is NULL, sub_82859690 receives invalid pointer (0+8=8)
+// ROOT CAUSE: The table is empty because sub_82858758 was never called.
+// =============================================================================
+extern "C" void __imp__sub_82858D98(PPCContext &ctx, uint8_t *base);
+PPC_FUNC(sub_82858D98) {
+  static int s_count = 0;
+  static int s_nullCount = 0;
+  ++s_count;
+
+  uint32_t objPtr = ctx.r3.u32;
+  uint16_t typeID = 0;
+  
+  if (objPtr >= 0x80000000 && objPtr < 0xC0000000) {
+    typeID = PPC_LOAD_U16(objPtr + 14);
+    constexpr uint32_t TABLE_BASE = 0x82CE5900;
+    uint32_t tableEntry = PPC_LOAD_U32(TABLE_BASE + typeID * 4);
+    
+    if (tableEntry == 0) {
+      ++s_nullCount;
+      if (s_nullCount <= 5) {
+        LOGF_WARNING("[sub_82858D98] #{} NULL TABLE: typeID={} - shader type never registered!",
+                     s_count, typeID);
+      }
+    }
+  }
+
+  __imp__sub_82858D98(ctx, base);
+}
+
+// =============================================================================
+// sub_822EF570 - Profile/Streaming Data Initialization
+// =============================================================================
+// This function reads profile settings data via a pointer chain:
+//   1. r27 = 0x82CDD920 (global base)
+//   2. configPtr = [r27 + 32] = [0x82CDD940]
+//   3. settingsPtr = [configPtr + 4]
+//   4. loopCount = [settingsPtr + 192] (with bit rotation/masking)
+//   5. arrayPtr = [settingsPtr + 196]
+//   6. Loop reads from arrayPtr, crashes if garbage
+//
+// Problem: The config at 0x82CDD940 may point to uninitialized data during
+//          early startup, causing loopCount to be huge (100k+) and arrayPtr
+//          to contain garbage (0xFFFFFFFF), leading to EXC_BAD_ACCESS.
+//
+// Solution: Validate pointer chain before proceeding. If invalid, return early.
+// =============================================================================
+extern "C" void __imp__sub_822EF570(PPCContext &ctx, uint8_t *base);
+PPC_FUNC(sub_822EF570) {
+  static int s_count = 0;
+  ++s_count;
+
+  // Calculate r27 base (same as the original function does)
+  // lis r11,-32050 = 0x82CE0000; addi r27,r11,-9952 = 0x82CDD920
+  constexpr uint32_t r27_base = 0x82CDD920;
+  constexpr uint32_t config_ptr_addr = r27_base + 32;  // 0x82CDD940
+  constexpr uint32_t alt_check_addr = 0x82CDD948;  // The alternate check at -9916+4
+
+  // Log first few calls
+  if (s_count <= 10) {
+    LOGF_WARNING("[sub_822EF570] #{} ENTER r3=0x{:08X} r4=0x{:08X}",
+                 s_count, ctx.r3.u32, ctx.r4.u32);
+  }
+
+  // Check the alternate path first (same as original logic)
+  uint32_t alt_ptr = PPC_LOAD_U32(alt_check_addr);
+  if (alt_ptr != 0) {
+    // Alternate path - let original handle it
+    if (s_count <= 10) {
+      LOGF_WARNING("[sub_822EF570] #{} Taking alt path (alt_ptr=0x{:08X})",
+                   s_count, alt_ptr);
+    }
+    __imp__sub_822EF570(ctx, base);
+    return;
+  }
+
+  // Validate the config pointer chain
+  uint32_t configPtr = PPC_LOAD_U32(config_ptr_addr);
+  if (configPtr == 0 || configPtr < 0x80000000 || configPtr > 0xC0000000) {
+    // Config pointer is NULL or invalid - skip the problematic path
+    if (s_count <= 10) {
+      LOGF_WARNING("[sub_822EF570] #{} SKIP: Invalid configPtr=0x{:08X}",
+                   s_count, configPtr);
+    }
+    // Return success (r3=0 means no work needed, same as early exit paths)
+    ctx.r3.s64 = 0;
+    return;
+  }
+
+  uint32_t settingsPtr = PPC_LOAD_U32(configPtr + 4);
+  if (settingsPtr == 0 || settingsPtr < 0x80000000 || settingsPtr > 0xC0000000) {
+    // Settings pointer is NULL or invalid
+    if (s_count <= 10) {
+      LOGF_WARNING("[sub_822EF570] #{} SKIP: Invalid settingsPtr=0x{:08X} (configPtr=0x{:08X})",
+                   s_count, settingsPtr, configPtr);
+    }
+    ctx.r3.s64 = 0;
+    return;
+  }
+
+  // Check the raw loop count at offset 192
+  uint32_t rawLoopCount = PPC_LOAD_U32(settingsPtr + 192);
+  // Apply the same bit manipulation as the original:
+  // rlwinm r29,r10,29,3,31 = rotate left 29, mask 0x1FFFFFFF
+  uint32_t loopCount = (rawLoopCount >> 3) & 0x1FFFFFFF;
+
+  // Check for suspicious loop counts
+  if (loopCount > 1000) {
+    LOGF_WARNING("[sub_822EF570] #{} SKIP: Suspicious loopCount={} (raw=0x{:08X}, settingsPtr=0x{:08X})",
+                 s_count, loopCount, rawLoopCount, settingsPtr);
+    ctx.r3.s64 = 0;
+    return;
+  }
+
+  // If loopCount > 0, validate the array pointer
+  if (loopCount > 0) {
+    uint32_t arrayPtr = PPC_LOAD_U32(settingsPtr + 196);
+    if (arrayPtr == 0 || arrayPtr < 0x80000000 || arrayPtr > 0xC0000000 ||
+        arrayPtr == 0xFFFFFFFF) {
+      LOGF_WARNING("[sub_822EF570] #{} SKIP: Invalid arrayPtr=0x{:08X} for loopCount={}",
+                   s_count, arrayPtr, loopCount);
+      ctx.r3.s64 = 0;
+      return;
+    }
+  }
+
+  // All validations passed - run the original
+  if (s_count <= 10) {
+    LOGF_WARNING("[sub_822EF570] #{} OK: configPtr=0x{:08X} settingsPtr=0x{:08X} loopCount={}",
+                 s_count, configPtr, settingsPtr, loopCount);
+  }
+  __imp__sub_822EF570(ctx, base);
+
+  if (s_count <= 10) {
+    LOGF_WARNING("[sub_822EF570] #{} EXIT r3=0x{:08X}", s_count, ctx.r3.u32);
+  }
+}
+
 // sub_82193BC0 - RenderThread creation - UN-STUBBED
 // =============================================================================
 // Analysis from decompiled code (lines 1233206-1233221):
@@ -10851,6 +11372,32 @@ PPC_FUNC(sub_82193BC0) {
 
   // Run the original - creates RenderThread and sets flag
   __imp__sub_82193BC0(ctx, base);
+
+  // ==========================================================================
+  // FIX: Producer-Consumer Deadlock in sub_82192C28/sub_82193000
+  // ==========================================================================
+  // Problem: Main thread (sub_82192C28) waits on semaphore at a1+4024.
+  //          Producer thread (sub_82193000) waits on semaphore at a1+4020 for work.
+  //          But semaphore +4020 is initialized to count=0, so producer blocks.
+  //          Producer never signals +4024, main thread blocks forever.
+  //
+  // Solution: Signal semaphore +4020 after RenderThread is created. This allows
+  //           the producer to complete its first iteration (no-work path), which
+  //           calls sub_827DAD60 to signal +4024, unblocking the main thread.
+  //
+  // See: SEMAPHORE_BLOCK_ANALYSIS.md for full analysis
+  // ==========================================================================
+  if (a1 != 0) {
+    // Read the semaphore handle at a1+4020
+    uint32_t sem4020Handle = PPC_LOAD_U32(a1 + 4020);
+    if (sem4020Handle != 0) {
+      // Signal the semaphore to unblock the producer thread
+      SyncTable_Signal(sem4020Handle, 1, 0x82193BC0);
+      LOGF_WARNING("[RENDER_THREAD] sub_82193BC0 #{} KICKSTART: Signaled "
+                   "sem@+4020 (handle=0x{:08X}) to unblock producer",
+                   s_count, sem4020Handle);
+    }
+  }
 
   if (s_count <= 5) {
     // Check if flag was set
@@ -11255,10 +11802,10 @@ PPC_FUNC(sub_827DAD60) {
   uint32_t release = ctx.r4.u32;
   uint32_t callerLR = (uint32_t)ctx.lr;
 
-  if (s_count <= 30 || s_count % 100 == 0) {
+  if (s_count <= 50 || s_count % 100 == 0) {
     printf("[sub_827DAD60] [SEM_SIGNAL] sub_827DAD60 #%d SYNC_TABLE "
-           "handle=0x%08X release=%u\n",
-           s_count, handle, release);
+           "handle=0x%08X release=%u caller=0x%08X\n",
+           s_count, handle, release, callerLR);
     fflush(stdout);
   }
 
@@ -11294,45 +11841,62 @@ PPC_FUNC(sub_8298E700) {
   uint32_t ctx_ptr = ctx.r3.u32;
 
   // Read struct fields
-  uint32_t sem1 = 0, sem2 = 0, vtablePtr = 0;
+  uint32_t sem2 = 0;
   if (ctx_ptr >= 0x82000000 && ctx_ptr < 0x90000000) {
-    vtablePtr =
-        ByteSwap(*(uint32_t *)g_memory.Translate(ctx_ptr + 0)); // vtable
-    sem1 = ByteSwap(
-        *(uint32_t *)g_memory.Translate(ctx_ptr + 36)); // wait semaphore
     sem2 = ByteSwap(
         *(uint32_t *)g_memory.Translate(ctx_ptr + 40)); // signal semaphore
   }
 
-  LOGF_WARNING("[AUDIO_WORKER] sub_8298E700 #{} ctx=0x{:08X} vtable=0x{:08X} "
-               "sem1=0x{:08X} sem2=0x{:08X}",
-               s_count, ctx_ptr, vtablePtr, sem1, sem2);
-
-  // Step 1: Signal sem2 so sub_8298E810 can continue
-  if (sem2 != 0) {
-    NtReleaseSemaphore(sem2, 1, nullptr);
-    LOGF_WARNING("[AUDIO_WORKER] sub_8298E700 #{} signaled sem2=0x{:08X}",
-                 s_count, sem2);
+  if (s_count <= 5) {
+    LOGF_WARNING("[AUDIO_WORKER] sub_8298E700 #{} ctx=0x{:08X} sem2=0x{:08X}",
+                 s_count, ctx_ptr, sem2);
   }
 
-  // Step 2: Call vtable[3] (audio processing) if valid
-  // vtable[3] is at vtable+12
-  if (vtablePtr >= 0x82000000 && vtablePtr < 0x83000000) {
-    uint32_t audioFunc =
-        ByteSwap(*(uint32_t *)g_memory.Translate(vtablePtr + 12));
-    if (audioFunc >= 0x82000000 && audioFunc < 0x83000000) {
-      auto func = g_memory.FindFunction(audioFunc);
-      if (func) {
-        LOGF_WARNING(
-            "[AUDIO_WORKER] sub_8298E700 #{} calling vtable[3]=0x{:08X}",
-            s_count, audioFunc);
-        PPCContext audioCtx = ctx;
-        audioCtx.r3.u32 = ctx_ptr; // Pass context as 'this'
-        func(audioCtx, base);
-        LOGF_WARNING("[AUDIO_WORKER] sub_8298E700 #{} vtable[3] returned",
-                     s_count);
-      }
-    }
+  // Signal sem2 so sub_8298E810 can continue, then return
+  // Skip the vtable call - audio processing handled by audio thread
+  if (sem2 != 0) {
+    NtReleaseSemaphore(sem2, 1, nullptr);
+  }
+  
+  // Set termination flag so worker doesn't loop
+  if (ctx_ptr >= 0x82000000 && ctx_ptr < 0x90000000) {
+    uint8_t* flagPtr = (uint8_t*)g_memory.Translate(ctx_ptr + 48);
+    *flagPtr |= 0x80;  // Set termination flag
+  }
+
+  // Step 3: Signal audio events to wake AudioThread
+  // DEADLOCK FIX: Do NOT call sub_82172BE8 which tail-calls sub_82169B00.
+  // sub_82169B00 acquires critical section 0x82AA06D0 then calls KeWaitForMultipleObjects.
+  // If AudioThread already holds that lock while waiting, worker threads deadlock.
+  //
+  // EVENT CHAIN ANALYSIS:
+  //   sub_82169B00 signals byte_83137B80, then waits on byte_83137B5C OR byte_83137BA0
+  //   sub_82169400 waits on byte_83137B80, does work, signals byte_83137B5C
+  //
+  // FIX: Signal byte_83137B5C directly to wake AudioThread waiting in sub_82169B00.
+  // Also signal byte_83137B80 to wake sub_82169400 if it's waiting.
+  constexpr uint32_t AUDIO_WORKER_DONE_EVENT = 0x83137B5C;  // byte_83137B5C - wakes AudioThread
+  constexpr uint32_t AUDIO_TRIGGER_EVENT = 0x83137B80;      // byte_83137B80 - wakes sub_82169400
+  static bool s_eventLogged = false;
+  
+  // Signal byte_83137B5C to wake AudioThread (this is what it's waiting on)
+  XDISPATCHER_HEADER* workerDoneEvent = reinterpret_cast<XDISPATCHER_HEADER*>(
+      g_memory.Translate(AUDIO_WORKER_DONE_EVENT));
+  if (workerDoneEvent) {
+    KeSetEvent(workerDoneEvent, 1, 0);
+  }
+  
+  // Also signal byte_83137B80 to wake sub_82169400 worker
+  XDISPATCHER_HEADER* triggerEvent = reinterpret_cast<XDISPATCHER_HEADER*>(
+      g_memory.Translate(AUDIO_TRIGGER_EVENT));
+  if (triggerEvent) {
+    KeSetEvent(triggerEvent, 1, 0);
+  }
+  
+  if (!s_eventLogged) {
+    LOG_WARNING("[AUDIO_WORKER] Signaling audio events directly: "
+                "0x83137B5C (worker done) + 0x83137B80 (trigger)");
+    s_eventLogged = true;
   }
 
   ctx.r3.u32 = 0; // Return success
@@ -11466,7 +12030,7 @@ PPC_FUNC(sub_828935B8) {
   if (alignment == 0)
     alignment = 16;
   if (allocSize == 0) {
-    ctx.r3.u32 = 0;
+    ctx.r3.u64 = 0;
     return;
   }
 
@@ -11476,17 +12040,18 @@ PPC_FUNC(sub_828935B8) {
   // MapVirtual works correctly
   void *hostPtr = g_userHeap.AllocPhysical(allocSize, alignment);
   if (hostPtr) {
+    // Explicit memset - Xbox 360 allocators return zeroed memory
+    memset(hostPtr, 0, allocSize);
     uint32_t guestAddr = g_memory.MapVirtual(hostPtr);
-    ctx.r3.u32 = guestAddr;
+    ctx.r3.u64 = guestAddr;
 
     // Track speech.dat buffer (allocated during sub_828A58C8)
     // speech.dat is ~544KB, so look for allocations around that size
     if (allocSize >= 500000 && allocSize <= 600000) {
       g_speechDatBufferBase = guestAddr;
       g_speechDatBufferSize = allocSize;
-      printf("[sub_828935B8] SPEECH_DAT_BUFFER: 0x%08X size=%u\n", guestAddr,
-             allocSize);
-      fflush(stdout);
+      LOGF_WARNING("[sub_828935B8] SPEECH_DAT_BUFFER: 0x{:08X} size={} "
+                   "hostPtr={}", guestAddr, allocSize, (void*)hostPtr);
     }
 
     if (s_count <= 20 || s_count % 500 == 0) {
@@ -11495,7 +12060,7 @@ PPC_FUNC(sub_828935B8) {
       fflush(stdout);
     }
   } else {
-    ctx.r3.u32 = 0;
+    ctx.r3.u64 = 0;
     LOGF_WARNING("[sub_828935B8] AUDIO_ALLOC #{} FAILED for {} bytes", s_count,
                  allocSize);
   }
@@ -11552,8 +12117,8 @@ PPC_FUNC(sub_827E0898) {
   const char *pathStr = a2 ? (const char *)(base + a2) : "(null)";
 
   if (s_count <= 20 || s_count % 100 == 0) {
-    printf("[sub_827E0898] FULL_HOOK #%d path='%s' a1=0x%08X a5=%d LR=0x%08X\n",
-           s_count, pathStr, a1, a5, ctx.lr);
+    printf("[sub_827E0898] FULL_HOOK #%d path='%s' a1=0x%08X a5=%d LR=0x%08llX\n",
+           s_count, pathStr, a1, a5, (unsigned long long)ctx.lr);
     fflush(stdout);
   }
 
@@ -11800,90 +12365,60 @@ PPC_FUNC(sub_8289DDB0) {
   ctx.r3.u32 = 1; // Success
 }
 
-// sub_8289DAA8 - Speechbanks data loader - NULL STREAM & SIZE VALIDATION FIX
+// sub_8289DAA8 - Speechbanks data loader
 // =============================================================================
-// Called by sub_828A58C8 with a stream handle that may be NULL (when memory:
-// URL fails) Also called recursively by sub_8289DD40 which reads 4 bytes and
-// passes (value - 4) as size. When memory stream is exhausted, the read returns
-// garbage/0 leading to huge/negative sizes.
+// This function loads speechbanks data and manipulates pointer arrays.
+// Structure layout at a1 (dword_83129200):
+//   a1[1]  (+4)  = Buffer pointer (determines IF vs ELSE branch)
+//   a1[7]  (+28) = Entry count
+//   a1[8]  (+32) = Size/offset
+//   a1[9]  (+36) = Pointer array base - CRASH SOURCE if 0xFFFFFFFF
+//   a1[10] (+40) = Pointer adjustment value
 //
-// FIX: Check for NULL stream AND validate size to prevent:
-//   1. Crash from NULL dereference
-//   2. Infinite loop from huge sizes (e.g., -506 interpreted as 4294966790)
+// CRASH FIX: The crash occurs when a1[9] contains 0xFFFFFFFF (garbage).
+// This happens when the allocation from sub_828935B8 fails or returns garbage.
+// We validate a1[9] before calling the original function and skip if invalid.
+// =============================================================================
+// UN-STUBBED for proper debugging - calls original function
 // =============================================================================
 extern "C" void __imp__sub_8289DAA8(PPCContext &ctx, uint8_t *base);
 PPC_FUNC(sub_8289DAA8) {
   static int s_count = 0;
   ++s_count;
-
-  uint32_t a1 = ctx.r3.u32; // Audio manager context
-  uint32_t a2 = ctx.r4.u32; // Stream handle (may be NULL)
-  uint32_t a3 = ctx.r5.u32; // Size (may be invalid if stream exhausted)
-
-  // NULL STREAM CHECK - prevent crash from memory: URL failure
-  if (a2 == 0) {
-    if (s_count <= 10) {
-      LOGF_WARNING("[AUDIO_SPEECH] sub_8289DAA8 #{} NULL stream - skipping to "
-                   "prevent crash",
-                   s_count);
-    }
-    ctx.r3.u32 = 1; // Return success to continue (data already loaded)
-    return;
+  
+  if (s_count <= 5) {
+    printf("[sub_8289DAA8] #%d ENTER a1=0x%08X a2=0x%08X a3=0x%08X\n", 
+           s_count, ctx.r3.u32, ctx.r4.u32, ctx.r5.u32);
+    fflush(stdout);
   }
-
-  // SIZE VALIDATION - prevent infinite loop from exhausted memory stream
-  // When memory stream is exhausted, sub_8289DD40 reads garbage (0 or old
-  // data), subtracts 4, and we get a huge/negative size like 0xFFFFFE06 (-506
-  // as unsigned) Maximum reasonable speechbank size is ~10MB
-  constexpr uint32_t MAX_SPEECHBANK_SIZE = 10 * 1024 * 1024; // 10MB
-  if (a3 == 0 || a3 > MAX_SPEECHBANK_SIZE) {
-    if (s_count <= 10) {
-      LOGF_WARNING("[AUDIO_SPEECH] sub_8289DAA8 #{} INVALID size={} (0x{:08X}) "
-                   "- returning success",
-                   s_count, a3, a3);
-    }
-    ctx.r3.u32 =
-        1; // Return success - speechbanks already loaded from earlier calls
-    return;
-  }
-
-  if (s_count <= 10) {
-    LOGF_WARNING("[AUDIO_SPEECH] sub_8289DAA8 #{} ENTER a1=0x{:08X} "
-                 "stream=0x{:08X} size={}",
-                 s_count, a1, a2, a3);
-  }
-
+  
   __imp__sub_8289DAA8(ctx, base);
-
-  if (s_count <= 10) {
-    LOGF_WARNING("[AUDIO_SPEECH] sub_8289DAA8 #{} EXIT r3={}", s_count,
-                 ctx.r3.u32);
-  }
 }
 
-// sub_828A58C8 - Speech Config Parser - UN-STUBBED (memory: URL now
-// implemented)
+// sub_828A58C8 - Speech Config Parser - Pass-through with logging
 // =============================================================================
-// Parses speech.dat config and opens "speechbanks" via memory: URL.
-// Memory: URL support implemented in sub_827E8180 to create memory streams.
+// Now that sub_827E7FA8 correctly returns file size, let the original PPC code
+// handle the parsing. The original code knows the exact data structure layout.
 // =============================================================================
 extern "C" void __imp__sub_828A58C8(PPCContext &ctx, uint8_t *base);
 PPC_FUNC(sub_828A58C8) {
   static int s_count = 0;
   ++s_count;
 
-  uint32_t a1 = ctx.r3.u32; // Input path string
+  uint32_t pathArg = ctx.r3.u32;
+  const char* inputPath = pathArg ? (const char*)(base + pathArg) : nullptr;
 
   if (s_count <= 5) {
-    LOGF_WARNING("[AUDIO_SPEECH] sub_828A58C8 #{} ENTER a1=0x{:08X}", s_count,
-                 a1);
+    LOGF_WARNING("[SPEECH_LOAD] sub_828A58C8 #{} ENTER path='{}'", 
+                 s_count, inputPath ? inputPath : "(null)");
   }
 
+  // Call original PPC code - now that sub_827E7FA8 returns correct file size,
+  // the original parsing should work correctly
   __imp__sub_828A58C8(ctx, base);
 
   if (s_count <= 5) {
-    LOGF_WARNING("[AUDIO_SPEECH] sub_828A58C8 #{} EXIT r3={}", s_count,
-                 ctx.r3.u32);
+    LOGF_WARNING("[SPEECH_LOAD] sub_828A58C8 #{} EXIT r3={}", s_count, ctx.r3.u32);
   }
 }
 
@@ -11907,6 +12442,31 @@ PPC_FUNC(sub_827E21A0) {
     LOGF_WARNING("[MEM_URL_FMT] sub_827E21A0 #{} memAddr=0x{:08X} ({}) "
                  "name='{}' bufSize={}",
                  s_count, memAddr, memAddr, name, bufSize);
+    
+    // DEEP TRACE: Dump all relevant registers for root cause analysis
+    LOGF_WARNING("[MEM_URL_FMT] REGISTERS: r3=0x{:08X} r4=0x{:08X} r5=0x{:08X} "
+                 "r6=0x{:08X} r7=0x{:08X} r8=0x{:08X}",
+                 ctx.r3.u32, ctx.r4.u32, ctx.r5.u32, 
+                 ctx.r6.u32, ctx.r7.u32, ctx.r8.u32);
+    LOGF_WARNING("[MEM_URL_FMT] MORE REGS: r19=0x{:08X} r21=0x{:08X} r22=0x{:08X} "
+                 "r26=0x{:08X} r27=0x{:08X} r31=0x{:08X}",
+                 ctx.r19.u32, ctx.r21.u32, ctx.r22.u32,
+                 ctx.r26.u32, ctx.r27.u32, ctx.r31.u32);
+    
+    // Check if memAddr is the negative of a size
+    int32_t memAddrSigned = (int32_t)memAddr;
+    if (memAddrSigned < 0) {
+      LOGF_WARNING("[MEM_URL_FMT] memAddr as SIGNED: {} (negative!)", memAddrSigned);
+    }
+    
+    // If we have the speech.dat buffer, dump some contents
+    if (g_speechDatBufferBase != 0) {
+      uint32_t buf = g_speechDatBufferBase;
+      LOGF_WARNING("[MEM_URL_FMT] BUFFER at 0x{:08X}: [0]=0x{:08X} [4]=0x{:08X} "
+                   "[8]=0x{:08X} [12]=0x{:08X}",
+                   buf, PPC_LOAD_U32(buf), PPC_LOAD_U32(buf+4),
+                   PPC_LOAD_U32(buf+8), PPC_LOAD_U32(buf+12));
+    }
   }
 
   __imp__sub_827E21A0(ctx, base);
@@ -11981,137 +12541,14 @@ PPC_FUNC(sub_8289DD40) {
                effPosAfter - effPosBefore);
 }
 
-// Global flag to enable detailed read tracing during sub_8289D490
-static thread_local bool g_traceAudioReads = false;
-static thread_local int g_audioReadCount = 0;
-static thread_local int g_audioConfigNum = 0;
+// Thread-local variables for audio config debugging
+thread_local bool g_traceAudioReads = false;
+thread_local int g_audioReadCount = 0;
+thread_local int g_audioConfigNum = 0;
 
 extern "C" void __imp__sub_8289D490(PPCContext &ctx, uint8_t *base);
 PPC_FUNC(sub_8289D490) {
-  static int s_count = 0;
-  ++s_count;
-  g_audioConfigNum = s_count;
-
-  uint32_t a1 = ctx.r3.u32;
-  uint32_t a2 = ctx.r4.u32;
-
-  // Read key structure fields from a1 (audio config structure)
-  uint32_t basePtr = PPC_LOAD_U32(a1);        // *a1 = buffer base
-  uint32_t bufferSize = PPC_LOAD_U32(a1 + 8); // *(a1+8) = buffer size
-  uint32_t offset12 = PPC_LOAD_U32(a1 + 12);  // *(a1+12) = data offset
-  uint32_t offset44 = PPC_LOAD_U32(a1 + 44);  // *(a1+44) = string buffer size
-  uint32_t flag68 =
-      PPC_LOAD_U8(a1 + 68); // *(a1+68) = flag for string processing (byte)
-
-  if (s_count <= 5) {
-    LOGF_WARNING(
-        "[AUDIO_CONFIG] sub_8289D490 #{} ENTER a1=0x{:08X} a2=0x{:08X}",
-        s_count, a1, a2);
-    LOGF_WARNING(
-        "[AUDIO_CONFIG]   base=0x{:08X} size={} offset={} strSize={} flag={}",
-        basePtr, bufferSize, offset12, offset44, flag68);
-  }
-
-  // VALIDATION: Check if stream can provide valid data
-  // The function reads offset values and uses them to compute addresses.
-  // If stream position is wrong, offsets will be garbage (like ASCII data).
-  // Validate by checking if the first offset value in stream looks reasonable.
-  uint32_t streamDevice = PPC_LOAD_U32(a2 + 0);
-  uint32_t streamPos = PPC_LOAD_U32(a2 + 12);
-
-  // For small config files (< 10KB), parsing often fails due to stream position
-  // issues Check if buffer size is small and stream position seems off
-  if (bufferSize < 10000 && bufferSize > 0) {
-    // Peek at stream data to validate format
-    // Read the first 4 bytes that would be v55 (entry count)
-    uint32_t peekAddr = PPC_LOAD_U32(a2 + 8);    // buffer address
-    uint32_t peekCursor = PPC_LOAD_U32(a2 + 16); // buffer cursor
-    uint32_t peekAvail = PPC_LOAD_U32(a2 + 20);  // bytes in buffer
-
-    if (peekAvail >= 4 && peekAddr != 0) {
-      uint32_t firstVal = PPC_LOAD_U32(peekAddr + peekCursor);
-      // If first value looks like ASCII (high byte is printable char), stream
-      // is misaligned
-      uint8_t highByte = (firstVal >> 24) & 0xFF;
-      if (highByte >= 0x20 && highByte <= 0x7E) {
-        // Stream contains ASCII at offset position - parsing will fail
-        static int s_skipCount = 0;
-        if (++s_skipCount <= 3) {
-          LOGF_WARNING("[AUDIO_CONFIG] sub_8289D490 #{} SKIP - stream "
-                       "misaligned (first=0x{:08X} looks like ASCII)",
-                       s_count, firstVal);
-        }
-        ctx.r3.u32 = 1; // Return success to continue loading
-        return;
-      }
-    }
-  }
-
-  // Get file size from stream structure to validate loop counts
-  uint32_t streamFileSize = PPC_LOAD_U32(a2 + 28); // fileSize at offset 28
-  uint32_t streamFilePos = PPC_LOAD_U32(a2 + 12);
-  uint32_t streamBufCursor = PPC_LOAD_U32(a2 + 16);
-  uint32_t streamBytesInBuf = PPC_LOAD_U32(a2 + 20);
-  uint32_t currentEffPos = streamFilePos - streamBytesInBuf + streamBufCursor;
-  uint32_t remainingBytes =
-      (streamFileSize > currentEffPos) ? (streamFileSize - currentEffPos) : 0;
-
-  // CRITICAL FIX: For small audio config files, the second loop count (v54)
-  // sometimes reads garbage (string data) causing millions of iterations and
-  // EOF overrun. The file categories.dat15 has v55=0 (first loop skipped), then
-  // position 8138 contains string data ".BAS" (0x04424153) which is interpreted
-  // as v54 = 71 million.
-  //
-  // Solution: If buffer size is small and remaining bytes are limited,
-  // we know the file can't support millions of loop iterations.
-  // Cap the effective loop count by validating after the original function call
-  // would fail.
-  //
-  // Actually, we need to prevent the crash entirely. Since we can't easily
-  // modify the loop inside the original function, we check if the file format
-  // looks wrong and skip processing if it does.
-
-  // For small config files, peek ahead to check if second v54 position has
-  // valid data
-  if (bufferSize < 15000 && remainingBytes < 10000) {
-    // After v55, a1+56, and first v54 (12 bytes), the second v54 would be at
-    // +12 from current If that position has a value > remaining bytes / 4, it's
-    // garbage
-    uint32_t peekBufAddr = PPC_LOAD_U32(a2 + 8);
-    uint32_t peekBufCursor = PPC_LOAD_U32(a2 + 16);
-    uint32_t peekBytesInBuf = PPC_LOAD_U32(a2 + 20);
-
-    // Peek at position +12 (after v55, a1+56, first v54)
-    if (peekBytesInBuf >= peekBufCursor + 16 && peekBufAddr != 0) {
-      uint32_t secondV54Pos = peekBufAddr + peekBufCursor + 12;
-      uint32_t secondV54Val = PPC_LOAD_U32(secondV54Pos);
-
-      // If second v54 > 10000 for a small file, it's likely garbage string data
-      if (secondV54Val > 10000) {
-        static int s_skipCount = 0;
-        if (++s_skipCount <= 3) {
-          LOGF_WARNING("[AUDIO_CONFIG] sub_8289D490 #{} SKIP - second loop "
-                       "count 0x{:08X} too large (remaining={})",
-                       s_count, secondV54Val, remainingBytes);
-        }
-        ctx.r3.u32 = 1; // Return success to continue loading
-        return;
-      }
-    }
-  }
-
-  g_traceAudioReads =
-      false; // Disable verbose tracing now that we understand the issue
-  g_audioReadCount = 0;
-
   __imp__sub_8289D490(ctx, base);
-
-  g_traceAudioReads = false;
-
-  if (s_count <= 5) {
-    LOGF_WARNING("[AUDIO_CONFIG] sub_8289D490 #{} EXIT r3={} (reads={})",
-                 s_count, ctx.r3.u32, g_audioReadCount);
-  }
 }
 
 PPC_FUNC(sub_828A6D50) {
@@ -12319,6 +12756,29 @@ PPC_FUNC(sub_8218BE28) {
     return;
   }
 
+  // TRACE: 112-byte allocations are for shader type descriptors
+  // If these fail, shader registration fails with -1
+  static int s_112count = 0;
+  bool is112 = (allocSize == 112);
+  if (is112) {
+    ++s_112count;
+  }
+
+  // ==========================================================================
+  // CRITICAL FIX: Cap unreasonable allocation sizes
+  // ==========================================================================
+  // The crash at sub_82859B40 happens because sub_828580F0 reads a garbage
+  // value from global 0x83126618, causing a ~1GB allocation request.
+  // This is clearly bogus - no single allocation should exceed 64MB.
+  // ==========================================================================
+  constexpr uint32_t MAX_SANE_ALLOC = 64 * 1024 * 1024;  // 64MB max
+  if (allocSize > MAX_SANE_ALLOC) {
+    LOGF_WARNING("[ALLOC] sub_8218BE28 #{} REJECTED: {} bytes (>{} max) caller=0x{:08X}",
+                 s_count, allocSize, MAX_SANE_ALLOC, callerLR);
+    ctx.r3.u32 = 0;  // Return NULL - allocation too large
+    return;
+  }
+
   // DIAGNOSTIC: Track large allocations to detect runaway loop
   if (allocSize > 90000) {
     ++s_largeAllocCount;
@@ -12348,6 +12808,9 @@ PPC_FUNC(sub_8218BE28) {
   // MapVirtual works correctly
   void *hostPtr = g_userHeap.AllocPhysical(allocSize, alignment);
   if (hostPtr) {
+    // CRITICAL: Zero memory - Xbox 360 allocators return zeroed memory
+    // Hash table bucket arrays allocated here expect zeroed memory
+    memset(hostPtr, 0, allocSize);
     uint32_t guestAddr = g_memory.MapVirtual(hostPtr);
     ctx.r3.u32 = guestAddr;
 
@@ -12355,11 +12818,20 @@ PPC_FUNC(sub_8218BE28) {
       LOGF_WARNING("[ALLOC] sub_8218BE28 #{} {} bytes -> 0x{:08X}", s_count,
                    allocSize, guestAddr);
     }
+    
+    // Trace 112-byte shader descriptor allocations
+    if (is112 && s_112count <= 10) {
+      LOGF_WARNING("[ALLOC] SHADER DESC #{} -> 0x{:08X} (OK)", s_112count, guestAddr);
+    }
   } else {
     ctx.r3.u32 = 0; // Allocation failed
     LOGF_WARNING(
         "[ALLOC] sub_8218BE28 #{} FAILED for {} bytes (heap exhausted?)",
         s_count, allocSize);
+    
+    if (is112) {
+      LOGF_WARNING("[ALLOC] SHADER DESC #{} ALLOCATION FAILED!", s_112count);
+    }
   }
 }
 
@@ -14064,9 +14536,8 @@ PPC_FUNC(sub_8218BEB0) {
 
   __imp__sub_8218BEB0(ctx, base);
 
-  // NOTE: SetInitComplete is now called at sub_821200D0 ENTRY (in
-  // save_hooks.cpp) This is the right timing: after 63-subsystem init, before
-  // post-init loading
+  // PHASE 3: Runtime phase now entered at sub_821200D0 (in save_hooks.cpp)
+  // This is the right timing: after 63-subsystem init, before main loop
 
   LOGF_WARNING("[INIT] sub_8218BEB0 EXIT #{} thread=0x{:04X} r3={}", s_count,
                threadId, ctx.r3.s32);
@@ -14292,20 +14763,105 @@ PPC_FUNC(sub_828E0AB8) {
 }
 
 // Hook sub_829D4C48 - Frame swap/Present function called from VBlank
+// STUBBED: This function writes to [GPU_CONTEXT+10900]+4 which causes SIGBUS
+// because the 32-byte GPU completion structure at offset 10900 is never allocated
+// (GPU init path is bypassed in LibertyRecomp). Research confirmed:
+// - No game logic reads the completion flag at [10900]+4 for timing
+// - VBlank timer provides all timing the game needs
+// - This function only processes Xbox 360 GPU completion tokens (irrelevant)
 extern "C" void __imp__sub_829D4C48(PPCContext &ctx, uint8_t *base);
 PPC_FUNC(sub_829D4C48) {
-  // Let the game's native render loop handle VdSwap - don't force it
-  __imp__sub_829D4C48(ctx, base);
+  // Stub - return immediately to prevent SIGBUS crash
+  return;
 }
 
 // Hook sub_829D7368 - VBlank interrupt callback
+// =============================================================================
+// HANG FIX: Skip the VBlank queue processing path (r3=0) entirely.
+//
+// ROOT CAUSE ANALYSIS:
+//   The original sub_829D7368 has two paths:
+//   - r3=0 (VBlank): Checks MEMORY[0x7FC86544] & 1, then calls sub_829D4C48
+//   - r3=1 (GPU interrupt): Acquires spinlock, does GPU work
+//
+//   sub_829D4C48 processes an Xbox 360 GPU fence queue in a loop that holds
+//   a spinlock. On PC, this queue mechanism is not used (D3D/Vulkan handle
+//   fences natively) and the queue indices can be out of sync, causing an
+//   infinite loop while holding the spinlock - blocking all other threads.
+//
+// FIX: Skip calling the original for r3=0 (VBlank path).
+//   - PC rendering uses Video::Present() hooked via sub_829D5388
+//   - VBlank timer still fires for frame timing
+//   - No game logic depends on sub_829D4C48 output on PC
+// =============================================================================
 extern "C" void __imp__sub_829D7368(PPCContext &ctx, uint8_t *base);
 PPC_FUNC(sub_829D7368) {
   static int s_count = 0;
   ++s_count;
+
+  // Read GPU context from global for validation
+  uint32_t gpuContext = ReadGpuContextFromGlobal();
+  
+  if (s_count <= 10) {
+    LOGF_WARNING("[VBLANK] sub_829D7368 #{} - r3=0x{:08X}, r4=0x{:08X}, global=0x{:08X}", 
+                 s_count, ctx.r3.u32, ctx.r4.u32, gpuContext);
+  }
+
+  if (gpuContext == 0) {
+    // GPU context not yet initialized - skip this callback safely
+    if (s_count <= 10) {
+      LOGF_WARNING("[VBLANK] sub_829D7368 #{} - skipping (no GPU context yet)", s_count);
+    }
+    return;
+  }
+
+  // HANG FIX: Skip VBlank queue processing path (r3=0)
+  // This path calls sub_829D4C48 which processes an Xbox GPU fence queue
+  // that doesn't work on PC. The loop can hang forever holding a spinlock.
+  if (ctx.r3.u32 == 0) {
+    if (s_count <= 5) {
+      LOGF_WARNING("[VBLANK] sub_829D7368 #{} - skipping VBlank path (PC uses Video::Present)", s_count);
+    }
+    return;  // Skip Xbox VBlank queue processing - not needed on PC
+  }
+
+  // GPU interrupt path (r3=1) - preserve this path if needed
+  ctx.r4.u32 = gpuContext;
   if (s_count <= 5 || s_count % 1000 == 0)
-    LOGF_WARNING("[VBLANK] sub_829D7368 #{}", s_count);
+    LOGF_WARNING("[VBLANK] sub_829D7368 #{} - GPU interrupt path", s_count);
   __imp__sub_829D7368(ctx, base);
+}
+
+// =============================================================================
+// Hook sub_82626210 - Content enumeration thread (Xbox-specific)
+// =============================================================================
+// ROOT CAUSE: This is an infinite loop thread that:
+//   1. Calls XNotifyGetNext to check for Xbox notifications
+//   2. If no notification, calls sub_827DAD60 to signal a semaphore
+//   3. Loops back to step 1
+//
+// On PC, Xbox notifications don't exist, so the loop spins forever signaling
+// semaphores rapidly. This causes the "beachball" hang by flooding the system
+// with semaphore operations while the main thread is blocked.
+//
+// FIX: Stub this function to sleep indefinitely instead of spinning.
+// Content enumeration is Xbox-specific and not needed on PC.
+// =============================================================================
+extern "C" void __imp__sub_82626210(PPCContext &ctx, uint8_t *base);
+PPC_FUNC(sub_82626210) {
+  static int s_count = 0;
+  ++s_count;
+  
+  if (s_count == 1) {
+    printf("[sub_82626210] Content enumeration thread - stubbed (Xbox-specific)\n");
+    fflush(stdout);
+  }
+  
+  // Sleep indefinitely instead of spinning - this thread is not needed on PC
+  // The thread will be terminated when the app exits
+  while (true) {
+    std::this_thread::sleep_for(std::chrono::seconds(60));
+  }
 }
 
 // Hook sub_829A3318 - Boot orchestrator (calls XamTaskShouldExit in loop)
@@ -14408,6 +14964,21 @@ PPC_FUNC(sub_827E7FC8) {
   // Read stream structure
   uint32_t storageDevice = PPC_LOAD_U32(streamPtr + 0);
 
+  // Check if this is a MEMORY STREAM (created for memory: URLs)
+  // CRITICAL FIX: Memory streams use marker 0x4D454D53 at offset 0
+  // Xbox code would dereference this as a vtable pointer, causing hang
+  constexpr uint32_t MEMORY_STREAM_MARKER = 0x4D454D53; // "MEMS"
+  if (storageDevice == MEMORY_STREAM_MARKER) {
+    // Memory stream flush is a no-op - data is already in guest memory
+    // Just return success without calling Xbox code
+    if (s_callCount <= 10) {
+      LOGF_WARNING("[sub_827E7FC8] MEMORY STREAM flush #{}: no-op (in-memory)",
+                   s_callCount);
+    }
+    ctx.r3.s32 = 0; // Success
+    return;
+  }
+
   // Check if this is a PC FileStream
   if (storageDevice == StorageConstants::PC_STORAGE_DEVICE_ADDR) {
     uint32_t fileHandle = PPC_LOAD_U32(streamPtr + 4);
@@ -14449,6 +15020,66 @@ PPC_FUNC(sub_827E7FC8) {
 
   // Xbox stream - call original
   __imp__sub_827E7FC8(ctx, base);
+}
+
+// =============================================================================
+// sub_827E87A0 - Stream Close
+// =============================================================================
+// Closes a file stream. For memory streams, we just clear the structure.
+// Xbox code would dereference the MEMS marker as vtable, causing crash.
+// =============================================================================
+extern "C" void __imp__sub_827E87A0(PPCContext &ctx, uint8_t *base);
+PPC_FUNC(sub_827E87A0) {
+  static int s_callCount = 0;
+  ++s_callCount;
+
+  const uint32_t streamPtr = ctx.r3.u32;
+
+  if (streamPtr == 0) {
+    ctx.r3.s32 = 0;
+    return;
+  }
+
+  // Read stream structure
+  uint32_t storageDevice = PPC_LOAD_U32(streamPtr + 0);
+
+  // Check if this is a MEMORY STREAM
+  constexpr uint32_t MEMORY_STREAM_MARKER = 0x4D454D53; // "MEMS"
+  if (storageDevice == MEMORY_STREAM_MARKER) {
+    // Memory stream close - just clear the structure
+    // No file handle to close, no resources to free
+    PPC_STORE_U32(streamPtr + 0, 0);  // Clear marker
+    PPC_STORE_U32(streamPtr + 4, 0);  // Clear address
+    PPC_STORE_U32(streamPtr + 12, 0); // Clear position
+    PPC_STORE_U32(streamPtr + 16, 0); // Clear size
+
+    if (s_callCount <= 10) {
+      LOGF_WARNING("[sub_827E87A0] MEMORY STREAM close #{}", s_callCount);
+    }
+    ctx.r3.s32 = 0; // Success
+    return;
+  }
+
+  // Check if this is a PC FileStream
+  if (storageDevice == StorageConstants::PC_STORAGE_DEVICE_ADDR) {
+    uint32_t fileHandle = PPC_LOAD_U32(streamPtr + 4);
+    NtFileHandle *hFile = GetPcHandle(fileHandle);
+    if (hFile && hFile->stream.is_open()) {
+      hFile->stream.close();
+    }
+    // Clear stream structure
+    PPC_STORE_U32(streamPtr + 0, 0);
+    PPC_STORE_U32(streamPtr + 4, 0xFFFFFFFF);
+
+    if (s_callCount <= 10) {
+      LOGF_WARNING("[sub_827E87A0] PC stream close #{}", s_callCount);
+    }
+    ctx.r3.s32 = 0;
+    return;
+  }
+
+  // Xbox stream - call original
+  __imp__sub_827E87A0(ctx, base);
 }
 
 PPC_FUNC(sub_827E8420) {
@@ -14502,15 +15133,16 @@ PPC_FUNC(sub_827E8420) {
   constexpr uint32_t MEMORY_STREAM_MARKER = 0x4D454D53;
   if (storageDevice == MEMORY_STREAM_MARKER) {
     // Memory stream - read from guest memory
-    // Structure: [0]=marker, [4]=memOffset, [8]=unused, [12]=position,
+    // Structure: [0]=marker, [4]=memAddr, [8]=unused, [12]=position,
     // [16]=size, [20]=bytesRead
-    uint32_t memOffset = fileHandle; // Relative offset within speech.dat buffer
-    uint32_t position = filePos;     // Current read position
+    uint32_t memAddr = fileHandle;     // ABSOLUTE guest address from memory: URL
+    uint32_t position = filePos;       // Current read position
     uint32_t totalSize = bufferCursor; // Total size stored in slot 16
 
-    // The memOffset is RELATIVE to the speech.dat buffer base
-    // Use g_speechDatBufferBase to compute absolute address
-    uint32_t absoluteAddr = g_speechDatBufferBase + memOffset;
+    // FIX: memAddr is already an ABSOLUTE address (e.g., 0xB9728757)
+    // DO NOT add g_speechDatBufferBase - that would cause overflow/corruption
+    // The memory: URL contains the absolute address directly
+    uint32_t absoluteAddr = memAddr;
 
     // Calculate how much we can read
     int32_t available = (int32_t)totalSize - (int32_t)position;
@@ -14531,15 +15163,14 @@ PPC_FUNC(sub_827E8420) {
       PPC_STORE_U32(streamPtr + 12, position + toRead);
 
       if (s_memReadCount <= 10) {
-        LOGF_WARNING("[sub_827E8420] MEMORY STREAM #{} base=0x{:08X} offset={} "
+        LOGF_WARNING("[sub_827E8420] MEMORY STREAM #{} addr=0x{:08X} "
                      "pos={} read={}",
-                     s_memReadCount, g_speechDatBufferBase, memOffset, position,
-                     toRead);
+                     s_memReadCount, memAddr, position, toRead);
       }
     } else if (s_memReadCount <= 10) {
-      LOGF_WARNING("[sub_827E8420] MEMORY STREAM #{} SKIP - base=0x{:08X} "
-                   "offset={} available={}",
-                   s_memReadCount, g_speechDatBufferBase, memOffset, available);
+      LOGF_WARNING("[sub_827E8420] MEMORY STREAM #{} SKIP - addr=0x{:08X} "
+                   "available={}",
+                   s_memReadCount, memAddr, available);
     }
 
     ctx.r3.s32 = toRead;
@@ -14777,55 +15408,54 @@ PPC_FUNC(sub_827E7FA8) {
 
   // Handle NULL stream
   if (streamPtr == 0) {
-    ctx.r3.u32 = 0;
+    ctx.r3.u64 = 0;
     return;
   }
 
-  // Check if this is a PC FileStream (marker-based validation)
-  // PC FileStreams can be in heap (0x00020000+) or physical heap via MapVirtual
-  // (0xC0000000+)
-  if (streamPtr != 0 && streamPtr < 0x80000000) {
-    uint32_t storageDevice = PPC_LOAD_U32(streamPtr + 0);
+  // Check if this is a PC FileStream by looking at storageDevice marker
+  // PC FileStreams can be in ANY address range since AllocPhysical maps into
+  // guest memory space (0x80000000+). Check storageDevice FIRST, not address.
+  uint32_t storageDevice = PPC_LOAD_U32(streamPtr + 0);
+  
+  if (storageDevice == StorageConstants::PC_STORAGE_DEVICE_ADDR) {
+    // PC FileStream - return file size from stream[28]
+    // NOTE: stream[16] is bufferCursor, stream[28] is where sub_827E8180 stores fileSize
+    uint32_t fileSize = PPC_LOAD_U32(streamPtr + 28);
 
-    if (storageDevice == StorageConstants::PC_STORAGE_DEVICE_ADDR) {
-      // PC FileStream - return file size from stream[16]
-      uint32_t fileSize = PPC_LOAD_U32(streamPtr + 16);
-
-      s_pcCalls++;
-      if (s_pcCalls <= 10) {
-        LOGF_WARNING("[sub_827E7FA8] PC GetSize #{}: stream=0x{:08X} size={}",
-                     s_pcCalls, streamPtr, fileSize);
-      }
-
-      ctx.r3.u32 = fileSize;
-      return;
+    s_pcCalls++;
+    if (s_pcCalls <= 10) {
+      LOGF_WARNING("[sub_827E7FA8] PC GetSize #{}: stream=0x{:08X} size={}",
+                   s_pcCalls, streamPtr, fileSize);
     }
+
+    ctx.r3.u64 = fileSize;
+    return;
   }
 
-  // Xbox stream - validate and call original
+  // Xbox stream - validate address range
   if (streamPtr < 0x80000000 || streamPtr >= 0x90000000) {
     // Invalid Xbox stream pointer
-    ctx.r3.u32 = 0;
+    ctx.r3.u64 = 0;
     return;
   }
 
   // Load and validate vtable chain for Xbox streams
-  uint32_t storageDevice = PPC_LOAD_U32(streamPtr + 0);
+  // storageDevice already loaded above
   if (storageDevice == 0 || storageDevice < 0x80000000 ||
       storageDevice >= 0x90000000) {
-    ctx.r3.u32 = 0;
+    ctx.r3.u64 = 0;
     return;
   }
 
   uint32_t vtablePtr = PPC_LOAD_U32(storageDevice + 0);
   if (vtablePtr == 0 || vtablePtr < 0x80000000 || vtablePtr >= 0x90000000) {
-    ctx.r3.u32 = 0;
+    ctx.r3.u64 = 0;
     return;
   }
 
   uint32_t funcPtr = PPC_LOAD_U32(vtablePtr + 48);
   if (funcPtr == 0 || funcPtr < 0x80000000 || funcPtr >= 0x90000000) {
-    ctx.r3.u32 = 0;
+    ctx.r3.u64 = 0;
     return;
   }
 
@@ -15244,54 +15874,11 @@ PPC_FUNC(sub_821238D0) {
 }
 
 // =============================================================================
-// sub_82124490 - Loading Gate Check (XBOX THREADING BYPASS)
-// =============================================================================
-// XEX Analysis: Checks byte_83137BB7 and byte_83137BC9
-// Returns byte_83137BC9 if byte_83137BB7 is set, else returns 0
-//
-// ROOT CAUSE: This function is called in a busy-wait loop at line 1135933:
-//   while ( (unsigned __int8)sub_82124490() ) sub_827DAE18(1);
-//
-// On Xbox 360, another thread/callback runs in parallel to process loading
-// screens and eventually sets byte_83137BC9 = 0. The mechanisms that drive
-// this are:
-//   1. Xbox XMA audio hardware callbacks (sub_822FA4E8 checks playback state)
-//   2. Xbox threading model with fiber-like scheduling
-//   3. Loading screen update function (sub_821238D0) called via callback
-//
-// On PC, we don't emulate the Xbox threading model or XMA audio hardware.
-// The callback that sets BC9=0 never runs because the busy-wait loop blocks.
-//
-// FIX: After sufficient iterations (~500ms worth), force return 0 to let
-// loading proceed. This is proper handling of Xbox-specific kernel sync.
+// sub_82124490 - Loading Gate Check (pass-through)
 // =============================================================================
 extern "C" void __imp__sub_82124490(PPCContext &ctx, uint8_t *base);
 PPC_FUNC(sub_82124490) {
-  static int s_count = 0;
-  static bool s_gateCleared = false;
-  ++s_count;
-
   __imp__sub_82124490(ctx, base);
-
-  // If gate still returns 1 (loading not complete) after 500 iterations,
-  // force it to return 0. Xbox threading/callbacks aren't emulated.
-  if (ctx.r3.u32 != 0 && !s_gateCleared && s_count > 500) {
-    // Also set the actual byte so game state is consistent
-    PPC_STORE_U8(0x83137BC9, 0);
-    ctx.r3.u32 = 0;
-    s_gateCleared = true;
-    LOGF_WARNING(
-        "[LOADING_GATE] BYPASS: Forcing gate clear after {} iterations "
-        "(Xbox threading/audio callbacks not emulated)",
-        s_count);
-  }
-
-  if (s_count <= 20 || s_count % 1000 == 0) {
-    uint8_t byte_BB7 = PPC_LOAD_U8(0x83137BB7);
-    uint8_t byte_BC9 = PPC_LOAD_U8(0x83137BC9);
-    LOGF_WARNING("[LOADING_GATE] #{} BB7={} BC9={} r3={}", s_count, byte_BB7,
-                 byte_BC9, ctx.r3.u32);
-  }
 }
 
 // =============================================================================
@@ -15876,6 +16463,9 @@ GUEST_FUNCTION_HOOK(__imp__NetDll_XNetGetConnectStatus,
                     Net::XNetGetConnectStatus);
 GUEST_FUNCTION_HOOK(__imp__NetDll_XNetUnregisterInAddr,
                     Net::XNetUnregisterInAddr);
+
+// XLive Base API (NAT type detection)
+GUEST_FUNCTION_HOOK(__imp__XLiveBaseGetNatType, Net::XLiveBaseGetNatType);
 
 // =============================================================================
 // GTA IV File System API Hooks (UnleashedRecomp Pattern)
@@ -17046,60 +17636,36 @@ extern "C" void __imp__sub_821A81F0(PPCContext &ctx, uint8_t *base);
 PPC_FUNC(sub_821A81F0) {
   static int s_count = 0;
   ++s_count;
-  printf("[821A81F0] #%d ENTER - signaling workers before cleanup\n", s_count);
+  printf("[821A81F0] #%d ENTER\n", s_count);
   fflush(stdout);
 
-  // Signal all semaphores to wake Photo mode workers so they can exit
-  // This is the proper fix: workers are waiting for work that won't come,
-  // signaling allows them to check exit flag and terminate
-  SignalAllBlockingSemaphores();
-
+  // PHASE 3: SignalAllBlockingSemaphores removed - proper sync during Runtime
   __imp__sub_821A81F0(ctx, base);
   printf("[821A81F0] #%d EXIT\n", s_count);
   fflush(stdout);
 }
 
 // sub_823005E0 - Called by sub_821A81F0, performs worker cleanup
-// This function blocks waiting for workers to exit. Stub it to bypass the wait.
+// PHASE 3: Now calls original - proper sync during Runtime phase
 extern "C" void __imp__sub_823005E0(PPCContext &ctx, uint8_t *base);
 PPC_FUNC(sub_823005E0) {
   static int s_count = 0;
   ++s_count;
-  printf("[823005E0] #%d STUBBED - bypassing worker cleanup wait\n", s_count);
+  printf("[823005E0] #%d ENTER\n", s_count);
   fflush(stdout);
 
-  // Signal all semaphores to let workers know to exit
-  SignalAllBlockingSemaphores();
-
-  // Don't call original - it blocks waiting for workers
-  // The workers will exit on their own when they check their exit flags
-  // __imp__sub_823005E0(ctx, base);
+  __imp__sub_823005E0(ctx, base);
+  printf("[823005E0] #%d EXIT\n", s_count);
+  fflush(stdout);
 }
 
 // sub_827DB880 - Worker manager shutdown loop
-// This function loops waiting for all workers to exit.
-// We must signal all semaphores before the loop to ensure workers wake up and
-// exit.
+// PHASE 3: Now calls original - proper sync during Runtime phase
 extern "C" void __imp__sub_827DB880(PPCContext &ctx, uint8_t *base);
 PPC_FUNC(sub_827DB880) {
   static int s_count = 0;
   ++s_count;
-  printf(
-      "[827DB880] #%d ENTER - worker shutdown loop, signaling all semaphores\n",
-      s_count);
-  fflush(stdout);
-
-  // Signal all semaphores to wake any workers still waiting
-  // This allows them to check their exit flags and terminate
-  SignalAllBlockingSemaphores();
-
-  // Brief delay to let workers process the signal
-  std::this_thread::sleep_for(std::chrono::milliseconds(100));
-
-  // Signal again to catch any stragglers
-  SignalAllBlockingSemaphores();
-
-  printf("[827DB880] #%d calling original function\n", s_count);
+  printf("[827DB880] #%d ENTER\n", s_count);
   fflush(stdout);
 
   __imp__sub_827DB880(ctx, base);
@@ -17457,4 +18023,130 @@ PPC_FUNC(sub_829A0678) {
          s_count);
   fflush(stdout);
   ctx.r3.u32 = 0; // Return 0 = pass (no termination)
+}
+
+// =============================================================================
+// Audio Manager Global - dword_83137CA8
+// =============================================================================
+// Guest address: 0x83137CA8 = 0x83130000 + 31912 (from PPC lis/lwz pattern)
+// This pointer is set by sub_82168C08 and read by sub_82169B00
+// =============================================================================
+constexpr uint32_t AUDIO_MANAGER_PTR_ADDR = 0x83137CA8; // dword_83137CA8
+
+// =============================================================================
+// sub_82168C08 - Audio Manager Initialization (PHASE 5: Signal Init Completion)
+// =============================================================================
+// This function initializes dword_83137CA8 (audio manager pointer).
+// PHASE 5: After init completes, signal events to unblock waiters.
+// =============================================================================
+extern "C" void __imp__sub_82168C08(PPCContext &ctx, uint8_t *base);
+PPC_FUNC(sub_82168C08) {
+  static std::atomic<int> s_count{0};
+  int myCount = ++s_count;
+
+  printf("[AUDIO_INIT] sub_82168C08 #%d ENTER - This should initialize "
+         "dword_83137CA8\n",
+         myCount);
+  fflush(stdout);
+
+  // Call original implementation
+  __imp__sub_82168C08(ctx, base);
+
+  // Check if the pointer was stored
+  uint32_t audioMgrPtr = PPC_LOAD_U32(AUDIO_MANAGER_PTR_ADDR);
+  printf("[AUDIO_INIT] sub_82168C08 #%d EXIT - dword_83137CA8=0x%08X\n",
+         myCount, audioMgrPtr);
+  fflush(stdout);
+  
+  // ==========================================================================
+  // PHASE 5: Signal init completion events to unblock waiters
+  // ==========================================================================
+  // After audio manager initialization completes, signal the events that
+  // workers are waiting on so they can begin processing.
+  // ==========================================================================
+  
+  // Signal audio manager init event at 0x83130044
+  constexpr uint32_t AUDIO_INIT_EVENT = 0x83130044;
+  SignalEventByGuestAddr(AUDIO_INIT_EVENT);
+  
+  // Signal audio worker event to kick-start workers
+  constexpr uint32_t AUDIO_WORKER_EVENT = 0x83137B80;
+  SignalEventByGuestAddr(AUDIO_WORKER_EVENT);
+  
+  // Signal audio work queue semaphore
+  constexpr uint32_t AUDIO_WORK_QUEUE_SEM = 0x83130008;
+  SignalSemaphoreByGuestAddr(AUDIO_WORK_QUEUE_SEM, 6); // Signal all 6 workers
+  
+  printf("[AUDIO_INIT] sub_82168C08 #%d SIGNALED init completion events "
+         "(0x83130044, 0x83137B80, 0x83130008)\n",
+         myCount);
+  fflush(stdout);
+}
+
+// =============================================================================
+// sub_82169B00 - Audio Thread Sync Function (STUBBED - OPTION A)
+// =============================================================================
+// DEADLOCK ROOT CAUSE ANALYSIS:
+//   - SDL2 AudioThread() calls sub_82172BE8 -> sub_82169B00 every audio frame
+//   - sub_82169B00 acquires critical section, signals byte_83137B80, then
+//     calls KeWaitForMultipleObjects on byte_83137B5C/BA0
+//   - sub_82169400 (worker) waits on byte_83137B80, does work, signals byte_83137B5C
+//   - CIRCULAR DEPENDENCY: AudioThread waits for Worker, Worker waits for signal
+//     that AudioThread sends BEFORE waiting -> classic deadlock
+//
+// WHY STUBBING IS SAFE:
+//   1. PC audio is handled entirely by SDL2 driver via g_clientCallback
+//   2. XAudioGetVoiceCategoryVolume* functions are already stubbed
+//   3. The Xbox-specific thread coordination (events/semaphores) is unnecessary
+//   4. sub_82169C58 (called in else branch) uses stubbed XAudio functions
+//
+// FIX: Return immediately without calling original - no sync needed on PC
+// =============================================================================
+
+PPC_FUNC(sub_82169B00) {
+  static std::atomic<int> s_callCount{0};
+  int myCallNum = ++s_callCount;
+  
+  // Log first few calls for debugging
+  if (myCallNum <= 3) {
+    printf("[AUDIO_SYNC] sub_82169B00 #%d STUBBED - Xbox sync not needed on PC\n",
+           myCallNum);
+    fflush(stdout);
+  }
+  
+  // Return success immediately - no Xbox thread synchronization needed
+  // The SDL2 audio thread handles audio processing directly
+  ctx.r3.u32 = 0;
+}
+
+// =============================================================================
+// sub_82169400 - Audio Worker Thread (STUBBED - OPTION A)
+// =============================================================================
+// This worker thread waits on byte_83137B80 (signaled by sub_82169B00),
+// does audio processing work, then signals byte_83137B5C.
+//
+// Since sub_82169B00 is now stubbed:
+//   - byte_83137B80 is never signaled
+//   - This worker would block forever on KeWaitForSingleObject
+//
+// WHY STUBBING IS SAFE:
+//   - PC audio is handled by SDL2 driver directly via g_clientCallback
+//   - The Xbox worker thread model is not needed on PC
+//   - sub_821689E0 uses different spinlock (dword_8314749C) - no contention
+//   - sub_82169C58 calls stubbed XAudioGetVoiceCategoryVolume* functions
+//
+// FIX: Return immediately - worker not needed on PC
+// =============================================================================
+
+PPC_FUNC(sub_82169400) {
+  static std::atomic<int> s_workerCount{0};
+  int myWorkerNum = ++s_workerCount;
+  
+  // Log for debugging
+  printf("[AUDIO_WORKER] sub_82169400 #%d STUBBED - Xbox worker not needed on PC\n",
+         myWorkerNum);
+  fflush(stdout);
+  
+  // Return success immediately - no Xbox worker thread needed
+  ctx.r3.u32 = 0;
 }

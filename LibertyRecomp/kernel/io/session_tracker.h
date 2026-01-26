@@ -12,6 +12,16 @@ namespace Net {
 // Session Data Structures
 // ============================================================================
 
+// Protocol version for breaking changes (bump when structure changes)
+static constexpr uint8_t SESSION_PROTOCOL_VERSION = 2;
+
+// Player limit capability levels for version synchronization
+enum class PlayerCapability : uint8_t {
+    Standard = 16,    // Original Xbox 360 limit
+    Extended = 32,    // Moderate expansion
+    Maximum = 64      // Full 64-player expansion
+};
+
 // GTA IV Game Modes (matching original Xbox Live)
 enum class GameMode : uint32_t {
     FreeMode = 0,
@@ -48,12 +58,27 @@ struct SessionInfo {
     std::string hostName;           // Host's display name
     GameMode gameMode;              // Game mode
     MapArea mapArea;                // Map area
-    uint32_t maxPlayers;            // Maximum players (2-16)
+    uint32_t maxPlayers;            // Maximum players (2-16, or 2-64 with patches)
     uint32_t currentPlayers;        // Current player count
     bool isPrivate;                 // Private (invite/code only) vs public
     std::string lobbyCode;          // 6-char code for private lobbies
     uint64_t createdAt;             // Unix timestamp
     uint64_t lastHeartbeat;         // Last update timestamp
+    
+    // Version synchronization fields (for player limit compatibility)
+    uint8_t protocolVersion = SESSION_PROTOCOL_VERSION;  // Protocol version
+    PlayerCapability playerCapability = PlayerCapability::Maximum; // Player limit support
+    
+    // Helper to check compatibility with another session
+    bool IsCompatibleWith(const SessionInfo& other) const {
+        return protocolVersion == other.protocolVersion &&
+               playerCapability == other.playerCapability;
+    }
+    
+    // Get capability as integer for UI display
+    uint8_t GetCapabilityValue() const {
+        return static_cast<uint8_t>(playerCapability);
+    }
 };
 
 // Session search filters (for Custom Match)

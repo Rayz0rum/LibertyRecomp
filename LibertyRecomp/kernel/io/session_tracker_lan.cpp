@@ -32,7 +32,7 @@ namespace Net {
 // ============================================================================
 
 static constexpr uint32_t LAN_MAGIC = 0x4C524D50; // "LRMP" - Liberty Recomp Multiplayer
-static constexpr uint16_t LAN_VERSION = 1;
+static constexpr uint16_t LAN_VERSION = 2;  // Bumped for player capability support
 
 enum class LANMessageType : uint8_t {
     Announce = 1,      // Host announces session
@@ -64,7 +64,10 @@ struct LANAnnounce {
     uint8_t maxPlayers;
     uint8_t currentPlayers;
     uint8_t isPrivate;
-    uint8_t padding[3];
+    // NEW: Version synchronization fields
+    uint8_t protocolVersion;     // SESSION_PROTOCOL_VERSION
+    uint8_t playerCapability;    // PlayerCapability enum value
+    uint8_t padding;             // Alignment
 };
 
 struct LANQuery {
@@ -419,18 +422,42 @@ public:
         // Handle pending search
         if (pendingSearch_ && currentTime >= searchTimeout_) {
             std::vector<SessionInfo> results;
+            
+            // Get our local capability for filtering
+            PlayerCapability localCapability = PlayerCapability::Maximum;  // 64-player mode
+            
             for (const auto& [id, info] : discoveredSessions_) {
                 bool include = true;
-                if (pendingSearchFilter_.filterByGameMode && 
+                
+                // CRITICAL: Filter by protocol version compatibility
+                if (info.session.protocolVersion != SESSION_PROTOCOL_VERSION) {
+                    LOGF_DEBUG("[LANSession] Filtering session {}: protocol mismatch ({} vs {})",
+                              id, info.session.protocolVersion, SESSION_PROTOCOL_VERSION);
+                    include = false;
+                }
+                
+                // CRITICAL: Filter by player capability compatibility
+                if (info.session.playerCapability != localCapability) {
+                    LOGF_DEBUG("[LANSession] Filtering session {}: player capability mismatch ({} vs {})",
+                              id, static_cast<int>(info.session.playerCapability), 
+                              static_cast<int>(localCapability));
+                    include = false;
+                }
+                
+                // Apply user-specified filters
+                if (include && pendingSearchFilter_.filterByGameMode && 
                     info.session.gameMode != pendingSearchFilter_.gameMode) include = false;
-                if (pendingSearchFilter_.filterByMapArea && 
+                if (include && pendingSearchFilter_.filterByMapArea && 
                     info.session.mapArea != pendingSearchFilter_.mapArea) include = false;
-                if (!pendingSearchFilter_.includePrivate && info.session.isPrivate) include = false;
-                if (!pendingSearchFilter_.includeFull && 
+                if (include && !pendingSearchFilter_.includePrivate && info.session.isPrivate) include = false;
+                if (include && !pendingSearchFilter_.includeFull && 
                     info.session.currentPlayers >= info.session.maxPlayers) include = false;
                 
                 if (include) results.push_back(info.session);
             }
+            
+            LOGF_INFO("[LANSession] Search complete: {} discovered, {} compatible",
+                     discoveredSessions_.size(), results.size());
             pendingSearch_(true, results);
             pendingSearch_ = nullptr;
         }
@@ -518,6 +545,10 @@ private:
         msg.maxPlayers = currentSession_.maxPlayers;
         msg.currentPlayers = currentSession_.currentPlayers;
         msg.isPrivate = currentSession_.isPrivate ? 1 : 0;
+        
+        // Version synchronization fields
+        msg.protocolVersion = SESSION_PROTOCOL_VERSION;
+        msg.playerCapability = static_cast<uint8_t>(currentSession_.playerCapability);
         
         sockaddr_in broadcastAddr{};
         broadcastAddr.sin_family = AF_INET;
@@ -622,6 +653,11 @@ private:
         discovered.session.maxPlayers = msg->maxPlayers;
         discovered.session.currentPlayers = msg->currentPlayers;
         discovered.session.isPrivate = msg->isPrivate != 0;
+        
+        // Parse version synchronization fields
+        discovered.session.protocolVersion = msg->protocolVersion;
+        discovered.session.playerCapability = static_cast<PlayerCapability>(msg->playerCapability);
+        
         discovered.hostAddr = senderAddr;
         discovered.lastSeen = ImGui::GetTime();
     }

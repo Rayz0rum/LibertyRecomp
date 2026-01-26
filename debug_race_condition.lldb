@@ -1,0 +1,25 @@
+# LLDB Debug Script for dword_83137CA8 Race Condition
+# Usage: lldb -s debug_race_condition.lldb -- ./out/build/macos-relwithdebinfo/LibertyRecomp/Liberty\ Recompiled.app/Contents/MacOS/Liberty\ Recompiled
+
+# Set breakpoints on key functions
+breakpoint set --name __imp__sub_82168C08 --one-shot false
+breakpoint set --name __imp__sub_82169578 --one-shot false  
+breakpoint set --name __imp__sub_82169400 --one-shot false
+breakpoint set --name __imp__sub_821694C8 --one-shot false
+breakpoint set --name __imp__sub_82169B00 --one-shot false
+breakpoint set --name __imp__sub_8216A288 --one-shot false
+
+# Add commands to print state when hitting breakpoints
+breakpoint command add 1 --one-liner "script print('>>> HIT sub_82168C08 (audio init caller)')"
+breakpoint command add 2 --one-liner "script print('>>> HIT sub_82169578 (thread creation)')"
+breakpoint command add 3 --one-liner "script print('>>> HIT sub_82169400 (worker thread 1)')"
+breakpoint command add 4 --one-liner "script print('>>> HIT sub_821694C8 (worker thread 2)')"
+breakpoint command add 5 --one-liner "script print('>>> HIT sub_82169B00 (audio callback)')"
+breakpoint command add 6 --one-liner "script print('>>> HIT sub_8216A288 (crash function)')"
+
+# Run the program
+run
+
+# When stopped at crash, examine guest memory
+# Note: The base address for guest memory is typically mapped at 0x300000000
+# Guest address 0x83137CA8 -> Host address base + 0x83137CA8

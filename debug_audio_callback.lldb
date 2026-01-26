@@ -1,0 +1,36 @@
+# LLDB debug script for audio callback issue
+# Run with: lldb -s debug_audio_callback.lldb ./out/build/macos-release/LibertyRecomp/Liberty\ Recompiled.app
+
+# Set breakpoint on the warning message location
+# We want to catch when g_memory.FindFunction returns nullptr for 0x82172BE8
+
+# Break at Memory constructor to watch function table population
+breakpoint set --name "Memory::Memory" --one-shot true
+
+# Break when FindFunction is called with our target address
+# We'll use a conditional breakpoint on the log message
+
+# Set breakpoint on LOG_WARNING with "sub_82172BE8 not found"
+breakpoint set --file imports.cpp --line 11350
+
+# Commands to run when we hit the breakpoint
+breakpoint command add 1 --one-shot true
+# Print the function table state
+expr g_memory.base
+expr (void*)((unsigned long)g_memory.base + 0x832957D0)
+expr *(void**)((unsigned long)g_memory.base + 0x832957D0)
+continue
+DONE
+
+# Also break at the Memory constructor completion
+breakpoint set --file memory.cpp --line 139
+
+# Commands to verify function was inserted
+breakpoint command add 2 --one-shot true
+print "=== After Memory() constructor ==="
+expr g_memory.FindFunction(0x82172BE8)
+continue
+DONE
+
+# Run the program
+run

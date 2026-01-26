@@ -1,0 +1,542 @@
+[0/2] Re-checking globbed directories...
+[1/2] Re-running CMake...
+-- Running vcpkg install
+warning: Embedding `vcpkg-configuration` in a manifest file is an EXPERIMENTAL feature.
+Detecting compiler hash for triplet arm64-osx...
+Compiler found: /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/c++
+All requested packages are currently installed.
+Total install time: 250 ns
+curl is compatible with built-in CMake targets:
+
+    find_package(CURL REQUIRED)
+    target_link_libraries(main PRIVATE CURL::libcurl)
+
+freetype is compatible with built-in CMake targets:
+
+    find_package(Freetype REQUIRED)
+    target_link_libraries(main PRIVATE Freetype::Freetype) # since CMake 3.10
+
+protobuf provides CMake targets:
+
+  # this is heuristically generated, and may not be correct
+  find_package(protobuf CONFIG REQUIRED)
+  target_link_libraries(main PRIVATE protobuf::libprotoc protobuf::libprotobuf protobuf::libprotobuf-lite)
+
+protobuf provides pkg-config modules:
+
+  # Google's Data Interchange Format
+  protobuf-lite
+
+  # Google's Data Interchange Format
+  protobuf
+
+-- Running vcpkg install - done
+-- Detected architecture: arm64
+-- Found ZLIB: optimized;/Users/Ozordi/Downloads/LibertyRecomp/out/build/macos-release/vcpkg_installed/arm64-osx/lib/libz.a;debug;/Users/Ozordi/Downloads/LibertyRecomp/out/build/macos-release/vcpkg_installed/arm64-osx/debug/lib/libz.a (found version "1.3.1")
+CMake Deprecation Warning at thirdparty/nativefiledialog-extended/CMakeLists.txt:1 (cmake_minimum_required):
+  Compatibility with CMake < 3.10 will be removed from a future version of
+  CMake.
+
+  Update the VERSION argument <min> value.  Or, use the <min>...<max> syntax
+  to tell CMake that the project requires at least <min> but has been updated
+  to work with policies introduced by <max> or earlier.
+
+
+nfd Platform: PLATFORM_MACOS
+nfd Compiler: COMPILER_GNU
+CMake Deprecation Warning at thirdparty/SDL/CMakeLists.txt:3290 (cmake_minimum_required):
+  Compatibility with CMake < 3.10 will be removed from a future version of
+  CMake.
+
+  Update the VERSION argument <min> value.  Or, use the <min>...<max> syntax
+  to tell CMake that the project requires at least <min> but has been updated
+  to work with policies introduced by <max> or earlier.
+
+
+-- 
+-- SDL2 was configured with the following options:
+-- 
+-- Platform: Darwin-25.3.0
+-- 64-bit:   TRUE
+-- Compiler: /usr/bin/cc
+-- Revision: SDL-release-2.32.8-0-g98d1f3a45
+-- 
+-- Subsystems:
+--   Atomic:	ON
+--   Audio:	ON
+--   Video:	ON
+--   Render:	ON
+--   Events:	ON
+--   Joystick:	ON
+--   Haptic:	ON
+--   Hidapi:	ON
+--   Power:	ON
+--   Threads:	ON
+--   Timers:	ON
+--   File:	ON
+--   Loadso:	ON
+--   CPUinfo:	ON
+--   Filesystem:	ON
+--   Sensor:	ON
+--   Locale:	ON
+--   Misc:	ON
+-- 
+-- Options:
+--   SDL2_DISABLE_INSTALL        (Wanted: ON): OFF
+--   SDL2_DISABLE_SDL2MAIN       (Wanted: OFF): OFF
+--   SDL2_DISABLE_UNINSTALL      (Wanted: OFF): OFF
+--   SDL_3DNOW                   (Wanted: OFF): OFF
+--   SDL_ALSA                    (Wanted: OFF): OFF
+--   SDL_ALSA_SHARED             (Wanted: OFF): OFF
+--   SDL_ALTIVEC                 (Wanted: ON): OFF
+--   SDL_ARMNEON                 (Wanted: OFF): OFF
+--   SDL_ARMSIMD                 (Wanted: OFF): OFF
+--   SDL_ARTS                    (Wanted: OFF): OFF
+--   SDL_ARTS_SHARED             (Wanted: OFF): OFF
+--   SDL_ASAN                    (Wanted: OFF): OFF
+--   SDL_ASSEMBLY                (Wanted: ON): ON
+--   SDL_ASSERTIONS              (Wanted: auto): auto
+--   SDL_BACKGROUNDING_SIGNAL    (Wanted: OFF): OFF
+--   SDL_CCACHE                  (Wanted: ON): OFF
+--   SDL_CLOCK_GETTIME           (Wanted: OFF): OFF
+--   SDL_COCOA                   (Wanted: ON): ON
+--   SDL_DBUS                    (Wanted: OFF): OFF
+--   SDL_DIRECTFB                (Wanted: OFF): OFF
+--   SDL_DIRECTFB_SHARED         (Wanted: OFF): OFF
+--   SDL_DIRECTX                 (Wanted: OFF): OFF
+--   SDL_DISKAUDIO               (Wanted: ON): ON
+--   SDL_DUMMYAUDIO              (Wanted: ON): ON
+--   SDL_DUMMYVIDEO              (Wanted: ON): ON
+--   SDL_ESD                     (Wanted: OFF): OFF
+--   SDL_ESD_SHARED              (Wanted: OFF): OFF
+--   SDL_FOREGROUNDING_SIGNAL    (Wanted: OFF): OFF
+--   SDL_FUSIONSOUND             (Wanted: OFF): OFF
+--   SDL_FUSIONSOUND_SHARED      (Wanted: OFF): OFF
+--   SDL_GCC_ATOMICS             (Wanted: ON): ON
+--   SDL_HIDAPI                  (Wanted: ON): ON
+--   SDL_HIDAPI_JOYSTICK         (Wanted: ON): ON
+--   SDL_HIDAPI_LIBUSB           (Wanted: OFF): OFF
+--   SDL_IBUS                    (Wanted: OFF): OFF
+--   SDL_INSTALL_TESTS           (Wanted: OFF): OFF
+--   SDL_JACK                    (Wanted: OFF): OFF
+--   SDL_JACK_SHARED             (Wanted: OFF): OFF
+--   SDL_KMSDRM                  (Wanted: OFF): OFF
+--   SDL_KMSDRM_SHARED           (Wanted: OFF): OFF
+--   SDL_LASX                    (Wanted: OFF): OFF
+--   SDL_LIBC                    (Wanted: ON): ON
+--   SDL_LIBICONV                (Wanted: OFF): OFF
+--   SDL_LIBSAMPLERATE           (Wanted: OFF): OFF
+--   SDL_LIBSAMPLERATE_SHARED    (Wanted: OFF): OFF
+--   SDL_LIBUDEV                 (Wanted: ON): OFF
+--   SDL_LSX                     (Wanted: OFF): OFF
+--   SDL_METAL                   (Wanted: ON): ON
+--   SDL_MMX                     (Wanted: OFF): OFF
+--   SDL_NAS                     (Wanted: OFF): OFF
+--   SDL_NAS_SHARED              (Wanted: OFF): OFF
+--   SDL_OFFSCREEN               (Wanted: ON): ON
+--   SDL_OPENGL                  (Wanted: ON): ON
+--   SDL_OPENGLES                (Wanted: ON): ON
+--   SDL_OSS                     (Wanted: OFF): OFF
+--   SDL_PIPEWIRE                (Wanted: OFF): OFF
+--   SDL_PIPEWIRE_SHARED         (Wanted: OFF): OFF
+--   SDL_PTHREADS                (Wanted: ON): ON
+--   SDL_PTHREADS_SEM            (Wanted: ON): ON
+--   SDL_PULSEAUDIO              (Wanted: OFF): OFF
+--   SDL_PULSEAUDIO_SHARED       (Wanted: OFF): OFF
+--   SDL_RENDER_D3D              (Wanted: OFF): OFF
+--   SDL_RENDER_METAL            (Wanted: ON): ON
+--   SDL_RPATH                   (Wanted: OFF): OFF
+--   SDL_RPI                     (Wanted: OFF): OFF
+--   SDL_SNDIO                   (Wanted: OFF): OFF
+--   SDL_SNDIO_SHARED            (Wanted: OFF): OFF
+--   SDL_SSE                     (Wanted: OFF): OFF
+--   SDL_SSE2                    (Wanted: OFF): OFF
+--   SDL_SSE3                    (Wanted: OFF): OFF
+--   SDL_SSEMATH                 (Wanted: OFF): OFF
+--   SDL_STATIC_PIC              (Wanted: OFF): OFF
+--   SDL_SYSTEM_ICONV            (Wanted: OFF): OFF
+--   SDL_TESTS                   (Wanted: OFF): OFF
+--   SDL_VENDOR_INFO             (Wanted: ): OFF
+--   SDL_VIRTUAL_JOYSTICK        (Wanted: ON): ON
+--   SDL_VIVANTE                 (Wanted: OFF): OFF
+--   SDL_VULKAN                  (Wanted: ON): ON
+--   SDL_WASAPI                  (Wanted: OFF): OFF
+--   SDL_WAYLAND                 (Wanted: OFF): OFF
+--   SDL_WAYLAND_LIBDECOR        (Wanted: OFF): OFF
+--   SDL_WAYLAND_LIBDECOR_SHARED (Wanted: OFF): OFF
+--   SDL_WAYLAND_QT_TOUCH        (Wanted: OFF): OFF
+--   SDL_WAYLAND_SHARED          (Wanted: OFF): OFF
+--   SDL_X11                     (Wanted: OFF): OFF
+--   SDL_X11_SHARED              (Wanted: OFF): OFF
+--   SDL_X11_XCURSOR             (Wanted: OFF): OFF
+--   SDL_X11_XDBE                (Wanted: OFF): OFF
+--   SDL_X11_XFIXES              (Wanted: OFF): OFF
+--   SDL_X11_XINPUT              (Wanted: OFF): OFF
+--   SDL_X11_XRANDR              (Wanted: OFF): OFF
+--   SDL_X11_XSCRNSAVER          (Wanted: OFF): OFF
+--   SDL_X11_XSHAPE              (Wanted: OFF): OFF
+--   SDL_XINPUT                  (Wanted: OFF): OFF
+-- 
+--  CFLAGS:         -idirafter "/Users/Ozordi/Downloads/LibertyRecomp/thirdparty/SDL/src/video/khronos"
+--  EXTRA_CFLAGS:   -Wall -Wundef -fno-strict-aliasing -Wdocumentation -Wdocumentation-unknown-command -fcomment-block-commands=threadsafety -fcomment-block-commands=deprecated -Wdeclaration-after-statement -fvisibility=hidden -Wshadow -Wno-unused-local-typedefs -D_THREAD_SAFE
+--  EXTRA_LDFLAGS:  -Wl,-compatibility_version,3201.0.0;-Wl,-current_version,3201.8.0
+--  EXTRA_LIBS:    m
+-- 
+--  Build Shared Library: OFF
+--  Build Static Library: ON
+--  Build Static Library with Position Independent Code: OFF
+-- 
+-- If something was not detected, although the libraries
+-- were installed, then make sure you have set the
+-- CFLAGS and LDFLAGS environment variables correctly.
+-- 
+-- Configuring SDL2_mixer 2.8.0
+-- Using vendored libogg
+CMake Deprecation Warning at thirdparty/SDL_mixer/external/ogg/CMakeLists.txt:1 (cmake_minimum_required):
+  Compatibility with CMake < 3.10 will be removed from a future version of
+  CMake.
+
+  Update the VERSION argument <min> value.  Or, use the <min>...<max> syntax
+  to tell CMake that the project requires at least <min> but has been updated
+  to work with policies introduced by <max> or earlier.
+
+
+-- Configuring libogg 1.3.5
+-- Using vendored vorbis + vorbisfile
+CMake Deprecation Warning at thirdparty/SDL_mixer/external/vorbis/CMakeLists.txt:1 (cmake_minimum_required):
+  Compatibility with CMake < 3.10 will be removed from a future version of
+  CMake.
+
+  Update the VERSION argument <min> value.  Or, use the <min>...<max> syntax
+  to tell CMake that the project requires at least <min> but has been updated
+  to work with policies introduced by <max> or earlier.
+
+
+-- Configuring vorbis 1.3.7
+-- Plume - Building with backends: Vulkan=1 Metal=1 D3D12=
+-- Plume - SDL Vulkan integration: OFF
+-- Plume - D3D12 Agility SDK: OFF
+-- Plume - Building examples: OFF
+-- MoltenVK revision: db445ff2
+-- MoltenVK version: 1.4.1
+-- SPIRV-Cross: Finding Git version for SPIRV-Cross.
+-- SPIRV-Cross: Git hash: vulkan-sdk-1.4.335.0-8-gb8bd9d53
+CMake Deprecation Warning at thirdparty/GameNetworkingSockets/CMakeLists.txt:1 (cmake_minimum_required):
+  Compatibility with CMake < 3.10 will be removed from a future version of
+  CMake.
+
+  Update the VERSION argument <min> value.  Or, use the <min>...<max> syntax
+  to tell CMake that the project requires at least <min> but has been updated
+  to work with policies introduced by <max> or earlier.
+
+
+-- CMAKE_BUILD_TYPE='Release'
+-- OPENSSL_INCLUDE_DIR = /opt/homebrew/Cellar/openssl@3/3.6.0/include
+-- Crypto library for AES/SHA256: OpenSSL
+-- Crypto library for ed25519/curve25519: 
+-- Link-time optimization: OFF
+-- {fmt} version: 11.0.2
+-- Build type: Release
+CMake Deprecation Warning at tools/XenonRecomp/thirdparty/xxHash/cmake_unofficial/CMakeLists.txt:8 (cmake_minimum_required):
+  Compatibility with CMake < 3.10 will be removed from a future version of
+  CMake.
+
+  Update the VERSION argument <min> value.  Or, use the <min>...<max> syntax
+  to tell CMake that the project requires at least <min> but has been updated
+  to work with policies introduced by <max> or earlier.
+
+
+-- xxHash build type: Release
+-- Architecture: arm64
+CMake Deprecation Warning at tools/XenonRecomp/XenonRecomp/CMakeLists.txt:1 (cmake_minimum_required):
+  Compatibility with CMake < 3.10 will be removed from a future version of
+  CMake.
+
+  Update the VERSION argument <min> value.  Or, use the <min>...<max> syntax
+  to tell CMake that the project requires at least <min> but has been updated
+  to work with policies introduced by <max> or earlier.
+
+
+-- ZSTD VERSION: 1.5.7
+-- CMAKE_INSTALL_PREFIX: /Users/Ozordi/Downloads/LibertyRecomp/out/install/macos-release
+-- CMAKE_INSTALL_LIBDIR: lib
+-- ZSTD_LEGACY_SUPPORT defined!
+-- ZSTD_MULTITHREAD_SUPPORT is enabled
+-- Detected architecture: arm64
+-- Generating version information...
+-- Build: v1.0.0
+-- Found ZLIB: optimized;/Users/Ozordi/Downloads/LibertyRecomp/out/build/macos-release/vcpkg_installed/arm64-osx/lib/libz.a;debug;/Users/Ozordi/Downloads/LibertyRecomp/out/build/macos-release/vcpkg_installed/arm64-osx/debug/lib/libz.a (found suitable version "1.3.1", minimum required is "1")
+-- Configuring done (6.0s)
+-- Generating done (0.3s)
+-- Build files have been written to: /Users/Ozordi/Downloads/LibertyRecomp/out/build/macos-release
+[0/4] Re-checking globbed directories...
+[1/53] Building OBJCXX object thirdparty/MoltenVK/CMakeFiles/MoltenVK.dir/MoltenVK/MoltenVK/MoltenVK/GPUObjects/MVKDevice.mm.o
+[2/53] Linking CXX shared library thirdparty/MoltenVK/libMoltenVK.dylib
+ld: warning: ignoring duplicate libraries: 'thirdparty/MoltenVK/SPIRV-Cross/libspirv-cross-msl.a', 'thirdparty/MoltenVK/libMoltenVKCommon.a'
+[3/53] Generating Liberty Recompiled.app/Contents/Resources/vulkan/icd.d/libMoltenVK.dylib
+[4/53] Building CXX object LibertyRecomp/CMakeFiles/LibertyRecomp.dir/exports.cpp.o
+[5/53] Building CXX object LibertyRecomp/CMakeFiles/LibertyRecomp.dir/kernel/button_prompts.cpp.o
+[6/53] Building CXX object LibertyRecomp/CMakeFiles/LibertyRecomp.dir/kernel/lod_hooks.cpp.o
+[7/53] Building CXX object LibertyRecomp/CMakeFiles/LibertyRecomp.dir/kernel/heap.cpp.o
+In file included from /Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/kernel/heap.cpp:4:
+/Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/kernel/xdm.h:12:9: warning: 'FALSE' macro redefined [-Wmacro-redefined]
+   12 | #define FALSE                      0x00000000
+      |         ^
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include/mach/boolean.h:85:9: note: previous definition is here
+   85 | #define FALSE   0
+      |         ^
+In file included from /Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/kernel/heap.cpp:4:
+/Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/kernel/xdm.h:13:9: warning: 'TRUE' macro redefined [-Wmacro-redefined]
+   13 | #define TRUE                       0x00000001
+      |         ^
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include/mach/boolean.h:81:9: note: previous definition is here
+   81 | #define TRUE    1
+      |         ^
+2 warnings generated.
+[8/53] Building CXX object LibertyRecomp/CMakeFiles/LibertyRecomp.dir/app.cpp.o
+[9/53] Building CXX object LibertyRecomp/CMakeFiles/LibertyRecomp.dir/kernel/io/session_tracker.cpp.o
+[10/53] Building CXX object LibertyRecomp/CMakeFiles/LibertyRecomp.dir/kernel/vfs.cpp.o
+In file included from /Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/kernel/vfs.cpp:1:
+/Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/kernel/vfs.h:22:67: warning: '/*' within block comment [-Wcomment]
+   22 |  *   game:\common\shaders\*    → <extracted_root>/common/shaders/*
+      |                                                                 ^
+1 warning generated.
+[11/53] Building CXX object LibertyRecomp/CMakeFiles/LibertyRecomp.dir/kernel/menu_hooks.cpp.o
+[12/53] Building CXX object LibertyRecomp/CMakeFiles/LibertyRecomp.dir/kernel/io/file_system.cpp.o
+In file included from /Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/kernel/io/file_system.cpp:1:
+In file included from /Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/kernel/io/file_system.h:5:
+/Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/kernel/xdm.h:12:9: warning: 'FALSE' macro redefined [-Wmacro-redefined]
+   12 | #define FALSE                      0x00000000
+      |         ^
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include/mach/boolean.h:85:9: note: previous definition is here
+   85 | #define FALSE   0
+      |         ^
+In file included from /Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/kernel/io/file_system.cpp:1:
+In file included from /Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/kernel/io/file_system.h:5:
+/Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/kernel/xdm.h:13:9: warning: 'TRUE' macro redefined [-Wmacro-redefined]
+   13 | #define TRUE                       0x00000001
+      |         ^
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include/mach/boolean.h:81:9: note: previous definition is here
+   81 | #define TRUE    1
+      |         ^
+2 warnings generated.
+[13/53] Building CXX object LibertyRecomp/CMakeFiles/LibertyRecomp.dir/kernel/xam.cpp.o
+In file included from /Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/kernel/xam.cpp:5:
+/Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/kernel/xdm.h:12:9: warning: 'FALSE' macro redefined [-Wmacro-redefined]
+   12 | #define FALSE                      0x00000000
+      |         ^
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include/mach/boolean.h:85:9: note: previous definition is here
+   85 | #define FALSE   0
+      |         ^
+In file included from /Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/kernel/xam.cpp:5:
+/Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/kernel/xdm.h:13:9: warning: 'TRUE' macro redefined [-Wmacro-redefined]
+   13 | #define TRUE                       0x00000001
+      |         ^
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include/mach/boolean.h:81:9: note: previous definition is here
+   81 | #define TRUE    1
+      |         ^
+/Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/kernel/xam.cpp:388:26: warning: format specifies type 'unsigned int' but the argument has type 'const be<uint32_t>' (aka 'const be<unsigned int>') [-Wformat]
+  387 |     printf("[XamContentCreateEx] Type: %u, Flags: 0x%X, User: %u\n", 
+      |                                        ~~
+  388 |            pContentData->dwContentType, dwContentFlags, dwUserIndex);
+      |                          ^~~~~~~~~~~~~
+3 warnings generated.
+[14/53] Building CXX object LibertyRecomp/CMakeFiles/LibertyRecomp.dir/main.cpp.o
+In file included from /Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/main.cpp:15:
+In file included from /Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/cpu/guest_thread.h:3:
+/Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/kernel/xdm.h:12:9: warning: 'FALSE' macro redefined [-Wmacro-redefined]
+   12 | #define FALSE                      0x00000000
+      |         ^
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include/mach/boolean.h:85:9: note: previous definition is here
+   85 | #define FALSE   0
+      |         ^
+In file included from /Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/main.cpp:15:
+In file included from /Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/cpu/guest_thread.h:3:
+/Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/kernel/xdm.h:13:9: warning: 'TRUE' macro redefined [-Wmacro-redefined]
+   13 | #define TRUE                       0x00000001
+      |         ^
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include/mach/boolean.h:81:9: note: previous definition is here
+   81 | #define TRUE    1
+      |         ^
+In file included from /Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/main.cpp:23:
+/Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/kernel/vfs.h:22:67: warning: '/*' within block comment [-Wcomment]
+   22 |  *   game:\common\shaders\*    → <extracted_root>/common/shaders/*
+      |                                                                 ^
+3 warnings generated.
+[15/53] Building CXX object LibertyRecomp/CMakeFiles/LibertyRecomp.dir/kernel/io/p2p_manager.cpp.o
+[16/53] Building CXX object LibertyRecomp/CMakeFiles/LibertyRecomp.dir/kernel/io/voice_chat.cpp.o
+[17/53] Building CXX object LibertyRecomp/CMakeFiles/LibertyRecomp.dir/kernel/io/session_tracker_lan.cpp.o
+[18/53] Building CXX object LibertyRecomp/CMakeFiles/LibertyRecomp.dir/gpu/postprocess_aa.cpp.o
+[19/53] Building CXX object LibertyRecomp/CMakeFiles/LibertyRecomp.dir/kernel/io/session_tracker_community.cpp.o
+[20/53] Building CXX object LibertyRecomp/CMakeFiles/LibertyRecomp.dir/gpu/shadow_quality.cpp.o
+[21/53] Building CXX object LibertyRecomp/CMakeFiles/LibertyRecomp.dir/gpu/postprocess_renderer.cpp.o
+FAILED: [code=1] LibertyRecomp/CMakeFiles/LibertyRecomp.dir/gpu/postprocess_renderer.cpp.o 
+/usr/bin/c++ -DCURL_STATICLIB -DLIBERTY_RECOMP_METAL -DMSDFGEN_COPYRIGHT_YEAR=2026 -DMSDFGEN_DISABLE_PNG -DMSDFGEN_DISABLE_SVG -DMSDFGEN_EXTENSIONS -DMSDFGEN_EXT_PUBLIC="" -DMSDFGEN_PUBLIC="" -DMSDFGEN_USE_CPP11 -DMSDFGEN_VERSION=1.12.0 -DMSDFGEN_VERSION_MAJOR=1 -DMSDFGEN_VERSION_MINOR=12 -DMSDFGEN_VERSION_REVISION=0 -DMSDF_ATLAS_COPYRIGHT_YEAR=2026 -DMSDF_ATLAS_NO_ARTERY_FONT -DMSDF_ATLAS_PUBLIC="" -DMSDF_ATLAS_VERSION=1.3.0 -DMSDF_ATLAS_VERSION_MAJOR=1 -DMSDF_ATLAS_VERSION_MINOR=3 -DMSDF_ATLAS_VERSION_REVISION=0 -DOSX -DSDL_MAIN_HANDLED -DSTEAMNETWORKINGSOCKETS_STATIC_LINK -D_CRT_SECURE_NO_WARNINGS -D_DISABLE_CONSTEXPR_MUTEX_CONSTRUCTOR -I/Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/../LibertyRecompLib -I/Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp -I/Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/api -I/Users/Ozordi/Downloads/LibertyRecomp/thirdparty/concurrentqueue -I/Users/Ozordi/Downloads/LibertyRecomp/thirdparty/ddspp -I/Users/Ozordi/Downloads/LibertyRecomp/thirdparty/imgui -I/Users/Ozordi/Downloads/LibertyRecomp/thirdparty/implot -I/Users/Ozordi/Downloads/LibertyRecomp/thirdparty/json/include -I/Users/Ozordi/Downloads/LibertyRecomp/thirdparty/magic_enum/include -I/Users/Ozordi/Downloads/LibertyRecomp/thirdparty/stb -I/Users/Ozordi/Downloads/LibertyRecomp/thirdparty/unordered_dense/include -I/Users/Ozordi/Downloads/LibertyRecomp/thirdparty/GameNetworkingSockets/include -I/Users/Ozordi/Downloads/LibertyRecomp/tools/bc_diff -I/Users/Ozordi/Downloads/LibertyRecomp/tools/XenosRecomp/thirdparty/smol-v/source -I/Users/Ozordi/Downloads/LibertyRecomp/tools/FidelityFX-SDK/Kits/FidelityFX -I/Users/Ozordi/Downloads/LibertyRecomp/tools/DLSS/include -I/Users/Ozordi/Downloads/LibertyRecomp/tools/xess/inc -I/Users/Ozordi/Downloads/LibertyRecomp/tools/XenonRecomp/thirdparty/fmt/include -I/Users/Ozordi/Downloads/LibertyRecomp/tools/XenosRecomp/thirdparty/zstd/build/cmake/../../lib -I/Users/Ozordi/Downloads/LibertyRecomp/thirdparty/msdf-atlas-gen -I/Users/Ozordi/Downloads/LibertyRecomp/thirdparty/msdf-atlas-gen/msdfgen -I/Users/Ozordi/Downloads/LibertyRecomp/thirdparty/nativefiledialog-extended/src/include -I/Users/Ozordi/Downloads/LibertyRecomp/thirdparty/o1heap/. -I/Users/Ozordi/Downloads/LibertyRecomp/tools/XenonRecomp/XenonUtils/. -I/Users/Ozordi/Downloads/LibertyRecomp/tools/XenonRecomp/thirdparty/simde -I/Users/Ozordi/Downloads/LibertyRecomp/tools/XenonRecomp/thirdparty/disasm/. -I/Users/Ozordi/Downloads/LibertyRecomp/out/build/macos-release/thirdparty/SDL/include -I/Users/Ozordi/Downloads/LibertyRecomp/out/build/macos-release/thirdparty/SDL/include/SDL2 -I/Users/Ozordi/Downloads/LibertyRecomp/out/build/macos-release/thirdparty/SDL/include-config-release/SDL2 -I/Users/Ozordi/Downloads/LibertyRecomp/thirdparty/SDL_mixer/include -I/Users/Ozordi/Downloads/LibertyRecomp/tools/XenonRecomp/thirdparty/xxHash/cmake_unofficial/.. -I/Users/Ozordi/Downloads/LibertyRecomp/thirdparty/plume -I/Users/Ozordi/Downloads/LibertyRecomp/thirdparty/plume/contrib/volk -I/Users/Ozordi/Downloads/LibertyRecomp/thirdparty/plume/contrib/Vulkan-Headers/include -I/Users/Ozordi/Downloads/LibertyRecomp/thirdparty/plume/contrib/VulkanMemoryAllocator/include -I/Users/Ozordi/Downloads/LibertyRecomp/thirdparty/GameNetworkingSockets/src/../include -I/Users/Ozordi/Downloads/LibertyRecomp/tools/liberty_debugger -I/Users/Ozordi/Downloads/LibertyRecomp/thirdparty/ffmpeg-core/include -isystem /Users/Ozordi/Downloads/LibertyRecomp/tools/XenonRecomp/thirdparty/tomlplusplus/include -isystem /Users/Ozordi/Downloads/LibertyRecomp/out/build/macos-release/vcpkg_installed/arm64-osx/include -isystem /opt/homebrew/Cellar/openssl@3/3.6.0/include -O3 -DNDEBUG -std=gnu++20 -flto=thin -arch arm64 -mmacosx-version-min=13.0 -fPIE -fno-strict-aliasing -Wno-switch -Wno-unused-function -Wno-unused-variable -Wno-unused-but-set-variable -Wno-void-pointer-to-int-cast -Wno-int-to-void-pointer-cast -Wno-invalid-offsetof -Wno-null-arithmetic -Wno-null-conversion -Wno-tautological-undefined-compare -ffp-model=strict -Winvalid-pch -Xclang -include-pch -Xclang /Users/Ozordi/Downloads/LibertyRecomp/out/build/macos-release/LibertyRecomp/CMakeFiles/LibertyRecomp.dir/cmake_pch.hxx.pch -Xclang -include -Xclang /Users/Ozordi/Downloads/LibertyRecomp/out/build/macos-release/LibertyRecomp/CMakeFiles/LibertyRecomp.dir/cmake_pch.hxx -MD -MT LibertyRecomp/CMakeFiles/LibertyRecomp.dir/gpu/postprocess_renderer.cpp.o -MF LibertyRecomp/CMakeFiles/LibertyRecomp.dir/gpu/postprocess_renderer.cpp.o.d -o LibertyRecomp/CMakeFiles/LibertyRecomp.dir/gpu/postprocess_renderer.cpp.o -c /Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/gpu/postprocess_renderer.cpp
+/Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/gpu/postprocess_renderer.cpp:1863:27: error: out-of-line definition of 'ApplyBloom' does not match any declaration in 'PostProcess::PostProcessRenderer'
+ 1863 | bool PostProcessRenderer::ApplyBloom(RenderCommandList* commandList,
+      |                           ^~~~~~~~~~
+/Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/gpu/postprocess_renderer.cpp:1913:26: error: no member named 'invWidth' in 'PostProcess::BloomExtractConstants'
+ 1913 |         extractConstants.invWidth = 1.0f / m_displayWidth;
+      |         ~~~~~~~~~~~~~~~~ ^
+/Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/gpu/postprocess_renderer.cpp:1914:26: error: no member named 'invHeight' in 'PostProcess::BloomExtractConstants'
+ 1914 |         extractConstants.invHeight = 1.0f / m_displayHeight;
+      |         ~~~~~~~~~~~~~~~~ ^
+/Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/gpu/postprocess_renderer.cpp:1915:26: error: no member named 'useKarisAverage' in 'PostProcess::BloomExtractConstants'
+ 1915 |         extractConstants.useKarisAverage = 1.0f;
+      |         ~~~~~~~~~~~~~~~~ ^
+/Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/gpu/postprocess_renderer.cpp:1916:26: error: no member named 'padding1' in 'PostProcess::BloomExtractConstants'; did you mean 'padding'?
+ 1916 |         extractConstants.padding1 = 0.0f;
+      |                          ^~~~~~~~
+      |                          padding
+/Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/gpu/postprocess_renderer.h:250:11: note: 'padding' declared here
+  250 |     float padding;
+      |           ^
+/Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/gpu/postprocess_renderer.cpp:1917:26: error: no member named 'padding2' in 'PostProcess::BloomExtractConstants'; did you mean 'padding'?
+ 1917 |         extractConstants.padding2 = 0.0f;
+      |                          ^~~~~~~~
+      |                          padding
+/Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/gpu/postprocess_renderer.h:250:11: note: 'padding' declared here
+  250 |     float padding;
+      |           ^
+/Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/gpu/postprocess_renderer.cpp:1918:26: error: no member named 'padding3' in 'PostProcess::BloomExtractConstants'; did you mean 'padding'?
+ 1918 |         extractConstants.padding3 = 0.0f;
+      |                          ^~~~~~~~
+      |                          padding
+/Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/gpu/postprocess_renderer.h:250:11: note: 'padding' declared here
+  250 |     float padding;
+      |           ^
+/Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/gpu/postprocess_renderer.cpp:1952:29: error: no member named 'invWidth' in 'PostProcess::BloomDownsampleConstants'
+ 1952 |         downsampleConstants.invWidth = 1.0f / srcWidth;
+      |         ~~~~~~~~~~~~~~~~~~~ ^
+/Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/gpu/postprocess_renderer.cpp:1953:29: error: no member named 'invHeight' in 'PostProcess::BloomDownsampleConstants'
+ 1953 |         downsampleConstants.invHeight = 1.0f / srcHeight;
+      |         ~~~~~~~~~~~~~~~~~~~ ^
+/Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/gpu/postprocess_renderer.cpp:1955:29: error: no member named 'useKarisAverage' in 'PostProcess::BloomDownsampleConstants'
+ 1955 |         downsampleConstants.useKarisAverage = (mipLevel == 1) ? 1.0f : 0.0f; // Karis on first downsample
+      |         ~~~~~~~~~~~~~~~~~~~ ^
+/Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/gpu/postprocess_renderer.cpp:1984:27: error: no member named 'invWidth' in 'PostProcess::BloomUpsampleConstants'
+ 1984 |         upsampleConstants.invWidth = 1.0f / dstWidth;
+      |         ~~~~~~~~~~~~~~~~~ ^
+/Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/gpu/postprocess_renderer.cpp:1985:27: error: no member named 'invHeight' in 'PostProcess::BloomUpsampleConstants'
+ 1985 |         upsampleConstants.invHeight = 1.0f / dstHeight;
+      |         ~~~~~~~~~~~~~~~~~ ^
+/Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/gpu/postprocess_renderer.cpp:1987:27: error: no member named 'bloomIntensity' in 'PostProcess::BloomUpsampleConstants'
+ 1987 |         upsampleConstants.bloomIntensity = effectiveIntensity;
+      |         ~~~~~~~~~~~~~~~~~ ^
+/Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/gpu/postprocess_renderer.cpp:2011:28: error: no member named 'saturation' in 'PostProcess::BloomCompositeConstants'
+ 2011 |         compositeConstants.saturation = 1.0f;
+      |         ~~~~~~~~~~~~~~~~~~ ^
+/Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/gpu/postprocess_renderer.cpp:2046:27: error: out-of-line definition of 'ApplySunShafts' does not match any declaration in 'PostProcess::PostProcessRenderer'
+ 2046 | bool PostProcessRenderer::ApplySunShafts(RenderCommandList* commandList,
+      |                           ^~~~~~~~~~~~~~
+/Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/gpu/postprocess_renderer.cpp:2095:26: error: no member named 'sunPosX' in 'PostProcess::SunShaftsPrepassConstants'
+ 2095 |         prepassConstants.sunPosX = sunScreenX;
+      |         ~~~~~~~~~~~~~~~~ ^
+/Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/gpu/postprocess_renderer.cpp:2096:26: error: no member named 'sunPosY' in 'PostProcess::SunShaftsPrepassConstants'
+ 2096 |         prepassConstants.sunPosY = sunScreenY;
+      |         ~~~~~~~~~~~~~~~~ ^
+/Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/gpu/postprocess_renderer.cpp:2097:26: error: no member named 'sunRadius' in 'PostProcess::SunShaftsPrepassConstants'
+ 2097 |         prepassConstants.sunRadius = 0.1f;  // Sun disk radius in screen space
+      |         ~~~~~~~~~~~~~~~~ ^
+/Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/gpu/postprocess_renderer.cpp:2098:26: error: no member named 'skyDepthThreshold' in 'PostProcess::SunShaftsPrepassConstants'
+ 2098 |         prepassConstants.skyDepthThreshold = 0.9999f;  // Depth values above this are sky
+      |         ~~~~~~~~~~~~~~~~ ^
+fatal error: too many errors emitted, stopping now [-ferror-limit=]
+20 errors generated.
+[22/53] Building CXX object LibertyRecomp/CMakeFiles/LibertyRecomp.dir/kernel/io/session_tracker_firebase.cpp.o
+[23/53] Building CXX object LibertyRecomp/CMakeFiles/LibertyRecomp.dir/gpu/upscaler.cpp.o
+[24/53] Building CXX object LibertyRecomp/CMakeFiles/LibertyRecomp.dir/hid/hid.cpp.o
+[25/53] Building CXX object LibertyRecomp/CMakeFiles/LibertyRecomp.dir/hid/mouse_camera.cpp.o
+[26/53] Building CXX object LibertyRecomp/CMakeFiles/LibertyRecomp.dir/apu/embedded_player.cpp.o
+[27/53] Building CXX object LibertyRecomp/CMakeFiles/LibertyRecomp.dir/apu/driver/sdl2_driver.cpp.o
+In file included from /Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/apu/driver/sdl2_driver.cpp:2:
+In file included from /Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/cpu/guest_thread.h:3:
+/Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/kernel/xdm.h:12:9: warning: 'FALSE' macro redefined [-Wmacro-redefined]
+   12 | #define FALSE                      0x00000000
+      |         ^
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include/mach/boolean.h:85:9: note: previous definition is here
+   85 | #define FALSE   0
+      |         ^
+In file included from /Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/apu/driver/sdl2_driver.cpp:2:
+In file included from /Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/cpu/guest_thread.h:3:
+/Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/kernel/xdm.h:13:9: warning: 'TRUE' macro redefined [-Wmacro-redefined]
+   13 | #define TRUE                       0x00000001
+      |         ^
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include/mach/boolean.h:81:9: note: previous definition is here
+   81 | #define TRUE    1
+      |         ^
+2 warnings generated.
+[28/53] Building CXX object LibertyRecomp/CMakeFiles/LibertyRecomp.dir/gpu/imgui/imgui_snapshot.cpp.o
+[29/53] Building CXX object LibertyRecomp/CMakeFiles/LibertyRecomp.dir/locale/locale.cpp.o
+[30/53] Building CXX object LibertyRecomp/CMakeFiles/LibertyRecomp.dir/gpu/video.cpp.o
+In file included from /Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/gpu/video.cpp:46:
+In file included from /Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/cpu/guest_thread.h:3:
+/Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/kernel/xdm.h:12:9: warning: 'FALSE' macro redefined [-Wmacro-redefined]
+   12 | #define FALSE                      0x00000000
+      |         ^
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include/mach/boolean.h:85:9: note: previous definition is here
+   85 | #define FALSE   0
+      |         ^
+In file included from /Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/gpu/video.cpp:46:
+In file included from /Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/cpu/guest_thread.h:3:
+/Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/kernel/xdm.h:13:9: warning: 'TRUE' macro redefined [-Wmacro-redefined]
+   13 | #define TRUE                       0x00000001
+      |         ^
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include/mach/boolean.h:81:9: note: previous definition is here
+   81 | #define TRUE    1
+      |         ^
+2 warnings generated.
+[31/53] Building CXX object LibertyRecomp/CMakeFiles/LibertyRecomp.dir/kernel/imports.cpp.o
+In file included from /Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/kernel/imports.cpp:7:
+/Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/kernel/xdm.h:12:9: warning: 'FALSE' macro redefined [-Wmacro-redefined]
+   12 | #define FALSE                      0x00000000
+      |         ^
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include/mach/boolean.h:85:9: note: previous definition is here
+   85 | #define FALSE   0
+      |         ^
+In file included from /Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/kernel/imports.cpp:7:
+/Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/kernel/xdm.h:13:9: warning: 'TRUE' macro redefined [-Wmacro-redefined]
+   13 | #define TRUE                       0x00000001
+      |         ^
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include/mach/boolean.h:81:9: note: previous definition is here
+   81 | #define TRUE    1
+      |         ^
+In file included from /Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/kernel/imports.cpp:31:
+/Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/kernel/vfs.h:22:67: warning: '/*' within block comment [-Wcomment]
+   22 |  *   game:\common\shaders\*    → <extracted_root>/common/shaders/*
+      |                                                                 ^
+/Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/kernel/imports.cpp:3712:19: warning: result of comparison of constant 4294967296 with expression of type 'uint32_t' (aka 'unsigned int') is always false [-Wtautological-constant-out-of-range-compare]
+ 3712 |     if (requested >= PPC_MEMORY_SIZE)
+      |         ~~~~~~~~~ ^  ~~~~~~~~~~~~~~~
+/Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/kernel/imports.cpp:6083:21: warning: data argument not used by format string [-Wformat-extra-args]
+ 6081 |     printf("[sub_8272A760] [RAGE_SCHEDULER] crmtScheduler worker #{} "
+      |            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ 6082 |            "context=0x%08X - stub (no-op)\n",
+      |            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ 6083 |            s_count, schedulerContext);
+      |                     ^
+/Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/kernel/imports.cpp:6114:12: warning: data argument not used by format string [-Wformat-extra-args]
+ 6112 |     printf("[sub_825F5C28] [ASYNC_PROBE] AsyncProbeMgr worker #{} - stub "
+      |            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ 6113 |            "(no-op)\n",
+      |            ~~~~~~~~~~~
+ 6114 |            s_count);
+      |            ^
+/Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/kernel/imports.cpp:8819:51: warning: format specifies type 'unsigned int' but the argument has type 'uint64_t' (aka 'unsigned long long') [-Wformat]
+ 8818 |   printf("[VTABLE27] #%d path='%s' device=0x%08X output=0x%08X LR=0x%08X\n",
+      |                                                                     ~~~~
+      |                                                                     %08llX
+ 8819 |          s_count, pathBuf, devicePtr, outputAddr, ctx.lr);
+      |                                                   ^~~~~~
+/Users/Ozordi/Downloads/LibertyRecomp/LibertyRecomp/kernel/imports.cpp:9186:5: warning: 'sprintf' is deprecated: This function is provided for compatibility reasons only.  Due to security concerns inherent in the design of sprintf(3), it is highly recommended that you use snprintf(3) instead. [-Wdeprecated-declarations]
+ 9186 |     sprintf(hexBuf + i * 3, "%02X ", c);
+      |     ^
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include/_stdio.h:278:1: note: 'sprintf' has been explicitly marked deprecated here
+  278 | __deprecated_msg("This function is provided for compatibility reasons only.  Due to security concerns inherent in the design of sprintf(3), it is highly recommended that you use snprintf(3) instead.")
+      | ^
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include/sys/cdefs.h:227:48: note: expanded from macro '__deprecated_msg'
+  227 |         #define __deprecated_msg(_msg) __attribute__((__deprecated__(_msg)))
+      |                                                       ^
+8 warnings generated.
+[32/53] Building CXX object LibertyRecomp/CMakeFiles/LibertyRecomp.dir/locale/config_locale.cpp.o
+ninja: build stopped: subcommand failed.

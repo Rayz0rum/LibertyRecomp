@@ -13,6 +13,9 @@ import type {
   RecursiveCallTree,
   VTable,
   VTableEntry,
+  ExecutionTrace,
+  UpwardPath,
+  DownwardNode,
 } from '../types.js';
 
 // Memory regions for address classification
@@ -668,6 +671,139 @@ export class PPCAnalyzer {
     }
     
     return hooks;
+  }
+
+  // Tool: execution_trace - Trace execution paths up to entry and down to callees
+  executionTrace(
+    funcName: string,
+    direction: 'up' | 'down' | 'both',
+    maxDepth: number = 50
+  ): ExecutionTrace {
+    const func = this.index.functionsByName.get(funcName);
+    if (!func) {
+      return {
+        function: funcName,
+        error: 'Function not found',
+        upward_trace: [],
+        downward_trace: [],
+      };
+    }
+
+    const result: ExecutionTrace = {
+      function: funcName,
+      address: func.address,
+      upward_trace: [],
+      downward_trace: [],
+    };
+
+    // Trace upward to entry point (xstart or root callers)
+    if (direction === 'up' || direction === 'both') {
+      result.upward_trace = this.traceToEntryPoint(funcName, maxDepth);
+      result.entry_points = result.upward_trace
+        .filter(path => path.is_entry_point)
+        .map(path => path.path[0]);
+    }
+
+    // Trace downward to all callees
+    if (direction === 'down' || direction === 'both') {
+      result.downward_trace = this.traceCallees(funcName, maxDepth);
+      result.leaf_functions = result.downward_trace
+        .filter(item => item.is_leaf)
+        .map(item => item.function);
+      result.kernel_apis_reached = result.downward_trace
+        .filter(item => item.kernel_apis.length > 0)
+        .flatMap(item => item.kernel_apis)
+        .filter((api, idx, arr) => arr.indexOf(api) === idx); // unique
+    }
+
+    return result;
+  }
+
+  private traceToEntryPoint(
+    funcName: string,
+    maxDepth: number
+  ): UpwardPath[] {
+    const paths: UpwardPath[] = [];
+    const visited = new Set<string>();
+    
+    // Known entry points
+    const ENTRY_POINTS = new Set([
+      'xstart', 'XapiThreadStartup', '__entry', 'main',
+      'sub_82100000', // Common XEX entry
+    ]);
+
+    const findPaths = (
+      current: string,
+      pathSoFar: string[],
+      depth: number
+    ): void => {
+      if (depth > maxDepth) return;
+      
+      const currentPath = [current, ...pathSoFar];
+      const callers = this.index.reverseCallGraph.get(current);
+      
+      // Check if current is an entry point
+      if (ENTRY_POINTS.has(current) || !callers || callers.size === 0) {
+        paths.push({
+          path: currentPath,
+          depth: currentPath.length,
+          is_entry_point: ENTRY_POINTS.has(current) || !callers || callers.size === 0,
+          entry_type: ENTRY_POINTS.has(current) ? 'known_entry' : 'root_caller',
+        });
+        return;
+      }
+
+      // Limit paths to avoid explosion
+      if (paths.length >= 20) return;
+
+      for (const caller of callers) {
+        // Avoid cycles
+        if (pathSoFar.includes(caller)) continue;
+        
+        // Use path-local visited to allow multiple paths
+        findPaths(caller, currentPath, depth + 1);
+      }
+    };
+
+    findPaths(funcName, [], 0);
+    
+    // Sort by shortest path first
+    return paths.sort((a, b) => a.depth - b.depth).slice(0, 20);
+  }
+
+  private traceCallees(
+    funcName: string,
+    maxDepth: number
+  ): DownwardNode[] {
+    const nodes: DownwardNode[] = [];
+    const visited = new Set<string>();
+
+    const traverse = (current: string, depth: number): void => {
+      if (depth > maxDepth || visited.has(current)) return;
+      visited.add(current);
+
+      const func = this.index.functionsByName.get(current);
+      const callees = func?.calls || [];
+      const kernelApis = func?.kernelCalls || [];
+      
+      nodes.push({
+        function: current,
+        address: func?.address || 'unknown',
+        depth,
+        callees: callees.slice(0, 20), // Limit for readability
+        kernel_apis: kernelApis,
+        is_leaf: callees.length === 0,
+        is_hooked: this.index.hooks.has(current),
+        hook_type: this.index.hooks.get(current)?.type,
+      });
+
+      for (const callee of callees) {
+        traverse(callee, depth + 1);
+      }
+    };
+
+    traverse(funcName, 0);
+    return nodes;
   }
 
   // Utility: list kernel APIs

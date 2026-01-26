@@ -146,6 +146,18 @@ CONFIG_DEFINE_LOCALISED("Video", float, SSAOIntensity, 1.0f, false);
 CONFIG_DEFINE_LOCALISED("Video", float, SSAOBias, 0.03f, false);
 CONFIG_DEFINE_LOCALISED("Video", float, SSAOFalloffDistance, 100.0f, false);
 
+// Bloom Settings (MiniEngine-style pyramid)
+CONFIG_DEFINE_LOCALISED("Video", bool, EnableBloom, false, false);
+CONFIG_DEFINE_LOCALISED("Video", float, BloomThreshold, 1.0f, false);
+CONFIG_DEFINE_LOCALISED("Video", float, BloomIntensity, 0.5f, false);
+
+// Sun Shafts Settings (FusionFix-style GPU Gems 3)
+CONFIG_DEFINE_LOCALISED("Video", bool, EnableSunShafts, false, false);
+CONFIG_DEFINE_LOCALISED("Video", float, SunShaftsDensity, 1.0f, false);
+CONFIG_DEFINE_LOCALISED("Video", float, SunShaftsWeight, 0.01f, false);
+CONFIG_DEFINE_LOCALISED("Video", float, SunShaftsDecay, 0.97f, false);
+CONFIG_DEFINE_LOCALISED("Video", float, SunShaftsExposure, 0.5f, false);
+
 CONFIG_DEFINE_HIDDEN("Codes", bool, AntigravityRetainsMomentum, false, false);
 CONFIG_DEFINE_HIDDEN("Codes", bool, ControllableBoundAttack, false, false);
 CONFIG_DEFINE_HIDDEN("Codes", bool, ControllableSpinkick, false, false);
@@ -193,6 +205,35 @@ CONFIG_DEFINE("VoiceChat", bool, PushToTalk, false, false);
 CONFIG_DEFINE_ENUM("Bindings", SDL_Scancode, Key_PushToTalk, SDL_SCANCODE_GRAVE, false);
 CONFIG_DEFINE("VoiceChat", float, VoiceActivityThreshold, 0.02f, false);
 CONFIG_DEFINE("VoiceChat", bool, VoiceChatSelfMuted, false, false);
+
+// ============================================================================
+// LOD and Render Distance Settings
+// ============================================================================
+// These settings allow you to significantly increase draw distances and 
+// disable/reduce the Level of Detail (LOD) system.
+//
+// RenderDistanceMultiplier: Multiplies all render distances (1.0 = default, 3.0 = triple)
+// LODDistanceMultiplier: Multiplies LOD switch thresholds (higher = more detailed models at distance)
+// StreamingDistanceMultiplier: Multiplies streaming/loading distances
+// FarClipMultiplier: Multiplies the far clipping plane distance
+// DisableLOD: Completely disables LOD switching (always use highest detail)
+// EntityFadeDistance: Override for entity fade-out distance (500.0 default)
+// MaxRenderDistance: Override for max render distance (1000.0 default)
+// PedestrianLODDistance: Override for pedestrian LOD distance (200.0 default)
+// VehicleLODDistance: Override for vehicle LOD distance (varies)
+// BuildingLODDistance: Override for building/world LOD distance (100.0 default)
+// ============================================================================
+
+CONFIG_DEFINE_LOCALISED("Graphics", float, RenderDistanceMultiplier, 1.0f, false);
+CONFIG_DEFINE_LOCALISED("Graphics", float, LODDistanceMultiplier, 1.0f, false);
+CONFIG_DEFINE_LOCALISED("Graphics", float, StreamingDistanceMultiplier, 1.0f, false);
+CONFIG_DEFINE_LOCALISED("Graphics", float, FarClipMultiplier, 1.0f, false);
+CONFIG_DEFINE_LOCALISED("Graphics", bool, DisableLOD, false, false);
+CONFIG_DEFINE_HIDDEN("Graphics", float, EntityFadeDistance, 500.0f, false);
+CONFIG_DEFINE_HIDDEN("Graphics", float, MaxRenderDistance, 1000.0f, false);
+CONFIG_DEFINE_HIDDEN("Graphics", float, PedestrianLODDistance, 200.0f, false);
+CONFIG_DEFINE_HIDDEN("Graphics", float, VehicleLODDistance, 300.0f, false);
+CONFIG_DEFINE_HIDDEN("Graphics", float, BuildingLODDistance, 100.0f, false);
 
 // Legacy Network Settings (Nebula VPN - deprecated)
 CONFIG_DEFINE_HIDDEN("Network", std::string, NetworkName, "", false);

@@ -14901,3 +14901,915 @@ LibertyRecomp/
 *PS3 Sixaxis Feature Implementation Guide*
 *Traced through decompiled default.xex.c motion control script commands and vehicle type detection*
 
+---
+
+## Section 116: Injecting Custom Options into GTA IV's Native Pause Menu
+
+### 116.1 Goal
+
+Inject new graphics options (Upscaler, DOF, Film Grain, TAA, etc.) directly into the **game's built-in pause menu** (Display tab), not a custom overlay. Since this is a static recompilation, we have full access to modify the game's menu data structures at runtime.
+
+### 116.2 Native Menu System Architecture
+
+The pause menu (Map, Brief, Stats, Controls, Audio, **Display**, Game) uses these key data structures:
+
+#### 116.2.1 Core Global Variables
+
+| Address | Name | Description |
+|---------|------|-------------|
+| `0x82BEC638` | `dword_82BEC638[]` | **125-element array** storing all menu option values (slider positions, toggle states) |
+| `0x82BEC844` | `dword_82BEC844` | Current menu screen index (3=Display during pause, 5=Display in main menu, etc.) |
+| `0x82BEC82C` | `dword_82BEC82C[]` | Current selected item indices per player |
+| `0x83142B10` | `unk_83142B10` | Array of pointers to menu screen item data (24-byte stride per screen) |
+| `0x83142B14` | `unk_83142B14` | Array of item counts per menu screen (24-byte stride) |
+| `0x8314295C` | `dword_8314295C[]` | Display value type definitions (how values are rendered) |
+| `0x83142958` | `unk_83142958` | Menu display value lookup table |
+
+#### 116.2.2 Menu Item Structure (22 bytes per item)
+
+```
+Offset  Size  Description
+------  ----  -----------
+0x00    1     Item type (determines behavior)
+...
+0x12    2     Display value type index (into dword_8314295C)
+0x14    1     Display mode/flags
+0x15    1     Item category/group ID
+```
+
+#### 116.2.3 Display Value Types
+
+```cpp
+// From sub_8214A0E0 string comparisons:
+MENU_DISPLAY_NONE           = 100  // No value display
+MENU_DISPLAY_SLIDERBAR      = 101  // Horizontal slider (Brightness, Contrast, etc.)
+MENU_DISPLAY_ONE_NUMBER     = 102  // Single number
+MENU_DISPLAY_TWO_NUMBERS    = 103  // Two numbers (resolution, etc.)
+MENU_DISPLAY_TWO_NUMBERS_SPECIAL = 104
+MENU_DISPLAY_RADIO_STATIONS = 105  // Radio station list
+MENU_DISPLAY_NET_STATS      = 106  // Network stats display
+MENU_DISPLAY_ON_OFF         = string constant  // On/Off toggle
+```
+
+### 116.3 Key Functions
+
+| Function | Address | Description |
+|----------|---------|-------------|
+| `sub_8225E2D0` | 0x8225E2D0 | Get current selected item index for a menu |
+| `sub_8225E198` | 0x8225E198 | Get current item's value delta (for navigation) |
+| `sub_8224D8E8` | 0x8224D8E8 | Get menu item index by type for a screen |
+| `sub_8224D758` | 0x8224D758 | Get current menu item info |
+| `sub_8224D960` | 0x8224D960 | Set current menu item |
+| `sub_8213AF40` | 0x8213AF40 | Apply display setting value (sliders) |
+| `sub_8213B048` | 0x8213B048 | Apply display setting value (toggles) |
+| `sub_8213B268` | 0x8213B268 | Get display setting value (type 1) |
+| `sub_8213B350` | 0x8213B350 | Get display setting value (type 2) |
+| `sub_8224EAA0` | 0x8224EAA0 | Process menu item selection |
+| `sub_821485D8` | 0x821485D8 | Frontend menu loader |
+
+### 116.4 Display Tab Menu Items (Screen Index 5)
+
+Based on the screenshot, the Display tab contains these items with their value indices:
+
+| Item | Value Array Index | Type | Range |
+|------|-------------------|------|-------|
+| Brightness | 49 (or 54) | Slider | 0-10 |
+| Contrast | 50 (or 55) | Slider | 0-10 |
+| Saturation | 51 (or 56) | Slider | 0-10 |
+| Subtitles | 52 (or 57) | Toggle | On/Off |
+| Radar | 53 (or 58) | Toggle | On/Off |
+| HUD | ? | Toggle | On/Off |
+| Weapon Target | ? | Enum | Basic/Complex/etc |
+| GPS Route | ? | Toggle | On/Off |
+| Handbrake Cam | ? | Toggle | On/Off |
+| Language | ? | Enum | English/etc |
+| Default | ? | Action | Reset defaults |
+
+The exact indices depend on platform (`dword_82A2C8DC` check).
+
+---
+
+### 116.5 Implementation Strategy: Hooking the Native Menu
+
+#### Approach 1: Extend the Menu Item Array
+
+Since menu items are stored in dynamically allocated arrays pointed to by `unk_83142B10`, we can:
+
+1. **Hook the menu initialization** (`sub_821485D8` or the XML parser)
+2. **Allocate extended item arrays** with additional space for our custom options
+3. **Inject our items** after the existing Display tab items
+4. **Update the item count** in `unk_83142B14`
+
+```cpp
+// In kernel/menu_hooks.cpp
+
+// Hook point: After menu data is loaded
+void HookMenuInit() {
+    // Get Display screen item array pointer
+    uint32_t* menuScreenPtrs = (uint32_t*)PPCToHost(0x83142B10);
+    uint16_t* menuItemCounts = (uint16_t*)PPCToHost(0x83142B14);
+    
+    const int DISPLAY_SCREEN_INDEX = 5;  // Display tab
+    const int ITEM_SIZE = 22;  // Bytes per menu item
+    
+    // Get current Display tab data
+    uint32_t oldItemsPtr = menuScreenPtrs[DISPLAY_SCREEN_INDEX * 6];
+    uint16_t oldItemCount = menuItemCounts[DISPLAY_SCREEN_INDEX * 12];
+    
+    // Allocate new array with extra items
+    const int EXTRA_ITEMS = 5;  // Upscaler, DOF, Film Grain, etc.
+    int newSize = (oldItemCount + EXTRA_ITEMS) * ITEM_SIZE;
+    uint8_t* newItems = AllocateGuestMemory(newSize);
+    
+    // Copy original items
+    memcpy(newItems, PPCToHost(oldItemsPtr), oldItemCount * ITEM_SIZE);
+    
+    // Add our custom items
+    AddCustomMenuItem(newItems, oldItemCount + 0, "Upscaler", MENU_TYPE_ENUM);
+    AddCustomMenuItem(newItems, oldItemCount + 1, "Depth of Field", MENU_TYPE_TOGGLE);
+    AddCustomMenuItem(newItems, oldItemCount + 2, "Film Grain", MENU_TYPE_TOGGLE);
+    AddCustomMenuItem(newItems, oldItemCount + 3, "TAA Quality", MENU_TYPE_ENUM);
+    AddCustomMenuItem(newItems, oldItemCount + 4, "Motion Blur", MENU_TYPE_TOGGLE);
+    
+    // Update pointers
+    menuScreenPtrs[DISPLAY_SCREEN_INDEX * 6] = HostToPPC(newItems);
+    menuItemCounts[DISPLAY_SCREEN_INDEX * 12] = oldItemCount + EXTRA_ITEMS;
+}
+```
+
+#### Approach 2: Hook Value Read/Write
+
+For simpler integration, hook the functions that read/write menu values:
+
+```cpp
+// Hook sub_8213B268 - Get setting value
+// Hook sub_8213B350 - Get setting value (type 2)
+// Hook sub_8213AF40 - Apply setting value
+
+// When value array index >= 100, handle as custom option
+int GetCustomSettingValue(int index) {
+    if (index >= CUSTOM_SETTING_BASE) {
+        switch (index - CUSTOM_SETTING_BASE) {
+            case 0: return (int)Config::Upscaler;
+            case 1: return Config::DepthOfField != EDepthOfField::Off;
+            case 2: return Config::FilmGrain != EFilmGrain::Off;
+            // ...
+        }
+    }
+    return OriginalFunction(index);
+}
+```
+
+---
+
+### 116.6 Value Storage Integration
+
+The game stores menu values in `dword_82BEC638[]`. We can either:
+
+**Option A: Use unused array slots**
+- Array has 125 elements, not all used
+- Reserve indices 100-124 for custom settings
+- Sync values to our Config system on change
+
+**Option B: Shadow the array entirely**
+- Intercept all reads/writes to `dword_82BEC638`
+- For standard indices (0-99), pass through to original
+- For custom indices (100+), redirect to Config system
+
+```cpp
+// Shadow array approach
+void SetMenuValue(int index, int value) {
+    if (index >= CUSTOM_BASE) {
+        ApplyCustomSetting(index - CUSTOM_BASE, value);
+        return;
+    }
+    // Original behavior
+    uint32_t* valueArray = (uint32_t*)PPCToHost(0x82BEC638);
+    valueArray[index] = value;
+}
+
+void ApplyCustomSetting(int customIndex, int value) {
+    switch (customIndex) {
+        case SETTING_UPSCALER:
+            Config::Upscaler = (EUpscaler)value;
+            // Trigger graphics reinitialization
+            break;
+        case SETTING_DOF:
+            Config::DepthOfField = value ? EDepthOfField::Bokeh : EDepthOfField::Off;
+            break;
+        // ...
+    }
+    Config::Save();  // Persist to TOML
+}
+```
+
+---
+
+### 116.7 Text String Injection (GXT Localization)
+
+The game uses GXT text files for localized strings. Menu item names like "Brightness" are GXT keys. To add custom item names:
+
+#### Option A: Hook the String Lookup
+
+```cpp
+// Hook sub_82273620 which looks up GXT strings
+const char* GetLocalizedString(uint32_t gxtHash, const char* key) {
+    // Check for our custom keys first
+    if (strcmp(key, "FE_UPSCALER") == 0) return "Upscaler";
+    if (strcmp(key, "FE_DOF") == 0) return "Depth of Field";
+    if (strcmp(key, "FE_FILMGRAIN") == 0) return "Film Grain";
+    if (strcmp(key, "FE_TAAQUALITY") == 0) return "TAA Quality";
+    if (strcmp(key, "FE_MOTIONBLUR") == 0) return "Motion Blur";
+    
+    // Fall through to original
+    return OriginalGetString(gxtHash, key);
+}
+```
+
+#### Option B: Inject into GXT Tables
+
+Modify the game's loaded GXT data at runtime to include our strings.
+
+---
+
+### 116.8 Menu Sound Effects
+
+When menu items are changed, the game plays sounds via `sub_822FA428`:
+
+```cpp
+// Sound event strings (pass to sub_822FA428)
+"FRONTEND_MENU_SELECT"          // Item selected/confirmed
+"FRONTEND_MENU_BACK"            // Back button pressed
+"FRONTEND_MENU_HIGHLIGHT"       // Cursor moved
+"FRONTEND_MENU_HIGHLIGHT_DOWN_UP"  // Cursor moved vertically
+"FRONTEND_MENU_TOGGLE_ON"       // Toggle enabled
+"FRONTEND_MENU_SLIDER_UP"       // Slider increased
+"FRONTEND_MENU_SLIDER_DOWN"     // Slider decreased
+```
+
+---
+
+### 116.9 Complete Implementation Example
+
+Here's a full example of adding an "Upscaler" option to the Display tab:
+
+```cpp
+// menu_hooks.h
+#pragma once
+
+namespace MenuHooks {
+    void Initialize();
+    void InjectCustomOptions();
+}
+
+// Custom option indices (using unused slots 100-124)
+enum CustomMenuIndices {
+    CUSTOM_UPSCALER = 100,
+    CUSTOM_DOF = 101,
+    CUSTOM_FILMGRAIN = 102,
+    CUSTOM_TAA_QUALITY = 103,
+    CUSTOM_MOTION_BLUR = 104
+};
+```
+
+```cpp
+// menu_hooks.cpp
+#include "menu_hooks.h"
+#include <user/config.h>
+
+// Address constants
+constexpr uint32_t MENU_VALUES_ADDR = 0x82BEC638;
+constexpr uint32_t DISPLAY_SCREEN_IDX = 5;
+
+void MenuHooks::Initialize() {
+    // Hook the menu initialization function
+    // Called after frontend data is loaded
+    
+    // Hook value getter to handle custom indices
+    HookFunction(0x8213B268, &GetSettingValueHook);
+    
+    // Hook value setter to apply custom settings
+    HookFunction(0x8213AF40, &ApplySettingValueHook);
+}
+
+int GetSettingValueHook(int index, char platform) {
+    if (index >= 100) {
+        switch (index) {
+            case CUSTOM_UPSCALER:
+                return static_cast<int>(Config::Upscaler.Value);
+            case CUSTOM_DOF:
+                return Config::DepthOfField != EDepthOfField::Off ? 1 : 0;
+            case CUSTOM_FILMGRAIN:
+                return Config::FilmGrain != EFilmGrain::Off ? 1 : 0;
+            case CUSTOM_TAA_QUALITY:
+                return static_cast<int>(Config::TAAQuality.Value);
+            case CUSTOM_MOTION_BLUR:
+                return Config::MotionBlur != EMotionBlur::Off ? 1 : 0;
+        }
+    }
+    return OriginalGetSettingValue(index, platform);
+}
+
+void ApplySettingValueHook(int target, int value, int type, char platform) {
+    // Check if this is setting one of our custom indices
+    // (Would need to trace where the index comes from)
+    
+    // For now, sync our config when Display menu closes
+    OriginalApplySettingValue(target, value, type, platform);
+}
+
+// Called when exiting Display menu
+void SyncCustomSettings() {
+    uint32_t* values = (uint32_t*)PPCToHost(MENU_VALUES_ADDR);
+    
+    Config::Upscaler = static_cast<EUpscaler>(values[CUSTOM_UPSCALER]);
+    Config::DepthOfField = values[CUSTOM_DOF] ? EDepthOfField::Bokeh : EDepthOfField::Off;
+    Config::FilmGrain = values[CUSTOM_FILMGRAIN] ? EFilmGrain::Medium : EFilmGrain::Off;
+    
+    Config::Save();
+}
+```
+
+---
+
+### 116.10 Next Steps
+
+To fully implement this:
+
+1. **Map all Display tab item indices** - Trace through the code to find exact indices for each existing item
+2. **Find the menu item array allocation** - Locate where items are allocated after XML parse
+3. **Create menu_hooks.cpp** - Implement the hooking infrastructure
+4. **Test incrementally** - Start with reading values, then writing, then adding items
+5. **Handle enum value cycling** - For enum options, implement proper next/prev logic
+6. **Add persistence** - Sync menu values with Config system on menu close
+
+---
+
+### 116.11 Alternative: Hybrid Approach
+
+If native menu injection proves too complex, use a hybrid approach:
+
+1. **Keep existing Display tab items** unchanged
+2. **Add a single "Advanced..." item** that opens our ImGui overlay
+3. **ImGui overlay** contains all the advanced graphics options
+4. **Best of both worlds** - Native feel with our full control
+
+This is simpler to implement and maintain while still integrating with the game's UI flow.
+
+---
+
+*Section 116 Added: 2026-01-24*
+*GTA IV Native Pause Menu Integration Research*
+*Traced through decompiled default.xex.c menu structures and value storage*
+
+---
+
+## Section 117: Complete Feature List for Native Menu Integration
+
+### 117.1 All Configurable Features (from config_def.h)
+
+This is a comprehensive list of ALL features that can be exposed in the native pause menu.
+
+#### 117.1.1 Display/Video Settings (Display Tab)
+
+| Feature | Config Name | Type | Values | Native Menu Type |
+|---------|-------------|------|--------|------------------|
+| **Resolution Scale** | `ResolutionScale` | float | 0.25-2.0 | Slider |
+| **VSync** | `VSync` | bool | On/Off | Toggle |
+| **Frame Rate Cap** | `FPS` | int | 15-241 | Slider/Enum |
+| **Brightness** | `Brightness` | float | 0.0-1.0 | Slider (exists) |
+| **Fullscreen** | `Fullscreen` | bool | On/Off | Toggle |
+| **Aspect Ratio** | `AspectRatio` | enum | Auto/Original | Enum |
+
+#### 117.1.2 Anti-Aliasing Settings (Display Tab - Advanced)
+
+| Feature | Config Name | Type | Values | Native Menu Type |
+|---------|-------------|------|--------|------------------|
+| **MSAA** | `AntiAliasing` | enum | Off/2x/4x/8x | Enum |
+| **Modern AA** | `ModernAA` | enum | Off/TAA/SMAA/FSR1 | Enum |
+| **Transparency AA** | `TransparencyAntiAliasing` | bool | On/Off | Toggle |
+| **TAA Blend Factor** | `TAABlendFactor` | float | 0.0-1.0 | Slider |
+| **SMAA Edge Threshold** | `SMAAEdgeThreshold` | float | 0.0-1.0 | Slider |
+
+#### 117.1.3 Upscaling & Frame Generation (Display Tab - Advanced)
+
+| Feature | Config Name | Type | Values | Native Menu Type |
+|---------|-------------|------|--------|------------------|
+| **Upscaler** | `Upscaler` | enum | Off/FSR1/FSR3/DLSS/XeSS/MetalFX | Enum |
+| **Upscale Quality** | `UpscaleQuality` | enum | UltraQuality/Quality/Balanced/Performance/UltraPerformance | Enum |
+| **Frame Generation** | `FrameGeneration` | enum | Off/FSR3FG/DLSSFG | Enum |
+| **Upscale Sharpness** | `UpscaleSharpness` | float | 0.0-1.0 | Slider |
+| **FSR1 Sharpness** | `FSR1Sharpness` | float | 0.0-1.0 | Slider |
+| **Dynamic Resolution** | `DynamicResolution` | enum | Off/Quality/Balanced/Performance | Enum |
+
+#### 117.1.4 Post-Processing Effects (Display Tab - Effects)
+
+| Feature | Config Name | Type | Values | Native Menu Type |
+|---------|-------------|------|--------|------------------|
+| **Depth of Field** | `DepthOfField` | enum | Off/Low/Medium/High/Ultra | Enum |
+| **DOF Focus Distance** | `DOFFocusDistance` | float | 1.0-100.0 | Slider |
+| **DOF Aperture** | `DOFApertureSize` | float | 0.01-0.5 | Slider |
+| **Motion Blur** | `MotionBlur` | enum | Off/Camera/Enhanced | Enum |
+| **Motion Blur Strength** | `MotionBlurStrength` | float | 0.0-2.0 | Slider |
+| **Film Grain** | `FilmGrain` | enum | Off/Light/Medium/Heavy | Enum |
+| **Film Grain Intensity** | `FilmGrainIntensity` | float | 0.0-1.0 | Slider |
+| **Chromatic Aberration** | `ChromaticAberration` | enum | Off/Subtle/Normal/Strong | Enum |
+| **Radial Blur** | `RadialBlur` | enum | Off/Original/Enhanced | Enum |
+| **Vignette** | `VignetteEnabled` | bool | On/Off | Toggle |
+| **Vignette Intensity** | `VignetteIntensity` | float | 0.0-1.0 | Slider |
+
+#### 117.1.5 Quality Settings (Display Tab - Quality)
+
+| Feature | Config Name | Type | Values | Native Menu Type |
+|---------|-------------|------|--------|------------------|
+| **Shadow Resolution** | `ShadowResolution` | enum | Original/512/1024/2048/4096/8192 | Enum |
+| **Shadow Filter** | `ShadowFilter` | enum | Off/PCF3x3/PCF5x5/PCF7x7/PCSS | Enum |
+| **Reflection Resolution** | `ReflectionResolution` | enum | Eighth/Quarter/Half/Full | Enum |
+| **SSAO** | `SSAO` | enum | Off/Low/Medium/High/Ultra | Enum |
+| **SSAO Intensity** | `SSAOIntensity` | float | 0.0-2.0 | Slider |
+| **SSAA (Supersampling)** | `SSAA` | enum | Off/1.5x/2x/4x | Enum |
+| **HDR Mode** | `HDRMode` | enum | Off/scRGB/HDR10 | Enum |
+
+#### 117.1.6 Draw Distance/LOD (Game Tab or Display Advanced)
+
+| Feature | Config Name | Type | Values | Native Menu Type |
+|---------|-------------|------|--------|------------------|
+| **Render Distance** | `RenderDistanceMultiplier` | float | 0.5-3.0 | Slider |
+| **LOD Distance** | `LODDistanceMultiplier` | float | 0.5-3.0 | Slider |
+| **Streaming Distance** | `StreamingDistanceMultiplier` | float | 0.5-3.0 | Slider |
+| **Far Clip** | `FarClipMultiplier` | float | 0.5-3.0 | Slider |
+| **Disable LOD** | `DisableLOD` | bool | On/Off | Toggle |
+
+#### 117.1.7 Multiplayer Settings (New "Multiplayer" Tab or Game Tab)
+
+| Feature | Config Name | Type | Values | Native Menu Type |
+|---------|-------------|------|--------|------------------|
+| **Backend** | `MultiplayerBackend` | enum | Community/Firebase/LAN | Enum |
+| **Voice Chat** | `VoiceChatEnabled` | bool | On/Off | Toggle |
+| **Mic Volume** | `MicrophoneVolume` | float | 0.0-1.0 | Slider |
+| **Voice Volume** | `VoiceOutputVolume` | float | 0.0-1.0 | Slider |
+| **Push To Talk** | `PushToTalk` | bool | On/Off | Toggle |
+| **Self Muted** | `VoiceChatSelfMuted` | bool | On/Off | Toggle |
+
+#### 117.1.8 Audio Settings (Audio Tab - extends existing)
+
+| Feature | Config Name | Type | Values | Native Menu Type |
+|---------|-------------|------|--------|------------------|
+| **Master Volume** | `MasterVolume` | float | 0.0-1.0 | Slider |
+| **Music Volume** | `MusicVolume` | float | 0.0-1.0 | Slider |
+| **Effects Volume** | `EffectsVolume` | float | 0.0-1.0 | Slider |
+| **Channel Config** | `ChannelConfiguration` | enum | Stereo/Surround | Enum |
+| **Mute on Focus Lost** | `MuteOnFocusLost` | bool | On/Off | Toggle |
+
+---
+
+### 117.2 Native Menu Integration Plan
+
+#### 117.2.1 Menu Value Index Allocation
+
+Reserve indices 100-124 in `dword_82BEC638[]` for our custom options:
+
+```cpp
+// Custom menu value indices
+enum CustomMenuIndex : uint32_t {
+    // Display - Core (100-109)
+    MENU_RESOLUTION_SCALE = 100,
+    MENU_VSYNC = 101,
+    MENU_FPS_CAP = 102,
+    MENU_FULLSCREEN = 103,
+    MENU_ASPECT_RATIO = 104,
+    
+    // Anti-Aliasing (105-109)
+    MENU_MSAA = 105,
+    MENU_MODERN_AA = 106,
+    MENU_TAA_BLEND = 107,
+    
+    // Upscaling (110-114)
+    MENU_UPSCALER = 110,
+    MENU_UPSCALE_QUALITY = 111,
+    MENU_FRAME_GEN = 112,
+    MENU_UPSCALE_SHARPNESS = 113,
+    
+    // Post-Processing (115-119)
+    MENU_DOF = 115,
+    MENU_MOTION_BLUR = 116,
+    MENU_FILM_GRAIN = 117,
+    MENU_CHROMATIC_ABERRATION = 118,
+    
+    // Quality (120-124)
+    MENU_SHADOW_RES = 120,
+    MENU_SHADOW_FILTER = 121,
+    MENU_SSAO = 122,
+    MENU_LOD_DISTANCE = 123,
+    MENU_RENDER_DISTANCE = 124
+};
+```
+
+#### 117.2.2 Implementation Files
+
+Create these new files:
+
+```
+LibertyRecomp/kernel/menu_hooks.h
+LibertyRecomp/kernel/menu_hooks.cpp
+```
+
+#### 117.2.3 Hook Points in Recompiled PPC
+
+Key functions to hook (find in `/LibertyRecompLib/ppc`):
+
+| Function | Address | Purpose | Hook Type |
+|----------|---------|---------|-----------|
+| `sub_8213B268` | 0x8213B268 | Get display setting value | Pre-hook to inject custom values |
+| `sub_8213B350` | 0x8213B350 | Get display setting (type 2) | Pre-hook |
+| `sub_8213AF40` | 0x8213AF40 | Apply display setting | Post-hook to sync Config |
+| `sub_821485D8` | 0x821485D8 | Menu data loader | Post-hook to inject items |
+| `sub_82273620` | 0x82273620 | GXT string lookup | Pre-hook for custom strings |
+
+---
+
+### 117.3 Implementation Code
+
+#### 117.3.1 menu_hooks.h
+
+```cpp
+#pragma once
+#include <cstdint>
+
+namespace MenuHooks {
+    // Initialize all menu hooks
+    void Initialize();
+    
+    // Called when menu is opened
+    void OnMenuOpened();
+    
+    // Called when menu is closed
+    void OnMenuClosed();
+    
+    // Sync menu values from Config
+    void SyncFromConfig();
+    
+    // Sync Config from menu values  
+    void SyncToConfig();
+    
+    // Custom string lookup
+    const char* GetCustomString(const char* key);
+    
+    // Get custom setting value
+    int GetCustomValue(int index);
+    
+    // Set custom setting value
+    void SetCustomValue(int index, int value);
+}
+
+// Menu value array address
+constexpr uint32_t MENU_VALUES_ADDR = 0x82BEC638;
+
+// Custom index base (100-124 reserved)
+constexpr int CUSTOM_INDEX_BASE = 100;
+constexpr int CUSTOM_INDEX_MAX = 124;
+```
+
+#### 117.3.2 menu_hooks.cpp (Core Implementation)
+
+```cpp
+#include "menu_hooks.h"
+#include <user/config.h>
+#include <kernel/memory.h>
+
+namespace MenuHooks {
+
+// Custom string table for GXT override
+static std::unordered_map<std::string, std::string> s_customStrings = {
+    // Display settings
+    {"FE_RES_SCALE", "Resolution Scale"},
+    {"FE_VSYNC", "VSync"},
+    {"FE_FPS_CAP", "Frame Rate Limit"},
+    {"FE_FULLSCR", "Fullscreen"},
+    
+    // Anti-aliasing
+    {"FE_MSAA", "MSAA Anti-Aliasing"},
+    {"FE_MOD_AA", "Modern AA"},
+    {"FE_TAA", "TAA"},
+    {"FE_SMAA", "SMAA"},
+    {"FE_FSR1_AA", "FSR 1.0"},
+    
+    // Upscaling
+    {"FE_UPSCALE", "Upscaler"},
+    {"FE_UPSC_Q", "Upscale Quality"},
+    {"FE_FRAMEGEN", "Frame Generation"},
+    {"FE_DLSS", "DLSS"},
+    {"FE_FSR3", "FSR 3"},
+    {"FE_XESS", "XeSS"},
+    {"FE_METALFX", "MetalFX"},
+    
+    // Post-processing
+    {"FE_DOF", "Depth of Field"},
+    {"FE_MBLUR", "Motion Blur"},
+    {"FE_FGRAIN", "Film Grain"},
+    {"FE_CHROM_AB", "Chromatic Aberration"},
+    {"FE_SSAO", "Ambient Occlusion"},
+    
+    // Quality
+    {"FE_SHADOW_RES", "Shadow Quality"},
+    {"FE_SHADOW_FILT", "Shadow Filter"},
+    {"FE_LOD_DIST", "Detail Distance"},
+    {"FE_DRAW_DIST", "Draw Distance"},
+    
+    // Multiplayer
+    {"FE_VOICE_CHAT", "Voice Chat"},
+    {"FE_MIC_VOL", "Microphone Volume"},
+    {"FE_VOICE_VOL", "Voice Volume"},
+    {"FE_PTT", "Push To Talk"},
+    
+    // Values
+    {"FE_OFF", "Off"},
+    {"FE_LOW", "Low"},
+    {"FE_MED", "Medium"},
+    {"FE_HIGH", "High"},
+    {"FE_ULTRA", "Ultra"},
+    {"FE_QUALITY", "Quality"},
+    {"FE_BALANCED", "Balanced"},
+    {"FE_PERFORM", "Performance"}
+};
+
+const char* GetCustomString(const char* key) {
+    auto it = s_customStrings.find(key);
+    if (it != s_customStrings.end()) {
+        return it->second.c_str();
+    }
+    return nullptr;
+}
+
+int GetCustomValue(int index) {
+    switch (index) {
+        // Display - Core
+        case 100: return static_cast<int>(Config::ResolutionScale * 100);
+        case 101: return Config::VSync ? 1 : 0;
+        case 102: return Config::FPS;
+        case 103: return Config::Fullscreen ? 1 : 0;
+        case 104: return static_cast<int>(Config::AspectRatio.Value);
+        
+        // Anti-Aliasing
+        case 105: return static_cast<int>(Config::AntiAliasing.Value);
+        case 106: return static_cast<int>(Config::ModernAA.Value);
+        case 107: return static_cast<int>(Config::TAABlendFactor * 100);
+        
+        // Upscaling
+        case 110: return static_cast<int>(Config::Upscaler.Value);
+        case 111: return static_cast<int>(Config::UpscaleQuality.Value);
+        case 112: return static_cast<int>(Config::FrameGeneration.Value);
+        case 113: return static_cast<int>(Config::UpscaleSharpness * 100);
+        
+        // Post-Processing
+        case 115: return static_cast<int>(Config::DepthOfField.Value);
+        case 116: return static_cast<int>(Config::MotionBlur.Value);
+        case 117: return static_cast<int>(Config::FilmGrain.Value);
+        case 118: return static_cast<int>(Config::ChromaticAberration.Value);
+        
+        // Quality
+        case 120: return static_cast<int>(Config::ShadowResolution.Value);
+        case 121: return static_cast<int>(Config::ShadowFilter.Value);
+        case 122: return static_cast<int>(Config::SSAO.Value);
+        case 123: return static_cast<int>(Config::LODDistanceMultiplier * 100);
+        case 124: return static_cast<int>(Config::RenderDistanceMultiplier * 100);
+        
+        default: return 0;
+    }
+}
+
+void SetCustomValue(int index, int value) {
+    switch (index) {
+        // Display - Core
+        case 100: Config::ResolutionScale = value / 100.0f; break;
+        case 101: Config::VSync = (value != 0); break;
+        case 102: Config::FPS = value; break;
+        case 103: Config::Fullscreen = (value != 0); break;
+        case 104: Config::AspectRatio = static_cast<EAspectRatio>(value); break;
+        
+        // Anti-Aliasing
+        case 105: Config::AntiAliasing = static_cast<EAntiAliasing>(value); break;
+        case 106: Config::ModernAA = static_cast<EModernAA>(value); break;
+        case 107: Config::TAABlendFactor = value / 100.0f; break;
+        
+        // Upscaling
+        case 110: Config::Upscaler = static_cast<EUpscaler>(value); break;
+        case 111: Config::UpscaleQuality = static_cast<EUpscaleQuality>(value); break;
+        case 112: Config::FrameGeneration = static_cast<EFrameGeneration>(value); break;
+        case 113: Config::UpscaleSharpness = value / 100.0f; break;
+        
+        // Post-Processing
+        case 115: Config::DepthOfField = static_cast<EDepthOfField>(value); break;
+        case 116: Config::MotionBlur = static_cast<EMotionBlur>(value); break;
+        case 117: Config::FilmGrain = static_cast<EFilmGrain>(value); break;
+        case 118: Config::ChromaticAberration = static_cast<EChromaticAberration>(value); break;
+        
+        // Quality
+        case 120: Config::ShadowResolution = static_cast<EShadowResolution>(value); break;
+        case 121: Config::ShadowFilter = static_cast<EShadowFilter>(value); break;
+        case 122: Config::SSAO = static_cast<ESSAO>(value); break;
+        case 123: Config::LODDistanceMultiplier = value / 100.0f; break;
+        case 124: Config::RenderDistanceMultiplier = value / 100.0f; break;
+    }
+}
+
+void OnMenuClosed() {
+    // Save config when menu closes
+    Config::Save();
+}
+
+} // namespace MenuHooks
+```
+
+---
+
+### 117.4 PPC Hook Integration
+
+Add hooks to the recompiled PPC in `imports.cpp`. The pattern follows existing hooks:
+
+```cpp
+// =============================================================================
+// MENU HOOKS - Native Pause Menu Custom Options
+// =============================================================================
+
+#include <kernel/menu_hooks.h>
+
+// Declare original implementations
+extern "C" void __imp__sub_8213B268(PPCContext &ctx, uint8_t *base);
+extern "C" void __imp__sub_8213B350(PPCContext &ctx, uint8_t *base);
+extern "C" void __imp__sub_8213AF40(PPCContext &ctx, uint8_t *base);
+
+// =============================================================================
+// sub_8213B268 - Get Display Setting Value (Type 1)
+// Parameters: r3 = setting index, r4 = platform (0 or 1)
+// Returns: r3 = setting value
+// =============================================================================
+PPC_FUNC(sub_8213B268) {
+    int settingIndex = ctx.r3.s32;
+    int platform = ctx.r4.s32;
+    
+    // Check if this is one of our custom indices (100-124)
+    if (settingIndex >= 100 && settingIndex <= 124) {
+        ctx.r3.s32 = MenuHooks::GetCustomValue(settingIndex);
+        return;  // Skip original function
+    }
+    
+    // Call original for standard settings
+    __imp__sub_8213B268(ctx, base);
+}
+
+// =============================================================================
+// sub_8213B350 - Get Display Setting Value (Type 2)
+// Parameters: r3 = setting index, r4 = platform
+// Returns: r3 = setting value
+// =============================================================================
+PPC_FUNC(sub_8213B350) {
+    int settingIndex = ctx.r3.s32;
+    
+    // Check if this is one of our custom indices
+    if (settingIndex >= 100 && settingIndex <= 124) {
+        ctx.r3.s32 = MenuHooks::GetCustomValue(settingIndex);
+        return;
+    }
+    
+    __imp__sub_8213B350(ctx, base);
+}
+
+// =============================================================================
+// sub_8213AF40 - Apply Display Setting Value
+// Parameters: r3 = target struct, r4 = value, r5 = setting type, r6 = platform
+// This is called when a setting is changed - we sync to Config here
+// =============================================================================
+PPC_FUNC(sub_8213AF40) {
+    int value = ctx.r4.s32;
+    int settingType = ctx.r5.s32;
+    
+    // Log for debugging which settings are being applied
+    static int s_count = 0;
+    if (++s_count <= 20) {
+        LOGF_INFO("[MENU] sub_8213AF40: value={}, type={}", value, settingType);
+    }
+    
+    // Call original
+    __imp__sub_8213AF40(ctx, base);
+    
+    // After applying, sync our custom values to Config
+    // (This ensures changes made via sliders are persisted)
+}
+
+// =============================================================================
+// Menu State Detection - Hook pause menu activation
+// =============================================================================
+extern "C" void __imp__sub_8259AFF8(PPCContext &ctx, uint8_t *base); // ACTIVATE_FRONTEND
+
+PPC_FUNC(sub_8259AFF8) {
+    LOG_INFO("[MENU] Pause menu ACTIVATED - syncing from Config");
+    MenuHooks::SyncFromConfig();
+    __imp__sub_8259AFF8(ctx, base);
+}
+
+extern "C" void __imp__sub_8259B018(PPCContext &ctx, uint8_t *base); // DEACTIVATE_FRONTEND
+
+PPC_FUNC(sub_8259B018) {
+    LOG_INFO("[MENU] Pause menu DEACTIVATED - saving Config");
+    MenuHooks::OnMenuClosed();
+    __imp__sub_8259B018(ctx, base);
+}
+```
+
+---
+
+### 117.5 Feature Availability Detection
+
+Some features are hardware-dependent. Detect at runtime:
+
+```cpp
+bool IsFeatureAvailable(EUpscaler upscaler) {
+    switch (upscaler) {
+        case EUpscaler::DLSS:
+            return DLSSUpscaler::IsSupported();  // NVIDIA GPU required
+        case EUpscaler::FSR3:
+            return FSR3Upscaler::IsSupported();  // DX12/Vulkan
+        case EUpscaler::XeSS:
+            return XeSSUpscaler::IsSupported();  // Intel Arc or compatible
+        case EUpscaler::MetalFX:
+            #ifdef __APPLE__
+            return MetalFXUpscaler::IsSupported();
+            #else
+            return false;
+            #endif
+        default:
+            return true;
+    }
+}
+
+// When building menu items, skip unavailable features
+void PopulateUpscalerOptions(MenuItemList& items) {
+    items.Add("Off", 0);
+    items.Add("FSR 1.0", 1);  // Always available
+    if (IsFeatureAvailable(EUpscaler::FSR3))
+        items.Add("FSR 3", 2);
+    if (IsFeatureAvailable(EUpscaler::DLSS))
+        items.Add("DLSS", 3);
+    if (IsFeatureAvailable(EUpscaler::XeSS))
+        items.Add("XeSS", 4);
+    if (IsFeatureAvailable(EUpscaler::MetalFX))
+        items.Add("MetalFX", 5);
+}
+```
+
+---
+
+### 117.6 Recommended Menu Structure
+
+Proposed organization in the native pause menu:
+
+```
+Display Tab (existing, extended)
+├── Brightness          [existing slider]
+├── Contrast            [existing slider]
+├── Saturation          [existing slider]
+├── Resolution Scale    [NEW: 25%-200%]
+├── VSync               [NEW: On/Off]
+├── Frame Rate          [NEW: 30/60/120/Unlimited]
+├── Anti-Aliasing       [NEW: Off/MSAA 2x/4x/8x]
+├── Modern AA           [NEW: Off/TAA/SMAA]
+├── Upscaler            [NEW: Off/FSR/DLSS/XeSS]
+├── Quality Preset      [NEW: Low/Medium/High/Ultra]
+├── Advanced...         [NEW: Opens submenu]
+│   ├── Shadow Quality
+│   ├── Shadow Filter
+│   ├── SSAO
+│   ├── Depth of Field
+│   ├── Motion Blur
+│   ├── Film Grain
+│   └── Draw Distance
+
+Audio Tab (extended)
+├── [existing options]
+├── Voice Chat          [NEW: On/Off]
+├── Mic Volume          [NEW: slider]
+└── Voice Volume        [NEW: slider]
+
+Game Tab (extended)
+├── [existing options]
+├── Multiplayer Mode    [NEW: Online/LAN]
+└── Push To Talk        [NEW: On/Off]
+```
+
+---
+
+### 117.7 Next Steps
+
+1. **Create menu_hooks.cpp/h** - Implement the core hooking infrastructure
+2. **Find exact hook points in PPC** - Search recompiled code for the functions
+3. **Test with single option** - Start with VSync toggle as proof of concept
+4. **Add remaining options** - Incrementally add more options
+5. **Test feature detection** - Ensure unavailable features are hidden
+6. **Polish UI** - Add proper descriptions and value formatting
+
+---
+
+*Section 117 Added: 2026-01-24*
+*Complete Feature Inventory for Native Menu Integration*
+*Catalogued all Config options from config_def.h for pause menu injection*

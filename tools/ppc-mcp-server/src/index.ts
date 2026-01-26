@@ -15,7 +15,7 @@ import { buildIndex } from './parsers/ppc-parser.js';
 import { PPCAnalyzer } from './tools/analyzers.js';
 import { ExtendedAnalyzer } from './tools/extended-analyzers.js';
 import { RenderingTools } from './tools/rendering-tools.js';
-import type { PPCIndex } from './types.js';
+import type { PPCIndex, PPCFunction, GlobalInfo, SyncPrimitive, KernelAPI, HookInfo, VTable } from './types.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -205,6 +205,19 @@ const CORE_TOOLS = [
     name: 'get_stats',
     description: 'Get statistics about the parsed codebase.',
     inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'execution_trace',
+    description: 'Trace execution paths. Use direction="up" to trace from a function upward to the entry point (xstart/main). Use direction="down" to trace all functions a function eventually calls. Use direction="both" for complete picture.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        function: { type: 'string', description: 'Function name to trace (e.g., "sub_82169B00")' },
+        direction: { type: 'string', enum: ['up', 'down', 'both'], description: 'up = trace to entry point, down = trace all callees, both = full trace' },
+        max_depth: { type: 'number', description: 'Maximum trace depth (default: 50)' },
+      },
+      required: ['function', 'direction'],
+    },
   },
 ];
 
@@ -679,17 +692,28 @@ function serializeIndex(idx: PPCIndex): Record<string, unknown> {
 }
 
 function deserializeIndex(data: Record<string, unknown>): PPCIndex {
+  // Type-safe deserialization with validation
+  const functions = data.functions as [string, PPCFunction][] | undefined;
+  const functionsByName = data.functionsByName as [string, PPCFunction][] | undefined;
+  const callGraph = data.callGraph as [string, string[]][] | undefined;
+  const reverseCallGraph = data.reverseCallGraph as [string, string[]][] | undefined;
+  const globals = data.globals as [string, GlobalInfo][] | undefined;
+  const syncPrimitives = data.syncPrimitives as [string, SyncPrimitive][] | undefined;
+  const kernelAPIs = data.kernelAPIs as [string, KernelAPI][] | undefined;
+  const hooks = data.hooks as [string, HookInfo][] | undefined;
+  const vtables = data.vtables as [string, VTable][] | undefined;
+  
   return {
-    functions: new Map(data.functions as [string, unknown][]),
-    functionsByName: new Map(data.functionsByName as [string, unknown][]),
-    callGraph: new Map((data.callGraph as [string, string[]][]).map(([k, v]) => [k, new Set(v)])),
-    reverseCallGraph: new Map((data.reverseCallGraph as [string, string[]][]).map(([k, v]) => [k, new Set(v)])),
-    globals: new Map(data.globals as [string, unknown][]),
-    syncPrimitives: new Map(data.syncPrimitives as [string, unknown][]),
-    kernelAPIs: new Map(data.kernelAPIs as [string, unknown][]),
-    hooks: new Map(data.hooks as [string, unknown][]),
-    vtables: new Map(data.vtables as [string, unknown][]),
-  } as PPCIndex;
+    functions: new Map(functions || []),
+    functionsByName: new Map(functionsByName || []),
+    callGraph: new Map((callGraph || []).map(([k, v]) => [k, new Set(v)])),
+    reverseCallGraph: new Map((reverseCallGraph || []).map(([k, v]) => [k, new Set(v)])),
+    globals: new Map(globals || []),
+    syncPrimitives: new Map(syncPrimitives || []),
+    kernelAPIs: new Map(kernelAPIs || []),
+    hooks: new Map(hooks || []),
+    vtables: new Map(vtables || []),
+  };
 }
 
 async function main() {
@@ -783,6 +807,13 @@ async function main() {
             total_hooks: index.hooks.size,
             call_graph_edges: Array.from(index.callGraph.values()).reduce((sum, set) => sum + set.size, 0),
           };
+          break;
+        case 'execution_trace':
+          result = analyzer.executionTrace(
+            args?.function as string,
+            args?.direction as 'up' | 'down' | 'both',
+            (args?.max_depth as number) || 50
+          );
           break;
 
         // Extended tools

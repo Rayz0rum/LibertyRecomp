@@ -5,6 +5,7 @@
 #include <unordered_map>
 #include <mutex>
 #include <atomic>
+#include <random>
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -37,6 +38,77 @@ typedef int native_socket_t;
  */
 
 namespace Net {
+
+// ============================================================================
+// Network Logging (Xenia-style configurable logging)
+// ============================================================================
+
+enum class NetLogLevel : uint32_t {
+    Off = 0,      // No network logging
+    Errors = 1,   // Only errors
+    Info = 2,     // Errors + important events (default)
+    Verbose = 3,  // All network calls
+    Debug = 4     // Everything including packet data
+};
+
+// Global log level (can be changed at runtime or via config)
+extern std::atomic<NetLogLevel> g_netLogLevel;
+
+void SetNetLogLevel(NetLogLevel level);
+NetLogLevel GetNetLogLevel();
+
+// Logging macros that respect the log level
+#define NET_LOG_ERROR(fmt, ...) \
+    do { if (Net::GetNetLogLevel() >= Net::NetLogLevel::Errors) LOGF_ERROR("[Net] " fmt, ##__VA_ARGS__); } while(0)
+#define NET_LOG_INFO(fmt, ...) \
+    do { if (Net::GetNetLogLevel() >= Net::NetLogLevel::Info) LOGF_INFO("[Net] " fmt, ##__VA_ARGS__); } while(0)
+#define NET_LOG_VERBOSE(fmt, ...) \
+    do { if (Net::GetNetLogLevel() >= Net::NetLogLevel::Verbose) LOGF_WARNING("[Net] " fmt, ##__VA_ARGS__); } while(0)
+#define NET_LOG_DEBUG(fmt, ...) \
+    do { if (Net::GetNetLogLevel() >= Net::NetLogLevel::Debug) LOGF_DEBUG("[Net] " fmt, ##__VA_ARGS__); } while(0)
+
+// ============================================================================
+// NAT Type Detection (from P2P connectivity tests)
+// ============================================================================
+
+enum class NatType : uint32_t {
+    Unknown = 0,
+    Open = 1,       // XONLINE_NAT_OPEN - Full connectivity
+    Moderate = 2,   // XONLINE_NAT_MODERATE - Some restrictions
+    Strict = 3      // XONLINE_NAT_STRICT - Restricted connectivity
+};
+
+// Get current NAT type (detected from P2P/STUN tests)
+NatType GetDetectedNatType();
+
+// ============================================================================
+// Network Identity (Consistent fake addresses for offline mode)
+// ============================================================================
+
+/**
+ * NetworkIdentity - Provides consistent fake network addresses
+ * 
+ * When not connected to Xbox Live (which is always for LibertyRecomp),
+ * we need to provide valid-looking addresses that remain consistent
+ * across the session for proper game behavior.
+ */
+struct NetworkIdentity {
+    uint32_t localIp;           // Local IP (192.168.1.x style)
+    uint32_t onlineIp;          // Online IP (same as local for offline)
+    uint16_t onlinePort;        // Online port (3074 = Xbox Live default)
+    uint8_t macAddress[6];      // Fake MAC address
+    uint8_t onlineKey[20];      // Fake online identification key
+    
+    // Generate a consistent identity (seeded by machine-specific data)
+    static NetworkIdentity Generate();
+    
+    // Get the singleton instance (consistent per session)
+    static const NetworkIdentity& Get();
+
+private:
+    static NetworkIdentity s_instance;
+    static bool s_initialized;
+};
 
 // ============================================================================
 // Xbox 360 Socket Structures (Big-Endian in Guest Memory)
@@ -94,6 +166,13 @@ struct XNetStartupParams {
 };
 
 #pragma pack(pop)
+
+// Xbox Live NAT types (for XLiveBaseGetNatType)
+enum XOnlineNatType : uint32_t {
+    XONLINE_NAT_OPEN = 1,     // Full connectivity
+    XONLINE_NAT_MODERATE = 2, // Some restrictions
+    XONLINE_NAT_STRICT = 3    // Restricted connectivity
+};
 
 // Xbox fd_set structure (big-endian)
 struct x_fd_set {
@@ -179,6 +258,9 @@ public:
     int RecvFrom(uint32_t handle, void* buf, int len, int flags,
                  XSOCKADDR_IN* from, int* fromlen);
     
+    // Non-blocking data availability check (for graceful fallback)
+    bool HasPendingData(uint32_t handle);
+    
     // Select
     int Select(int nfds, void* readfds, void* writefds, 
                void* exceptfds, void* timeout);
@@ -249,5 +331,8 @@ int XNetQosLookup(uint32_t caller, uint32_t cxna, void* apxna, void* apxnkid,
                   uint32_t cProbes, uint32_t dwBitsPerSec, uint32_t flags,
                   void* phEvent, void* ppxnqos);
 int XNetQosRelease(uint32_t caller, void* pxnqos);
+
+// XLive Base API (NAT type)
+uint32_t XLiveBaseGetNatType(uint32_t caller);
 
 } // namespace Net

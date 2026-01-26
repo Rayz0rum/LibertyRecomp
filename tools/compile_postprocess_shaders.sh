@@ -44,13 +44,23 @@ POSTPROCESS_SHADERS=(
     "dof_ps"
     "ssr_raytrace_ps"
     "ssr_composite_ps"
+    "film_grain_ps"
+    "chromatic_aberration_ps"
+    "motion_blur_camera_ps"
+    "bloom_extract_ps"
+    "bloom_downsample_ps"
+    "bloom_upsample_ps"
+    "bloom_composite_ps"
+    "sunshafts_prepass_ps"
+    "sunshafts_radial_ps"
+    "sunshafts_composite_ps"
 )
 
 # Compile HLSL to SPIR-V
 compile_spirv() {
     local shader_name=$1
     local shader_type=$2  # vs or ps
-    local entry_point="main"
+    local entry_point="shaderMain"  # Our shaders use shaderMain as entry point
     local profile="ps_6_0"
     
     if [ "$shader_type" == "vs" ]; then

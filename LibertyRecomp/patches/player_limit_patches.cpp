@@ -19,6 +19,7 @@ namespace PlayerLimitPatches
     // Runtime statistics
     static Stats s_stats = {};
     static bool s_initialized = false;
+    static bool s_enabled = true;  // Global enable flag
     
     void Init()
     {
@@ -39,50 +40,75 @@ namespace PlayerLimitPatches
         return s_stats;
     }
     
+    bool IsEnabled()
+    {
+        return s_enabled;
+    }
+    
+    void SetEnabled(bool enabled)
+    {
+        s_enabled = enabled;
+        LOGF_INFO("PlayerLimitPatches: {} player limit expansion", enabled ? "Enabled" : "Disabled");
+    }
+    
     namespace Memory
     {
-        void* ExpandPlayerManagerAlloc(size_t originalSize)
+        // Expansion statistics
+        static ExpansionStats s_expansionStats = {};
+        
+        const ExpansionStats& GetExpansionStats()
         {
-            // Add extra space for expanded player pointer array
-            size_t expandedSize = originalSize + PLAYER_ARRAY_EXPANSION;
-            
-            LOGF_INFO("PlayerLimitPatches::Memory: Expanding player manager {} -> {} bytes",
-                  originalSize, expandedSize);
-            
-            // Allocate expanded buffer (caller must use appropriate allocator)
-            return nullptr; // Hook point - actual allocation done by caller
+            return s_expansionStats;
         }
         
-        void* ExpandPlayerStructArray(size_t structSize, size_t originalCount)
+        bool IsPlayerArraySize(uint32_t size)
         {
-            if (originalCount != ORIGINAL_MAX_PLAYERS)
-                return nullptr; // Not a player array
-            
-            size_t expandedCount = MAX_PLAYERS;
-            size_t expandedSize = structSize * expandedCount;
-            
-            LOGF_INFO("PlayerLimitPatches::Memory: Expanding struct array {}x{} -> {}x{} ({} bytes)",
-                  originalCount, structSize, expandedCount, structSize, expandedSize);
-            
-            return nullptr; // Hook point
-        }
-        
-        void InitializeExpandedSlots(void* playerManager)
-        {
-            if (!playerManager)
-                return;
-            
-            // Zero-initialize player pointers for slots 16-63
-            uint8_t* base = static_cast<uint8_t*>(playerManager);
-            uint32_t* playerArray = reinterpret_cast<uint32_t*>(base + OFFSET_PLAYER_ARRAY_BASE);
-            
-            for (int32_t i = ORIGINAL_MAX_PLAYERS; i < MAX_PLAYERS; i++)
-            {
-                playerArray[i] = 0;
+            switch (size) {
+                case ALLOC_NETWORK_STATE:  // 896 = 16 * 56
+                case ALLOC_COMPACT_STATE:  // 704 = 16 * 44
+                case ALLOC_EXTENDED_DATA:  // 2176 = 16 * 136
+                case ALLOC_FULL_ENTITY:    // 16512 = 16 * 1032
+                case ALLOC_PTR_ARRAY:      // 64 = 16 * 4
+                    return true;
+                default:
+                    return false;
             }
+        }
+        
+        uint32_t GetExpandedSize(uint32_t size)
+        {
+            if (!s_enabled)
+                return size;
             
-            LOGF_INFO("PlayerLimitPatches::Memory: Initialized {} expanded player slots",
-                  MAX_PLAYERS - ORIGINAL_MAX_PLAYERS);
+            switch (size) {
+                case ALLOC_NETWORK_STATE:  // 896 -> 3584
+                    s_expansionStats.networkStateExpansions++;
+                    LOGF_INFO("[PlayerAlloc] Network state: {} -> {} bytes", size, MAX_PLAYERS * PLAYER_STRUCT_SIZE_56);
+                    return MAX_PLAYERS * PLAYER_STRUCT_SIZE_56;
+                    
+                case ALLOC_COMPACT_STATE:  // 704 -> 2816
+                    s_expansionStats.compactStateExpansions++;
+                    LOGF_INFO("[PlayerAlloc] Compact state: {} -> {} bytes", size, MAX_PLAYERS * PLAYER_STRUCT_SIZE_44);
+                    return MAX_PLAYERS * PLAYER_STRUCT_SIZE_44;
+                    
+                case ALLOC_EXTENDED_DATA:  // 2176 -> 8704
+                    s_expansionStats.extendedDataExpansions++;
+                    LOGF_INFO("[PlayerAlloc] Extended data: {} -> {} bytes", size, MAX_PLAYERS * PLAYER_STRUCT_SIZE_136);
+                    return MAX_PLAYERS * PLAYER_STRUCT_SIZE_136;
+                    
+                case ALLOC_FULL_ENTITY:    // 16512 -> 66048
+                    s_expansionStats.fullEntityExpansions++;
+                    LOGF_INFO("[PlayerAlloc] Full entity: {} -> {} bytes", size, MAX_PLAYERS * PLAYER_STRUCT_SIZE_1032);
+                    return MAX_PLAYERS * PLAYER_STRUCT_SIZE_1032;
+                    
+                case ALLOC_PTR_ARRAY:      // 64 -> 256
+                    s_expansionStats.ptrArrayExpansions++;
+                    LOGF_INFO("[PlayerAlloc] Pointer array: {} -> {} bytes", size, MAX_PLAYERS * 4);
+                    return MAX_PLAYERS * 4;
+                    
+                default:
+                    return size; // Not a player array
+            }
         }
     }
 }

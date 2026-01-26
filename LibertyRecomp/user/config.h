@@ -371,4 +371,5 @@ public:
     static void Save();
 
     static bool IsControllerIconsPS3();
+    static std::string GetButtonPromptsSubdir();
 };

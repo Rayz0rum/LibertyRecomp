@@ -1,11 +1,13 @@
 #include <apu/audio.h>
 #include <cpu/guest_thread.h>
 #include <kernel/heap.h>
+#include <kernel/memory.h>
 #include <os/logger.h>
 #include <ui/game_window.h>
 #include <user/config.h>
 
 static PPCFunc *g_clientCallback{};
+static PPCFunc *g_audioEventCallback{};  // sub_82172BE8 - signals audio worker event
 static uint32_t g_clientCallbackParam{}; // pointer in guest memory
 static SDL_AudioDeviceID g_audioDevice{};
 static bool g_downMixToStereo;
@@ -85,6 +87,13 @@ static void AudioThread() {
       }
       ctx.ppcContext.r3.u32 = g_clientCallbackParam;
       g_clientCallback(ctx.ppcContext, g_memory.base);
+      
+      // Also invoke sub_82172BE8 to signal audio event (byte_83137B80)
+      // This wakes the audio worker thread (sub_82169400) which is waiting on this event
+      // On Xbox, hardware would call this callback; we emulate it here
+      if (g_audioEventCallback) {
+        g_audioEventCallback(ctx.ppcContext, g_memory.base);
+      }
     }
 
     auto now = std::chrono::steady_clock::now();
@@ -116,6 +125,17 @@ void XAudioRegisterClient(PPCFunc *callback, uint32_t param) {
   *pClientParam = param;
   g_clientCallbackParam = g_memory.MapVirtual(pClientParam);
   g_clientCallback = callback;
+  
+  // Look up sub_82172BE8 - the audio event callback that signals byte_83137B80
+  // This callback wakes the audio worker thread (sub_82169400)
+  // On Xbox, hardware would invoke this; we call it from the SDL2 audio thread
+  constexpr uint32_t AUDIO_EVENT_CALLBACK_ADDR = 0x82172BE8;
+  g_audioEventCallback = g_memory.FindFunction(AUDIO_EVENT_CALLBACK_ADDR);
+  if (g_audioEventCallback) {
+    LOG_WARNING("[AUDIO] Found audio event callback sub_82172BE8 - will invoke from audio thread");
+  } else {
+    LOG_WARNING("[AUDIO] WARNING: sub_82172BE8 not found - audio worker thread may block!");
+  }
 
   CreateAudioThread();
   LOG_WARNING("[AUDIO] Audio thread creation requested");

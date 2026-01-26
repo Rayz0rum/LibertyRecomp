@@ -61,6 +61,10 @@ uint32_t SyncTable_Wait(uint32_t addr, uint32_t timeoutMs, uint32_t callerLR);
 void SyncTable_Signal(uint32_t addr, int32_t count, uint32_t callerLR);
 void SyncTable_DumpBroken();
 
+// Get all tracked semaphore addresses for VdSwap signaling
+// Returns a copy of semaphore addresses to avoid holding lock during signaling
+std::vector<uint32_t> SyncTable_GetAllSemaphores();
+
 // WaitMultiple - waits on multiple sync objects
 // waitType: 0 = WaitAll, 1 = WaitAny
 // Returns: STATUS_WAIT_0 + index for WaitAny, STATUS_SUCCESS for WaitAll, STATUS_TIMEOUT on timeout

@@ -3,6 +3,124 @@
 #include "memory.h"
 #include "xdm.h"
 #include <stdafx.h>
+#include <patches/player_limit_patches.h>  // For player array expansion
+
+// =============================================================================
+// HEAP CORRUPTION DEBUGGING
+// =============================================================================
+// Memory poisoning: Fill freed memory with pattern to detect use-after-free
+// Canary values: Write magic values at allocation boundaries to detect overflow
+// =============================================================================
+#define HEAP_DEBUG_ENABLED 0  // Disabled - poison pattern interferes with game code
+
+// Heap integrity check - validate o1heap can be used safely
+#define HEAP_INTEGRITY_CHECK 1
+
+#if HEAP_INTEGRITY_CHECK
+#include <cstdio>
+static int s_physAllocNum = 0;
+static int s_lastGoodAlloc = 0;
+#endif
+
+// =============================================================================
+// SAFE PHYSICAL ALLOCATOR - Metadata stored in host memory, not guest memory
+// =============================================================================
+// The problem: o1heap stores Fragment headers in the same memory that guest
+// code can access. When guest code has use-after-free bugs, it corrupts
+// o1heap's internal pointers causing crashes.
+//
+// Solution: Use a simple bump allocator for physical heap that keeps all
+// bookkeeping in host memory (std::unordered_map), not in guest memory.
+// =============================================================================
+#define USE_SAFE_PHYSICAL_ALLOCATOR 1
+
+#if USE_SAFE_PHYSICAL_ALLOCATOR
+#include <unordered_map>
+#include <mutex>
+
+struct PhysAllocInfo {
+  void* basePtr;      // Start of allocation in guest memory
+  size_t totalSize;   // Total size including alignment padding
+  size_t userSize;    // Requested size
+};
+
+static std::unordered_map<void*, PhysAllocInfo> s_physAllocMap;
+static std::mutex s_physAllocMapMutex;
+static uint8_t* s_physBumpPtr = nullptr;
+static uint8_t* s_physBumpEnd = nullptr;
+static size_t s_physBumpUsed = 0;
+#endif
+
+#if HEAP_DEBUG_ENABLED
+constexpr uint8_t POISON_FREE = 0xFE;      // Pattern for freed memory
+constexpr uint8_t POISON_ALLOC = 0xCD;     // Pattern for uninitialized alloc
+constexpr uint32_t CANARY_HEAD = 0xDEADBEEF; // Magic value before allocation
+constexpr uint32_t CANARY_TAIL = 0xCAFEBABE; // Magic value after allocation
+constexpr size_t CANARY_SIZE = 16;         // Extra bytes for canaries (8 head + 8 tail)
+
+// Track allocations for debugging
+struct AllocRecord {
+  void* ptr;
+  size_t size;
+  uint32_t allocNum;
+  bool freed;
+};
+static std::vector<AllocRecord> s_allocRecords;
+static std::mutex s_recordMutex;
+static int s_totalAllocNum = 0;
+
+static void RecordAlloc(void* ptr, size_t size) {
+  std::lock_guard lock(s_recordMutex);
+  s_allocRecords.push_back({ptr, size, (uint32_t)++s_totalAllocNum, false});
+  // Keep last 1000 allocations
+  if (s_allocRecords.size() > 1000) {
+    s_allocRecords.erase(s_allocRecords.begin());
+  }
+}
+
+static void RecordFree(void* ptr) {
+  std::lock_guard lock(s_recordMutex);
+  for (auto& rec : s_allocRecords) {
+    if (rec.ptr == ptr && !rec.freed) {
+      rec.freed = true;
+      return;
+    }
+  }
+}
+
+static bool CheckCanaries(void* userPtr, size_t size, const char* context) {
+  uint32_t* headCanary = (uint32_t*)((uint8_t*)userPtr - 8);
+  uint32_t* tailCanary = (uint32_t*)((uint8_t*)userPtr + size);
+  
+  bool valid = true;
+  if (headCanary[0] != CANARY_HEAD || headCanary[1] != CANARY_HEAD) {
+    std::fprintf(stderr, "[HEAP_OVERFLOW] %s: HEAD canary corrupted at %p (was 0x%08X 0x%08X, expected 0x%08X)\n",
+                 context, userPtr, headCanary[0], headCanary[1], CANARY_HEAD);
+    std::fflush(stderr);
+    valid = false;
+  }
+  if (tailCanary[0] != CANARY_TAIL || tailCanary[1] != CANARY_TAIL) {
+    std::fprintf(stderr, "[HEAP_OVERFLOW] %s: TAIL canary corrupted at %p+%zu (was 0x%08X 0x%08X, expected 0x%08X)\n",
+                 context, userPtr, size, tailCanary[0], tailCanary[1], CANARY_TAIL);
+    std::fflush(stderr);
+    valid = false;
+  }
+  return valid;
+}
+
+static void WriteCanaries(void* userPtr, size_t size) {
+  uint32_t* headCanary = (uint32_t*)((uint8_t*)userPtr - 8);
+  uint32_t* tailCanary = (uint32_t*)((uint8_t*)userPtr + size);
+  headCanary[0] = CANARY_HEAD;
+  headCanary[1] = CANARY_HEAD;
+  tailCanary[0] = CANARY_TAIL;
+  tailCanary[1] = CANARY_TAIL;
+}
+
+static void PoisonMemory(void* ptr, size_t size, uint8_t pattern) {
+  memset(ptr, pattern, size);
+}
+#endif
 
 // Memory layout from MarathonRecomp (modified for GTA IV):
 // | Region        | Start      | End        | Purpose              |
@@ -46,8 +164,7 @@ void Heap::Init() {
         "[Heap::Init] Normal heap init FAILED! o1heapInit returned NULL\n");
   }
 
-  // Physical heap: 0xA0000000 to 0x100000000 (using o1heap for proper free
-  // support)
+  // Physical heap: 0xA0000000 to 0x100000000
   void *physBase = g_memory.Translate(RESERVED_END);
   size_t physSize = 0x100000000 - RESERVED_END;
 
@@ -56,6 +173,18 @@ void Heap::Init() {
       "[Heap::Init] Physical heap base=%p size=%zu (0x%zx) align_check=%zu\n",
       physBase, physSize, physSize, ((size_t)physBase) % O1HEAP_ALIGNMENT);
 
+#if USE_SAFE_PHYSICAL_ALLOCATOR
+  // Safe allocator: Use bump allocator with host-side metadata tracking
+  // This prevents guest use-after-free from corrupting allocator internals
+  s_physBumpPtr = (uint8_t*)physBase;
+  s_physBumpEnd = s_physBumpPtr + physSize;
+  s_physBumpUsed = 0;
+  physicalHeap = (O1HeapInstance*)physBase;  // Just store base for range check
+  
+  std::fprintf(stderr,
+               "[Heap::Init] Physical heap using SAFE BUMP ALLOCATOR: capacity=%zu\n",
+               physSize);
+#else
   physicalHeap = o1heapInit(physBase, physSize);
 
   if (physicalHeap) {
@@ -66,6 +195,7 @@ void Heap::Init() {
   } else {
     std::fprintf(stderr, "[Heap::Init] Physical heap init FAILED!\n");
   }
+#endif
 
   std::fprintf(stderr, "[Heap::Init] heap=%p physicalHeap=%p\n", (void *)heap,
                (void *)physicalHeap);
@@ -74,8 +204,12 @@ void Heap::Init() {
 
 void *Heap::Alloc(size_t size) {
   std::lock_guard lock(mutex);
-
-  return o1heapAllocate(heap, std::max<size_t>(1, size));
+  size = std::max<size_t>(1, size);
+  void* ptr = o1heapAllocate(heap, size);
+  if (ptr) {
+    memset(ptr, 0, size);  // Zero memory - Xbox 360 allocators return zeroed memory
+  }
+  return ptr;
 }
 
 void *Heap::AllocPhysical(size_t size, size_t alignment) {
@@ -84,7 +218,63 @@ void *Heap::AllocPhysical(size_t size, size_t alignment) {
 
   std::lock_guard lock(physicalMutex);
 
-  void *ptr = o1heapAllocate(physicalHeap, size + alignment);
+  // Track allocation count for debugging
+  static int s_allocCount = 0;
+  ++s_allocCount;
+  
+#if HEAP_INTEGRITY_CHECK
+  ++s_physAllocNum;
+#endif
+
+#if USE_SAFE_PHYSICAL_ALLOCATOR
+  // Safe bump allocator: metadata stored in host memory, not guest memory
+  // This prevents guest use-after-free from corrupting allocator internals
+  
+  // Calculate aligned address
+  uintptr_t current = (uintptr_t)s_physBumpPtr + s_physBumpUsed;
+  uintptr_t aligned = (current + alignment - 1) & ~(alignment - 1);
+  size_t padding = aligned - current;
+  size_t totalNeeded = padding + size;
+  
+  // Check if we have enough space
+  if (s_physBumpPtr + s_physBumpUsed + totalNeeded > s_physBumpEnd) {
+    std::fprintf(stderr,
+                 "[Heap::AllocPhysical] FAILED: size=%zu (bump allocator exhausted, used=%zu)\n",
+                 size, s_physBumpUsed);
+    std::fflush(stderr);
+    return nullptr;
+  }
+  
+  void *ptr = (void*)aligned;
+  memset(ptr, 0, size);  // Zero memory to prevent GPU corruption from uninitialized data
+  s_physBumpUsed += totalNeeded;
+  
+  // Track allocation in host memory (for potential future free support)
+  {
+    std::lock_guard mapLock(s_physAllocMapMutex);
+    s_physAllocMap[ptr] = {ptr, totalNeeded, size};
+  }
+  
+#if HEAP_INTEGRITY_CHECK
+  s_lastGoodAlloc = s_physAllocNum;
+  if (s_physAllocNum % 1000 == 0) {
+    std::fprintf(stderr, "[HEAP_OK] bump alloc #%d, used=%zu/%zu\n",
+                 s_physAllocNum, s_physBumpUsed, (size_t)(s_physBumpEnd - s_physBumpPtr));
+    std::fflush(stderr);
+  }
+#endif
+  
+  return ptr;
+  
+#else
+  // Original o1heap-based allocator (vulnerable to guest corruption)
+#if HEAP_DEBUG_ENABLED
+  size_t totalSize = size + alignment + CANARY_SIZE;
+#else
+  size_t totalSize = size + alignment;
+#endif
+
+  void *ptr = o1heapAllocate(physicalHeap, totalSize);
   
   // FIX: Check for allocation failure before dereferencing
   if (!ptr) {
@@ -95,6 +285,44 @@ void *Heap::AllocPhysical(size_t size, size_t alignment) {
     return nullptr;
   }
   
+#if HEAP_INTEGRITY_CHECK
+  s_lastGoodAlloc = s_physAllocNum;  // Mark successful allocation
+  
+  // Log allocations to narrow down crash window
+  // Crash happens around alloc 2000-3000 based on previous runs
+  if (s_physAllocNum >= 2000 && s_physAllocNum <= 3000) {
+    uint32_t guestAddr = g_memory.MapVirtual(ptr);
+    std::fprintf(stderr, "[ALLOC] #%d guest=0x%08X size=%zu\n",
+                 s_physAllocNum, guestAddr, size);
+    std::fflush(stderr);
+  } else if (s_physAllocNum % 500 == 0) {
+    O1HeapDiagnostics diag = o1heapGetDiagnostics(physicalHeap);
+    std::fprintf(stderr, "[HEAP_OK] alloc #%d, allocated=%zu/%zu\n",
+                 s_physAllocNum, diag.allocated, diag.capacity);
+    std::fflush(stderr);
+  }
+#endif
+  
+#if HEAP_DEBUG_ENABLED
+  // Leave room for head canary (8 bytes before user data)
+  size_t aligned = ((size_t)ptr + alignment + 8) & ~(alignment - 1);
+  void* userPtr = (void*)aligned;
+  
+  // Write canaries
+  WriteCanaries(userPtr, size);
+  
+  // Poison allocated memory with pattern (helps detect uninitialized reads)
+  PoisonMemory(userPtr, size, POISON_ALLOC);
+  
+  // Record allocation
+  RecordAlloc(userPtr, size);
+  
+  // Store original pointer and size for Free() to work correctly
+  *((void **)aligned - 1) = ptr;
+  *((size_t *)aligned - 2) = size; // Store user size, not total size
+  
+  return userPtr;
+#else
   size_t aligned = ((size_t)ptr + alignment) & ~(alignment - 1);
 
   // Store original pointer and size for Free() to work correctly
@@ -102,16 +330,54 @@ void *Heap::AllocPhysical(size_t size, size_t alignment) {
   *((size_t *)aligned - 2) = size + O1HEAP_ALIGNMENT;
 
   return (void *)aligned;
+#endif
+#endif  // USE_SAFE_PHYSICAL_ALLOCATOR else branch
 }
 
 void Heap::Free(void *ptr) {
+#if USE_SAFE_PHYSICAL_ALLOCATOR
+  // Safe bump allocator: Free is a no-op (bump allocator doesn't reclaim)
+  // Memory is reclaimed when heap is reset or process exits
+  // This trades memory efficiency for corruption resistance
+  if (ptr >= (void*)s_physBumpPtr && ptr < (void*)s_physBumpEnd) {
+    // Remove from tracking map (optional, for debugging)
+    std::lock_guard mapLock(s_physAllocMapMutex);
+    s_physAllocMap.erase(ptr);
+    return;
+  }
+  // Fall through to normal heap free
+  std::lock_guard lock(mutex);
+  o1heapFree(heap, ptr);
+#else
   if (ptr >= physicalHeap) {
     std::lock_guard lock(physicalMutex);
+    
+#if HEAP_DEBUG_ENABLED
+    // Get stored size and check canaries before freeing
+    size_t userSize = *((size_t *)ptr - 2);
+    if (!CheckCanaries(ptr, userSize, "Free")) {
+      // Canary corruption detected - dump recent allocations
+      std::fprintf(stderr, "[HEAP_DEBUG] Canary corruption at %p, dumping recent allocations:\n", ptr);
+      std::lock_guard recLock(s_recordMutex);
+      int count = 0;
+      for (auto it = s_allocRecords.rbegin(); it != s_allocRecords.rend() && count < 20; ++it, ++count) {
+        std::fprintf(stderr, "  [%d] ptr=%p size=%zu alloc#%u freed=%d\n",
+                     count, it->ptr, it->size, it->allocNum, it->freed ? 1 : 0);
+      }
+      std::fflush(stderr);
+    }
+    
+    // Poison freed memory to detect use-after-free
+    PoisonMemory(ptr, userSize, POISON_FREE);
+    RecordFree(ptr);
+#endif
+    
     o1heapFree(physicalHeap, *((void **)ptr - 1));
   } else {
     std::lock_guard lock(mutex);
     o1heapFree(heap, ptr);
   }
+#endif  // USE_SAFE_PHYSICAL_ALLOCATOR
 }
 
 size_t Heap::Size(void *ptr) {
@@ -191,6 +457,12 @@ uint32_t RtlSizeHeap(uint32_t heapHandle, uint32_t flags,
 // =============================================================================
 
 uint32_t XAllocMem(uint32_t size, uint32_t flags) {
+  // Expand player arrays if enabled (16->64 player support)
+  uint32_t originalSize = size;
+  if (PlayerLimitPatches::IsEnabled() && PlayerLimitPatches::Memory::IsPlayerArraySize(size)) {
+    size = PlayerLimitPatches::Memory::GetExpandedSize(size);
+  }
+  
   bool isPhysical = (flags & 0x80000000) != 0;
   size_t alignment = isPhysical ? (1ull << ((flags >> 24) & 0xF)) : 0;
 
