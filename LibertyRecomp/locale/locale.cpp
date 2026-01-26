@@ -573,6 +573,54 @@ std::unordered_map<std::string_view, std::unordered_map<ELanguage, std::string>>
         }
     },
     {
+        // Notes: message appears when a wrong game (not GTA IV) is selected
+        "Installer_Message_WrongGame",
+        {
+            { ELanguage::English,  "WRONG GAME DETECTED" },
+            { ELanguage::Japanese, "異なるゲームが検出されました" },
+            { ELanguage::German,   "FALSCHES SPIEL ERKANNT" },
+            { ELanguage::French,   "MAUVAIS JEU DÉTECTÉ" },
+            { ELanguage::Spanish,  "JUEGO INCORRECTO DETECTADO" },
+            { ELanguage::Italian,  "GIOCO SBAGLIATO RILEVATO" }
+        }
+    },
+    {
+        // Notes: message appears when correct game but wrong region version is selected
+        "Installer_Message_WrongRegion",
+        {
+            { ELanguage::English,  "WRONG REGION DETECTED\n\nThis version of the game is from\na region that is not supported.\n\nPlease use the NTSC-U (US) version\nof Grand Theft Auto IV." },
+            { ELanguage::Japanese, "非対応の地域版です\n\nこのゲームのバージョンは\nサポートされていない地域のものです\n\nグランド・セフト・オート IV の\nNTSC-U（US）版をご使用ください" },
+            { ELanguage::German,   "FALSCHE REGION ERKANNT\n\nDiese Version des Spiels stammt\naus einer nicht unterstützten Region.\n\nBitte verwende die NTSC-U (US)\nVersion von Grand Theft Auto IV." },
+            { ELanguage::French,   "MAUVAISE RÉGION DÉTECTÉE\n\nCette version du jeu provient\nd'une région non supportée.\n\nVeuillez utiliser la version NTSC-U (US)\nde Grand Theft Auto IV." },
+            { ELanguage::Spanish,  "REGIÓN INCORRECTA DETECTADA\n\nEsta versión del juego es de\nuna región no compatible.\n\nPor favor, usa la versión NTSC-U (US)\nde Grand Theft Auto IV." },
+            { ELanguage::Italian,  "REGIONE SBAGLIATA RILEVATA\n\nQuesta versione del gioco proviene\nda una regione non supportata.\n\nUtilizza la versione NTSC-U (US)\ndi Grand Theft Auto IV." }
+        }
+    },
+    {
+        // Notes: label for detected region in version validation dialog
+        "Installer_Message_DetectedRegion",
+        {
+            { ELanguage::English,  "Detected" },
+            { ELanguage::Japanese, "検出された地域" },
+            { ELanguage::German,   "Erkannt" },
+            { ELanguage::French,   "Détectée" },
+            { ELanguage::Spanish,  "Detectada" },
+            { ELanguage::Italian,  "Rilevata" }
+        }
+    },
+    {
+        // Notes: label for required region in version validation dialog
+        "Installer_Message_RequiredRegion",
+        {
+            { ELanguage::English,  "Required" },
+            { ELanguage::Japanese, "必要な地域" },
+            { ELanguage::German,   "Erforderlich" },
+            { ELanguage::French,   "Requise" },
+            { ELanguage::Spanish,  "Requerida" },
+            { ELanguage::Italian,  "Richiesta" }
+        }
+    },
+    {
         // Notes: message appears when clicking the "Add Files" option for the first time.
         "Installer_Message_FilePickerTutorial",
         {

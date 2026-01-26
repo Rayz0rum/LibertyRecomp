@@ -1,0 +1,36 @@
+# Debug semaphore signaling loop investigation
+# This script investigates why semaphores are being signaled with no consumers
+
+# Set up breakpoints on key functions
+breakpoint set -n NtReleaseSemaphore -o true
+breakpoint command add 1
+thread list
+bt 3
+continue
+DONE
+
+# After ~20 semaphore releases, break and examine all threads
+breakpoint set -n NtReleaseSemaphore -i 20
+breakpoint command add 2
+echo "=== 20 SEMAPHORE RELEASES REACHED ==="
+echo "Examining all thread states..."
+thread list
+echo ""
+echo "=== MAIN THREAD BACKTRACE ==="
+thread select 1
+bt 10
+echo ""
+echo "=== ALL THREADS BACKTRACES ==="
+thread backtrace all -c 8
+echo ""
+echo "=== LOOKING FOR BLOCKED THREADS ==="
+script
+import lldb
+for thread in lldb.debugger.GetSelectedTarget().GetProcess():
+    frame = thread.GetFrameAtIndex(0)
+    if frame:
+        fn = frame.GetFunctionName()
+        if fn and ('wait' in fn.lower() or 'sleep' in fn.lower() or 'cv' in fn.lower()):
+            print(f"Thread {thread.GetIndexID()}: BLOCKED in {fn}")
+DONE
+process continue

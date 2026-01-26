@@ -242,6 +242,7 @@ set(LIBERTY_RECOMP_INSTALL_CXX_SOURCES
     "install/xcontent_file_system.cpp"
     "install/xbox360/stfs_parser.cpp"
     "install/xbox360/xex_patcher.cpp"
+    "install/xbox360/xex_validator.cpp"
     "install/xbox360/title_update_manager.cpp"
     "install/hashes/game.cpp"
     "install/hashes/dlc_tlad.cpp"

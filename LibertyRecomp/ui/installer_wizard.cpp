@@ -5,6 +5,7 @@
 #include <apu/embedded_player.h>
 #include <install/installer.h>
 #include <install/xbox360/title_update_manager.h>
+#include <install/xbox360/xex_validator.h>
 #include <gpu/video.h>
 #include <gpu/imgui/imgui_snapshot.h>
 #include <hid/hid.h>
@@ -20,17 +21,18 @@
 #include <sdl_listener.h>
 
 #include <res/images/common/libertyrecomp.dds.h>
-#include <res/images/installer/gta4_logo.dds.h>
-#include <res/images/installer/DLC/tlad_logo.dds.h>
-#include <res/images/installer/DLC/tbogt_logo.dds.h>
-#include <res/images/installer/install_001.dds.h>
-#include <res/images/installer/install_002.dds.h>
-#include <res/images/installer/install_003.dds.h>
-#include <res/images/installer/install_004.dds.h>
-#include <res/images/installer/install_005.dds.h>
-#include <res/images/installer/install_006.dds.h>
-#include <res/images/installer/install_007.dds.h>
-#include <res/images/installer/install_008.dds.h>
+// Character and logo textures disabled for clean installer
+// #include <res/images/installer/gta4_logo.dds.h>
+// #include <res/images/installer/DLC/tlad_logo.dds.h>
+// #include <res/images/installer/DLC/tbogt_logo.dds.h>
+// #include <res/images/installer/install_001.dds.h>
+// #include <res/images/installer/install_002.dds.h>
+// #include <res/images/installer/install_003.dds.h>
+// #include <res/images/installer/install_004.dds.h>
+// #include <res/images/installer/install_005.dds.h>
+// #include <res/images/installer/install_006.dds.h>
+// #include <res/images/installer/install_007.dds.h>
+// #include <res/images/installer/install_008.dds.h>
 #include <res/credits.h>
 #include <ui/gta4_style.h>
 
@@ -56,17 +58,11 @@ static constexpr double CONTAINER_INNER_DURATION = 15.0;
 static constexpr double ALL_ANIMATIONS_FULL_DURATION = CONTAINER_INNER_TIME + CONTAINER_INNER_DURATION;
 static constexpr double QUITTING_EXTRA_DURATION = 60.0;
 
-// GTA IV character images - proper aspect ratio (taller than wide)
-constexpr float IMAGE_WIDTH = 600.0f;
-constexpr float IMAGE_HEIGHT = 800.0f;
-
-// GTA IV Style: Container positioned far right, clear of character
-constexpr float CONTAINER_X = 620.0f;  // Far right to clear character image
-constexpr float CONTAINER_Y = 180.0f;  // Position for content
-constexpr float CONTAINER_WIDTH = 480.0f;  // Width that fits on right side
-constexpr float CONTAINER_HEIGHT = 380.0f;  // Taller for content
-constexpr float CONTAINER_PADDING = 25.0f;  // Standard padding
-constexpr float SIDE_CONTAINER_WIDTH = CONTAINER_WIDTH / 2.0f;
+// Clean installer: Centered container layout (X position computed dynamically)
+constexpr float CONTAINER_Y = 120.0f;  // Below header
+constexpr float CONTAINER_WIDTH = 600.0f;  // Wider for centered layout
+constexpr float CONTAINER_HEIGHT = 420.0f;  // Taller for content
+constexpr float CONTAINER_PADDING = 30.0f;  // Standard padding
 
 constexpr float BOTTOM_X_GAP = 4.0f;
 constexpr float BOTTOM_Y_GAP = 5.0f;
@@ -92,11 +88,7 @@ static std::filesystem::path g_installPath;
 static std::filesystem::path g_gameSourcePath;
 static std::array<std::filesystem::path, int(DLC::Count)> g_dlcSourcePaths;
 static std::array<bool, int(DLC::Count)> g_dlcInstalled = {};
-static std::array<std::unique_ptr<GuestTexture>, 8> g_installTextures;
 static std::unique_ptr<GuestTexture> g_upLibertyDev;
-static std::unique_ptr<GuestTexture> g_upGTA4Logo;
-static std::unique_ptr<GuestTexture> g_upTLADLogo;
-static std::unique_ptr<GuestTexture> g_upTBOGTLogo;
 static Journal g_installerJournal;
 static Installer::Sources g_installerSources;
 static uint64_t g_installerAvailableSize = 0;
@@ -110,16 +102,6 @@ static std::atomic<bool> g_installerHalted = false;
 static std::atomic<bool> g_installerCancelled = false;
 static bool g_installerFailed = false;
 static std::string g_installerErrorMessage;
-
-// GTA IV Style: Character images at absolute left edge
-static std::array<ImVec2, 8> g_installTexturePositions = { ImVec2(-100.0f, 120.0f),   // Niko 1
-                                                           ImVec2(-100.0f, 120.0f),   // Niko 2
-                                                           ImVec2(-100.0f, 120.0f),   // Character 3
-                                                           ImVec2(-100.0f, 120.0f),   // Character 4
-                                                           ImVec2(-100.0f, 120.0f),   // Character 5
-                                                           ImVec2(-100.0f, 120.0f),   // Character 6
-                                                           ImVec2(10.0f, 140.0f),    // Eggman
-                                                           ImVec2(200.0f, 140.0f) }; // Elise
 
 enum class WizardPage
 {
@@ -597,27 +579,19 @@ static void DrawBackground()
 
 static void DrawGTA4Logo()
 {
-    if (!g_upGTA4Logo)
-        return;
-    
+    // Logo disabled for clean installer UI
+    // Just draw a minimal header accent line instead
     auto &res = ImGui::GetIO().DisplaySize;
     auto drawList = ImGui::GetBackgroundDrawList();
     
-    // Draw GTA IV logo in top-right corner - smaller size
-    float logoWidth = Scale(140);
-    float logoHeight = Scale(70);
-    float padding = Scale(20);
-    
-    ImVec2 logoMin = { res.x - logoWidth - padding, padding };
-    ImVec2 logoMax = { res.x - padding, logoMin.y + logoHeight };
-    
     float alpha = ComputeMotionInstaller(g_appearTime, g_disappearTime, CONTAINER_INNER_TIME, CONTAINER_INNER_DURATION);
-    ImU32 logoColor = IM_COL32(255, 255, 255, 255 * alpha);
     
-    drawList->AddImage(g_upGTA4Logo.get(), logoMin, logoMax, { 0, 0 }, { 1, 1 }, logoColor);
+    // Draw subtle orange accent line at top
+    float lineHeight = Scale(3);
+    drawList->AddRectFilled({ 0, 0 }, { res.x, lineHeight }, GTA4Style::WithAlpha(GTA4Style::Colors::Orange, alpha));
 }
 
-// GTA IV Style simple header - replaces common_menu Sonic textures
+// Clean header - minimal style with page title
 static void DrawGTA4Header()
 {
     auto &res = ImGui::GetIO().DisplaySize;
@@ -625,19 +599,23 @@ static void DrawGTA4Header()
     
     float alpha = ComputeMotionInstaller(g_appearTime, g_disappearTime, CONTAINER_INNER_TIME, CONTAINER_INNER_DURATION);
     
-    // Draw orange accent strip at top
-    float stripHeight = Scale(50);
-    float stripY = Scale(120);
-    drawList->AddRectFilled({ 0, stripY }, { res.x, stripY + stripHeight }, GTA4Style::WithAlpha(GTA4Style::Colors::Orange, alpha));
+    // Get current page title
+    const std::string &pageTitle = GetPageName(g_currentPage);
     
-    // Draw title text "INSTALLER" on the strip
-    const char* title = "INSTALLER";
-    float titleFontSize = Scale(28);
-    ImVec2 titleSize = g_pFntNewRodin->CalcTextSizeA(titleFontSize, FLT_MAX, 0.0f, title);
-    float titleX = Scale(220);  // After logo
-    float titleY = stripY + (stripHeight - titleSize.y) / 2.0f;
+    // Draw title text centered at top
+    float titleFontSize = Scale(24);
+    ImVec2 titleSize = g_pFntNewRodin->CalcTextSizeA(titleFontSize, FLT_MAX, 0.0f, pageTitle.c_str());
+    float titleX = (res.x - titleSize.x) / 2.0f;
+    float titleY = Scale(40);
     
-    drawList->AddText(g_pFntNewRodin, titleFontSize, { titleX, titleY }, IM_COL32(255, 255, 255, 255 * alpha), title);
+    // Draw subtle underline
+    float lineY = titleY + titleSize.y + Scale(8);
+    float lineWidth = titleSize.x + Scale(40);
+    float lineX = (res.x - lineWidth) / 2.0f;
+    drawList->AddRectFilled({ lineX, lineY }, { lineX + lineWidth, lineY + Scale(2) }, GTA4Style::WithAlpha(GTA4Style::Colors::Orange, alpha * 0.8f));
+    
+    // Draw title in orange
+    drawList->AddText(g_pFntNewRodin, titleFontSize, { titleX, titleY }, GTA4Style::WithAlpha(GTA4Style::Colors::Orange, alpha), pageTitle.c_str());
 }
 
 static void DrawArrows()
@@ -649,24 +627,8 @@ static void DrawArrows()
 
 static void DrawLeftImage()
 {
-    int installTextureIndex = WIZARD_INSTALL_TEXTURE_INDEX[int(g_currentPage)];
-    if (g_currentPage == WizardPage::Installing)
-    {
-        // Cycle through the available images while time passes during installation.
-        constexpr double InstallationSpeed = 1.0 / 15.0;
-        double installationTime = (ImGui::GetTime() - g_installerStartTime) * InstallationSpeed;
-        installTextureIndex += int(installationTime);
-    }
-
-    double imageAlpha = ComputeMotionInstaller(g_appearTime, g_disappearTime, IMAGE_ANIMATION_TIME, IMAGE_ANIMATION_DURATION);
-    int a = std::lround(140.0 * imageAlpha);
-    GuestTexture *guestTexture = g_installTextures[installTextureIndex % g_installTextures.size()].get();
-    auto &res = ImGui::GetIO().DisplaySize;
-    auto drawList = ImGui::GetBackgroundDrawList();
-    auto pos = g_installTexturePositions[installTextureIndex % g_installTextures.size()];
-    ImVec2 min = { g_aspectRatioOffsetX + Scale(pos.x), g_aspectRatioOffsetY + Scale(pos.y) };
-    ImVec2 max = { min.x + Scale(IMAGE_WIDTH), min.y + Scale(IMAGE_HEIGHT) };
-    drawList->AddImage(guestTexture, min, max, ImVec2(0, 0), ImVec2(1, 1), IM_COL32(255, 255, 255, a));
+    // Character images disabled for clean installer UI
+    // Keep the function but do nothing
 }
 
 static void DrawContainer(ImVec2 min, ImVec2 max, bool isTextArea)
@@ -695,8 +657,12 @@ static void DrawDescriptionContainer()
     auto drawList = ImGui::GetBackgroundDrawList();
     auto fontSize = Scale(25.0f);
 
-    ImVec2 descriptionMin = { round(g_aspectRatioOffsetX + Scale(CONTAINER_X + 0.5f)), round(g_aspectRatioOffsetY + Scale(CONTAINER_Y + 0.5f)) };
-    ImVec2 descriptionMax = { round(g_aspectRatioOffsetX + Scale(CONTAINER_X + 0.5f + CONTAINER_WIDTH)), round(g_aspectRatioOffsetY + Scale(CONTAINER_Y + 0.5f + CONTAINER_HEIGHT)) };
+    // Center the container horizontally
+    float containerWidth = Scale(CONTAINER_WIDTH);
+    float containerX = (res.x - containerWidth) / 2.0f;
+    
+    ImVec2 descriptionMin = { round(containerX), round(g_aspectRatioOffsetY + Scale(CONTAINER_Y + 0.5f)) };
+    ImVec2 descriptionMax = { round(containerX + containerWidth), round(g_aspectRatioOffsetY + Scale(CONTAINER_Y + 0.5f + CONTAINER_HEIGHT)) };
     SetProceduralOrigin(descriptionMin);
     DrawContainer(descriptionMin, descriptionMax, true);
 
@@ -767,7 +733,9 @@ static void DrawDescriptionContainer()
 
         auto colWhite = IM_COL32(255, 255, 255, 255 * textAlpha);
 
-        auto containerLeft = g_aspectRatioOffsetX + Scale(CONTAINER_X);
+        // Center the container coordinates
+        float centeredContainerX = (res.x - Scale(CONTAINER_WIDTH)) / 2.0f;
+        auto containerLeft = centeredContainerX;
         auto containerTop = g_aspectRatioOffsetY + Scale(CONTAINER_Y);
         auto containerRight = containerLeft + Scale(CONTAINER_WIDTH);
         auto containerBottom = containerTop + Scale(CONTAINER_HEIGHT);
@@ -898,19 +866,24 @@ enum ButtonColumn
 
 static void ComputeButtonColumnCoordinates(ButtonColumn buttonColumn, float &minX, float &maxX)
 {
+    // Center the button coordinates to match centered container
+    auto &res = ImGui::GetIO().DisplaySize;
+    float containerWidth = Scale(CONTAINER_WIDTH);
+    float containerX = (res.x - containerWidth) / 2.0f;
+    
     switch (buttonColumn)
     {
     case ButtonColumnLeft:
-        minX = g_aspectRatioOffsetX + Scale(CONTAINER_X + CONTAINER_BUTTON_GAP);
-        maxX = g_aspectRatioOffsetX + Scale(CONTAINER_X + CONTAINER_BUTTON_GAP + CONTAINER_BUTTON_WIDTH);
+        minX = containerX + Scale(CONTAINER_BUTTON_GAP);
+        maxX = containerX + Scale(CONTAINER_BUTTON_GAP + CONTAINER_BUTTON_WIDTH);
         break;
     case ButtonColumnMiddle:
-        minX = g_aspectRatioOffsetX + Scale(CONTAINER_X + CONTAINER_BUTTON_GAP);
-        maxX = g_aspectRatioOffsetX + Scale(CONTAINER_X + CONTAINER_WIDTH - CONTAINER_BUTTON_GAP);
+        minX = containerX + Scale(CONTAINER_BUTTON_GAP);
+        maxX = containerX + containerWidth - Scale(CONTAINER_BUTTON_GAP);
         break;
     case ButtonColumnRight:
-        minX = g_aspectRatioOffsetX + Scale(CONTAINER_X + CONTAINER_WIDTH - CONTAINER_BUTTON_GAP - CONTAINER_BUTTON_WIDTH);
-        maxX = g_aspectRatioOffsetX + Scale(CONTAINER_X + CONTAINER_WIDTH - CONTAINER_BUTTON_GAP);
+        minX = containerX + containerWidth - Scale(CONTAINER_BUTTON_GAP + CONTAINER_BUTTON_WIDTH);
+        maxX = containerX + containerWidth - Scale(CONTAINER_BUTTON_GAP);
         break;
     }
 }
@@ -941,10 +914,14 @@ static void DrawProgressBar(float progressRatio)
     const uint32_t innerColor0 = GTA4Style::Colors::ProgressBg;
     const uint32_t innerColor1 = GTA4Style::Colors::BackgroundDark;
     
+    // Center the progress bar to match centered container
+    float containerWidth = Scale(CONTAINER_WIDTH);
+    float containerX = (res.x - containerWidth) / 2.0f;
+    
     float xPadding = Scale(4);
     float yPadding = Scale(3);
-    ImVec2 min = { g_aspectRatioOffsetX + Scale(CONTAINER_X) + BOTTOM_X_GAP + Scale(1), g_aspectRatioOffsetY + Scale(CONTAINER_Y + CONTAINER_HEIGHT + BOTTOM_Y_GAP)};
-    ImVec2 max = { g_aspectRatioOffsetX + Scale(CONTAINER_X + CONTAINER_WIDTH - BOTTOM_X_GAP), g_aspectRatioOffsetY + Scale(CONTAINER_Y + CONTAINER_HEIGHT + BOTTOM_Y_GAP + BUTTON_HEIGHT) };
+    ImVec2 min = { containerX + BOTTOM_X_GAP + Scale(1), g_aspectRatioOffsetY + Scale(CONTAINER_Y + CONTAINER_HEIGHT + BOTTOM_Y_GAP)};
+    ImVec2 max = { containerX + containerWidth - Scale(BOTTOM_X_GAP), g_aspectRatioOffsetY + Scale(CONTAINER_Y + CONTAINER_HEIGHT + BOTTOM_Y_GAP + BUTTON_HEIGHT) };
 
     // Background container
     drawList->AddRectFilled(min, max, GTA4Style::Colors::BackgroundPanel);
@@ -1158,12 +1135,17 @@ static void DrawSourcePickers()
     std::list<std::filesystem::path> paths;
     if (g_currentPage == WizardPage::SelectGame || g_currentPage == WizardPage::SelectDLC)
     {
+        // Center the picker buttons to match centered container
+        auto &res = ImGui::GetIO().DisplaySize;
+        float containerWidth = Scale(CONTAINER_WIDTH);
+        float containerX = (res.x - containerWidth) / 2.0f;
+        
         constexpr float ADD_BUTTON_MAX_TEXT_WIDTH = 168.0f;
         const std::string &addFilesText = Localise("Installer_Button_AddFiles");
         float squashRatio;
         ImVec2 textSize = ComputeTextSize(g_pFntRodin, addFilesText.c_str(), 20.0f, squashRatio, ADD_BUTTON_MAX_TEXT_WIDTH);
-        ImVec2 min = { g_aspectRatioOffsetX + Scale(CONTAINER_X + BOTTOM_X_GAP), g_aspectRatioOffsetY + Scale(CONTAINER_Y + CONTAINER_HEIGHT + BOTTOM_Y_GAP) };
-        ImVec2 max = { g_aspectRatioOffsetX + Scale(CONTAINER_X + BOTTOM_X_GAP + textSize.x * squashRatio + BUTTON_TEXT_GAP), g_aspectRatioOffsetY + Scale(CONTAINER_Y + CONTAINER_HEIGHT + BOTTOM_Y_GAP + BUTTON_HEIGHT) };
+        ImVec2 min = { containerX + Scale(BOTTOM_X_GAP), g_aspectRatioOffsetY + Scale(CONTAINER_Y + CONTAINER_HEIGHT + BOTTOM_Y_GAP) };
+        ImVec2 max = { containerX + Scale(BOTTOM_X_GAP + textSize.x * squashRatio + BUTTON_TEXT_GAP), g_aspectRatioOffsetY + Scale(CONTAINER_Y + CONTAINER_HEIGHT + BOTTOM_Y_GAP + BUTTON_HEIGHT) };
         DrawButton(min, max, addFilesText.c_str(), false, true, buttonPressed, ADD_BUTTON_MAX_TEXT_WIDTH);
         if (buttonPressed)
         {
@@ -1183,19 +1165,35 @@ static void DrawSourcePickers()
     }
 }
 
-// GTA IV Style DLC Selection - Three column layout with character images and logos
+// Clean installer: Simplified DLC Selection with text labels only
 static void DrawGTA4DLCSelection()
 {
     auto &res = ImGui::GetIO().DisplaySize;
     auto drawList = ImGui::GetBackgroundDrawList();
     float alpha = ComputeMotionInstaller(g_appearTime, g_disappearTime, CONTAINER_INNER_TIME, CONTAINER_INNER_DURATION);
     
+    // Draw header
+    const char* headerText = "SELECT DLC TO INSTALL (OPTIONAL)";
+    float headerFontSize = Scale(22);
+    ImVec2 headerSize = g_pFntNewRodin->CalcTextSizeA(headerFontSize, FLT_MAX, 0.0f, headerText);
+    float headerX = (res.x - headerSize.x) / 2.0f;
+    float headerY = Scale(60);
+    drawList->AddText(g_pFntNewRodin, headerFontSize, { headerX, headerY }, GTA4Style::WithAlpha(GTA4Style::Colors::Orange, alpha), headerText);
+    
+    // Draw underline
+    float lineY = headerY + headerSize.y + Scale(8);
+    float lineWidth = headerSize.x + Scale(40);
+    float lineX = (res.x - lineWidth) / 2.0f;
+    drawList->AddRectFilled({ lineX, lineY }, { lineX + lineWidth, lineY + Scale(2) }, GTA4Style::WithAlpha(GTA4Style::Colors::Orange, alpha * 0.6f));
+    
     // Calculate column positions (3 columns: TBOGT | GTA IV | TLAD)
     float columnWidth = res.x / 3.0f;
-    float logoAreaY = res.y * 0.70f;
+    float cardY = Scale(140);
+    float cardHeight = Scale(280);
+    float cardWidth = columnWidth - Scale(40);
     
-    // Selection titles
-    const char* titles[] = { "THE BALLAD OF GAY TONY", "GRAND THEFT AUTO IV", "THE LOST AND DAMNED" };
+    // Subtitle labels for each column
+    const char* subtitles[] = { "DLC", "BASE GAME", "DLC" };
     // DLC indices: 0=TBOGT, 1=GTA IV (skip), 2=TLAD
     // Map to DLC enum: TBOGT=1, TLAD=0
     
@@ -1209,10 +1207,12 @@ static void DrawGTA4DLCSelection()
         bool isHovered = false;
         bool isDLC = (i != 1); // 0=TBOGT, 2=TLAD are DLCs
         
+        // Card bounds
+        ImVec2 cardMin = { columnCenterX - cardWidth / 2.0f, cardY };
+        ImVec2 cardMax = { cardMin.x + cardWidth, cardMin.y + cardHeight };
+        
         // Check for mouse hover and click
-        ImVec2 columnMin = { columnX, 0 };
-        ImVec2 columnMax = { columnX + columnWidth, res.y - Scale(60) };
-        if (ImGui::IsMouseHoveringRect(columnMin, columnMax))
+        if (ImGui::IsMouseHoveringRect(cardMin, cardMax))
         {
             isHovered = true;
             if (ImGui::IsMouseClicked(0))
@@ -1232,80 +1232,82 @@ static void DrawGTA4DLCSelection()
             }
         }
         
-        // Draw character image (use existing install textures)
-        // TBOGT uses install_002, GTA IV uses install_001, TLAD uses install_003
-        int textureIndex = (i == 0) ? 1 : (i == 1) ? 0 : 2;
-        if (g_installTextures[textureIndex])
+        // Draw card background
+        ImU32 cardBg = GTA4Style::WithAlpha(GTA4Style::Colors::BackgroundPanel, alpha);
+        ImU32 cardBorder = isSelected ? GTA4Style::WithAlpha(GTA4Style::Colors::Orange, alpha) : 
+                          (isHovered ? GTA4Style::WithAlpha(GTA4Style::Colors::Orange, alpha * 0.5f) : 
+                           GTA4Style::WithAlpha(GTA4Style::Colors::Border, alpha * 0.5f));
+        
+        drawList->AddRectFilled(cardMin, cardMax, cardBg);
+        drawList->AddRect(cardMin, cardMax, cardBorder, 0.0f, 0, isSelected ? 2.0f : 1.0f);
+        
+        // Draw subtitle (DLC / BASE GAME)
+        float subtitleFontSize = Scale(12);
+        ImVec2 subtitleSize = g_pFntRodin->CalcTextSizeA(subtitleFontSize, FLT_MAX, 0.0f, subtitles[i]);
+        ImVec2 subtitlePos = { columnCenterX - subtitleSize.x / 2.0f, cardMin.y + Scale(15) };
+        ImU32 subtitleColor = isDLC ? GTA4Style::WithAlpha(GTA4Style::Colors::TextOrange, alpha) : 
+                                      GTA4Style::WithAlpha(GTA4Style::Colors::TextGray, alpha);
+        drawList->AddText(g_pFntRodin, subtitleFontSize, subtitlePos, subtitleColor, subtitles[i]);
+        
+        // Draw title (multiline)
+        float titleFontSize = Scale(18);
+        const char* line1 = (i == 0) ? "THE BALLAD OF" : (i == 1) ? "GRAND THEFT" : "THE LOST AND";
+        const char* line2 = (i == 0) ? "GAY TONY" : (i == 1) ? "AUTO IV" : "DAMNED";
+        
+        ImVec2 line1Size = g_pFntNewRodin->CalcTextSizeA(titleFontSize, FLT_MAX, 0.0f, line1);
+        ImVec2 line2Size = g_pFntNewRodin->CalcTextSizeA(titleFontSize, FLT_MAX, 0.0f, line2);
+        
+        float titleY = cardMin.y + Scale(50);
+        ImU32 titleColor = isSelected ? GTA4Style::WithAlpha(IM_COL32(255, 255, 255, 255), alpha) : 
+                                        GTA4Style::WithAlpha(IM_COL32(180, 180, 180, 255), alpha);
+        
+        drawList->AddText(g_pFntNewRodin, titleFontSize, { columnCenterX - line1Size.x / 2.0f, titleY }, titleColor, line1);
+        drawList->AddText(g_pFntNewRodin, titleFontSize, { columnCenterX - line2Size.x / 2.0f, titleY + line1Size.y + Scale(4) }, titleColor, line2);
+        
+        // Draw status for DLC columns
+        if (isDLC)
         {
-            float imgScale = isSelected ? 1.0f : 0.85f;
-            float imgWidth = Scale(300) * imgScale;
-            float imgHeight = Scale(500) * imgScale;
+            int dlcIdx = (i == 0) ? 1 : 0;  // TBOGT=1, TLAD=0 in DLC enum
+            bool dlcAdded = !g_dlcSourcePaths[dlcIdx].empty();
             
-            ImVec2 imgMin = { columnCenterX - imgWidth / 2.0f, Scale(80) };
-            ImVec2 imgMax = { imgMin.x + imgWidth, imgMin.y + imgHeight };
+            const char* statusText = dlcAdded ? "ADDED" : "NOT ADDED";
+            float statusFontSize = Scale(14);
+            ImVec2 statusSize = g_pFntRodin->CalcTextSizeA(statusFontSize, FLT_MAX, 0.0f, statusText);
+            float statusY = cardMin.y + Scale(120);
+            ImU32 statusColor = dlcAdded ? GTA4Style::WithAlpha(GTA4Style::Colors::TextGreen, alpha) : 
+                                           GTA4Style::WithAlpha(GTA4Style::Colors::TextGray, alpha);
+            drawList->AddText(g_pFntRodin, statusFontSize, { columnCenterX - statusSize.x / 2.0f, statusY }, statusColor, statusText);
             
-            // Dim non-selected characters
-            ImU32 imgColor = isSelected ? IM_COL32(255, 255, 255, 255 * alpha) : IM_COL32(128, 128, 128, 200 * alpha);
-            
-            drawList->AddImage(g_installTextures[textureIndex].get(), imgMin, imgMax, { 0, 0 }, { 1, 1 }, imgColor);
+            // Draw "Click to add" hint if selected and not added
+            if (isSelected && !dlcAdded)
+            {
+                const char* hintText = "CLICK TO ADD";
+                float hintFontSize = Scale(12);
+                ImVec2 hintSize = g_pFntRodin->CalcTextSizeA(hintFontSize, FLT_MAX, 0.0f, hintText);
+                float hintY = statusY + Scale(20);
+                drawList->AddText(g_pFntRodin, hintFontSize, { columnCenterX - hintSize.x / 2.0f, hintY }, 
+                                  GTA4Style::WithAlpha(GTA4Style::Colors::TextOrange, alpha * 0.8f), hintText);
+            }
+        }
+        else
+        {
+            // Base game - show "REQUIRED" status
+            const char* statusText = !g_gameSourcePath.empty() ? "INSTALLED" : "REQUIRED";
+            float statusFontSize = Scale(14);
+            ImVec2 statusSize = g_pFntRodin->CalcTextSizeA(statusFontSize, FLT_MAX, 0.0f, statusText);
+            float statusY = cardMin.y + Scale(120);
+            ImU32 statusColor = !g_gameSourcePath.empty() ? GTA4Style::WithAlpha(GTA4Style::Colors::TextGreen, alpha) : 
+                                                            GTA4Style::WithAlpha(GTA4Style::Colors::TextGray, alpha);
+            drawList->AddText(g_pFntRodin, statusFontSize, { columnCenterX - statusSize.x / 2.0f, statusY }, statusColor, statusText);
         }
         
-        // Draw logo image for all columns (DLC logos or GTA IV logo)
-        ImFont* font = g_pFntNewRodin;
-        float logoScale = isSelected ? 1.0f : 0.8f;
-        float logoWidth = Scale(180) * logoScale;
-        float logoHeight = Scale(180) * logoScale;
-        
-        // Get the appropriate logo texture
-        GuestTexture* logoTexture = nullptr;
-        if (i == 0 && g_upTBOGTLogo) logoTexture = g_upTBOGTLogo.get();      // TBOGT
-        else if (i == 1 && g_upGTA4Logo) logoTexture = g_upGTA4Logo.get();   // GTA IV (center)
-        else if (i == 2 && g_upTLADLogo) logoTexture = g_upTLADLogo.get();   // TLAD
-        
-        if (logoTexture)
+        // Draw selection indicator (orange underline for selected)
+        if (isSelected)
         {
-            // Adjust aspect ratio for GTA IV logo (it's wider)
-            float actualLogoWidth = logoWidth;
-            float actualLogoHeight = logoHeight;
-            if (i == 1) {
-                actualLogoWidth = Scale(200) * logoScale;
-                actualLogoHeight = Scale(100) * logoScale;
-            }
-            
-            // Draw logo image
-            ImVec2 logoMin = { columnCenterX - actualLogoWidth / 2.0f, logoAreaY - Scale(20) };
-            ImVec2 logoMax = { logoMin.x + actualLogoWidth, logoMin.y + actualLogoHeight };
-            
-            ImU32 logoColor = isSelected ? IM_COL32(255, 255, 255, 255 * alpha) : IM_COL32(180, 180, 180, 200 * alpha);
-            if (isHovered && !isSelected)
-                logoColor = IM_COL32(255, 200, 150, 230 * alpha);
-            
-            drawList->AddImage(logoTexture, logoMin, logoMax, { 0, 0 }, { 1, 1 }, logoColor);
-            
-            // Draw selection indicator (orange underline for selected)
-            if (isSelected)
-            {
-                float underlineY = logoMax.y + Scale(8);
-                ImVec2 lineMin = { columnCenterX - actualLogoWidth / 2.0f, underlineY };
-                ImVec2 lineMax = { columnCenterX + actualLogoWidth / 2.0f, underlineY + Scale(3) };
-                drawList->AddRectFilled(lineMin, lineMax, GTA4Style::WithAlpha(GTA4Style::Colors::Orange, alpha));
-            }
-            
-            // Draw "ADD DLC" button below logo for DLC columns only
-            if (isSelected && isDLC)
-            {
-                float buttonY = logoMax.y + Scale(20);
-                int dlcIdx = (i == 0) ? 1 : 0;  // TBOGT=1, TLAD=0 in DLC enum
-                bool dlcAdded = !g_dlcSourcePaths[dlcIdx].empty();
-                
-                const char* buttonText = dlcAdded ? "DLC ADDED" : "[CLICK] ADD DLC";
-                float buttonFontSize = Scale(14);
-                ImVec2 buttonSize = font->CalcTextSizeA(buttonFontSize, FLT_MAX, 0.0f, buttonText);
-                ImVec2 buttonPos = { columnCenterX - buttonSize.x / 2.0f, buttonY };
-                
-                ImU32 buttonColor = dlcAdded ? GTA4Style::Colors::TextGreen : GTA4Style::Colors::TextOrange;
-                drawList->AddText(font, buttonFontSize, buttonPos, GTA4Style::WithAlpha(buttonColor, alpha), buttonText);
-            }
+            float underlineY = cardMax.y - Scale(8);
+            ImVec2 lineMin = { cardMin.x + Scale(10), underlineY };
+            ImVec2 lineMax = { cardMax.x - Scale(10), underlineY + Scale(3) };
+            drawList->AddRectFilled(lineMin, lineMax, GTA4Style::WithAlpha(GTA4Style::Colors::Orange, alpha));
         }
     }
     
@@ -1323,39 +1325,34 @@ static void DrawGTA4DLCSelection()
         }
     }
     
-    // Draw navigation hints and SKIP button at bottom
-    float hintY = res.y - Scale(40);
+    // Draw navigation hints at bottom
     ImFont* hintFont = g_pFntRodin;
-    float hintFontSize = Scale(14);
+    float hintFontSize = Scale(13);
+    float bottomY = res.y - Scale(50);
     
-    // Left side: SKIP button with hold progress
+    // Centered navigation hint
+    const char* navHint = "LEFT/RIGHT: Select  |  ENTER: Proceed  |  Hold ESC: Skip";
+    ImVec2 navHintSize = hintFont->CalcTextSizeA(hintFontSize, FLT_MAX, 0.0f, navHint);
+    drawList->AddText(hintFont, hintFontSize, { (res.x - navHintSize.x) / 2.0f, bottomY }, 
+                      GTA4Style::WithAlpha(GTA4Style::Colors::TextGray, alpha * 0.7f), navHint);
+    
+    // Draw ESC hold progress bar if holding
     if (g_escHeld)
     {
         double holdTime = ImGui::GetTime() - g_escHoldStartTime;
         float progress = std::min(1.0f, (float)(holdTime / ESC_HOLD_DURATION));
         
-        // Draw progress bar
+        // Draw progress bar below hint
         float barWidth = Scale(200);
-        float barHeight = Scale(6);
-        ImVec2 barMin = { Scale(40), hintY + Scale(20) };
-        ImVec2 barMax = { barMin.x + barWidth, barMin.y + barHeight };
+        float barHeight = Scale(4);
+        float barX = (res.x - barWidth) / 2.0f;
+        float barY = bottomY + Scale(20);
+        ImVec2 barMin = { barX, barY };
+        ImVec2 barMax = { barX + barWidth, barY + barHeight };
         
         drawList->AddRectFilled(barMin, barMax, GTA4Style::WithAlpha(IM_COL32(60, 60, 60, 255), alpha));
         drawList->AddRectFilled(barMin, { barMin.x + barWidth * progress, barMax.y }, GTA4Style::WithAlpha(GTA4Style::Colors::Orange, alpha));
-        
-        const char* skipText = "HOLD ESC TO SKIP...";
-        drawList->AddText(hintFont, hintFontSize, { Scale(40), hintY }, GTA4Style::WithAlpha(GTA4Style::Colors::TextOrange, alpha), skipText);
     }
-    else
-    {
-        const char* skipText = "[HOLD ESC] SKIP DLC";
-        drawList->AddText(hintFont, hintFontSize, { Scale(40), hintY }, GTA4Style::WithAlpha(GTA4Style::Colors::TextGray, alpha), skipText);
-    }
-    
-    // Right side: navigation hints
-    float hintX = res.x - Scale(200);
-    const char* hintText = "[CLICK] SELECT";
-    drawList->AddText(hintFont, hintFontSize, { hintX, hintY }, GTA4Style::WithAlpha(GTA4Style::Colors::TextGray, alpha), hintText);
 }
 
 static void ScanForTitleUpdates()
@@ -1428,9 +1425,13 @@ static void DrawTitleUpdateSelection()
     
     const auto& updates = g_titleUpdateManager.GetDetectedUpdates();
     
+    // Center the title update buttons to match centered container
+    float containerWidth = Scale(CONTAINER_WIDTH);
+    float containerX = (res.x - containerWidth) / 2.0f;
+    
     float buttonY = g_aspectRatioOffsetY + Scale(CONTAINER_Y + 20.0f);
-    float buttonX = g_aspectRatioOffsetX + Scale(CONTAINER_X + 20.0f);
-    float buttonWidth = Scale(CONTAINER_WIDTH - 40.0f);
+    float buttonX = containerX + Scale(20.0f);
+    float buttonWidth = containerWidth - Scale(40.0f);
     float buttonHeight = Scale(28.0f);
     float buttonSpacing = Scale(8.0f);
     
@@ -1639,8 +1640,14 @@ static void DrawNavigationButton()
 
     const std::string &nextButtonText = Localise(nextButtonKey);
     ImVec2 nextTextSize = ComputeTextSize(g_pFntRodin, nextButtonText.c_str(), 20.0f, squashRatio, NAV_BUTTON_MAX_TEXT_WIDTH);
-    ImVec2 min = { g_aspectRatioOffsetX + Scale(CONTAINER_X + CONTAINER_WIDTH - nextTextSize.x * squashRatio - BOTTOM_X_GAP - BUTTON_TEXT_GAP), g_aspectRatioOffsetY + Scale(CONTAINER_Y + CONTAINER_HEIGHT + BOTTOM_Y_GAP) };
-    ImVec2 max = { g_aspectRatioOffsetX + Scale(CONTAINER_X + CONTAINER_WIDTH - BOTTOM_X_GAP), g_aspectRatioOffsetY + Scale(CONTAINER_Y + CONTAINER_HEIGHT + BOTTOM_Y_GAP + BUTTON_HEIGHT) };
+    
+    // Center the button position to match centered container
+    auto &res = ImGui::GetIO().DisplaySize;
+    float containerWidth = Scale(CONTAINER_WIDTH);
+    float containerX = (res.x - containerWidth) / 2.0f;
+    
+    ImVec2 min = { containerX + containerWidth - Scale(nextTextSize.x * squashRatio + BOTTOM_X_GAP + BUTTON_TEXT_GAP), g_aspectRatioOffsetY + Scale(CONTAINER_Y + CONTAINER_HEIGHT + BOTTOM_Y_GAP) };
+    ImVec2 max = { containerX + containerWidth - Scale(BOTTOM_X_GAP), g_aspectRatioOffsetY + Scale(CONTAINER_Y + CONTAINER_HEIGHT + BOTTOM_Y_GAP + BUTTON_HEIGHT) };
 
     bool buttonPressed = false;
     DrawButton(min, max, nextButtonText.c_str(), false, nextButtonEnabled, buttonPressed, NAV_BUTTON_MAX_TEXT_WIDTH);
@@ -1728,7 +1735,44 @@ static void DrawNavigationButton()
         }
         else if (g_currentPage == WizardPage::SelectGame)
         {
-            // Validate game source first
+            // STEP 1: Validate game version/region first (like Banjo:Recompiled)
+            auto versionResult = Installer::validateGameVersion(g_gameSourcePath);
+            if (!versionResult.isValid)
+            {
+                // XEX parsing failed - show error
+                std::stringstream errorMsg;
+                errorMsg << versionResult.errorTitle << "\n\n";
+                errorMsg << versionResult.errorMessage;
+                g_currentMessagePrompt = errorMsg.str();
+                g_currentMessagePromptConfirmation = false;
+                Game_PlaySound("error");
+                return;
+            }
+            else if (!versionResult.isCorrectGame)
+            {
+                // Wrong game detected
+                std::stringstream errorMsg;
+                errorMsg << Localise("Installer_Message_WrongGame") << "\n\n";
+                errorMsg << versionResult.errorMessage;
+                g_currentMessagePrompt = errorMsg.str();
+                g_currentMessagePromptConfirmation = false;
+                Game_PlaySound("error");
+                return;
+            }
+            else if (!versionResult.isCorrectRegion)
+            {
+                // Correct game but wrong region
+                std::stringstream errorMsg;
+                errorMsg << Localise("Installer_Message_WrongRegion") << "\n\n";
+                errorMsg << Localise("Installer_Message_DetectedRegion") << ": " << versionResult.detectedRegion << "\n";
+                errorMsg << Localise("Installer_Message_RequiredRegion") << ": " << versionResult.requiredRegion;
+                g_currentMessagePrompt = errorMsg.str();
+                g_currentMessagePromptConfirmation = false;
+                Game_PlaySound("error");
+                return;
+            }
+            
+            // STEP 2: Validate game source files
             std::string sourcesErrorMessage;
             if (!InstallerParseSources(sourcesErrorMessage))
             {
@@ -1748,6 +1792,29 @@ static void DrawNavigationButton()
         }
         else if (g_currentPage == WizardPage::SelectTitleUpdate)
         {
+            // Validate Title Update compatibility before proceeding
+            if (g_titleUpdateManager.HasSelectedUpdate())
+            {
+                auto selectedUpdate = g_titleUpdateManager.GetSelectedUpdate();
+                if (selectedUpdate)
+                {
+                    std::string compatError = Installer::checkGameUpdateCompatibility(
+                        g_gameSourcePath, selectedUpdate->path);
+                    
+                    if (!compatError.empty())
+                    {
+                        std::stringstream errorMsg;
+                        errorMsg << "Incompatible Title Update:\n\n";
+                        errorMsg << compatError;
+                        
+                        g_currentMessagePrompt = errorMsg.str();
+                        g_currentMessagePromptConfirmation = false;
+                        Game_PlaySound("error");
+                        return;  // Block navigation
+                    }
+                }
+            }
+            
             // Proceed to DLC selection
             SetCurrentPage(WizardPage::SelectDLC);
         }
@@ -1923,7 +1990,8 @@ static void ProcessMusic()
     }
     else
     {
-        EmbeddedPlayer::PlayMusic();
+        // Music disabled for clean installer
+        // EmbeddedPlayer::PlayMusic();
     }
 }
 
@@ -1932,18 +2000,23 @@ void InstallerWizard::Init()
     auto &io = ImGui::GetIO();
 
     g_commonMenu = CommonMenu(Localise("Installer_Header_Installer"), "", true);
-    g_installTextures[0] = LOAD_ZSTD_TEXTURE(g_install_001);
-    g_installTextures[1] = LOAD_ZSTD_TEXTURE(g_install_002);
-    g_installTextures[2] = LOAD_ZSTD_TEXTURE(g_install_003);
-    g_installTextures[3] = LOAD_ZSTD_TEXTURE(g_install_004);
-    g_installTextures[4] = LOAD_ZSTD_TEXTURE(g_install_005);
-    g_installTextures[5] = LOAD_ZSTD_TEXTURE(g_install_006);
-    g_installTextures[6] = LOAD_ZSTD_TEXTURE(g_install_007);
-    g_installTextures[7] = LOAD_ZSTD_TEXTURE(g_install_008);
+    
+    // Character and logo textures disabled for clean installer
+    // g_installTextures[0] = LOAD_ZSTD_TEXTURE(g_install_001);
+    // g_installTextures[1] = LOAD_ZSTD_TEXTURE(g_install_002);
+    // g_installTextures[2] = LOAD_ZSTD_TEXTURE(g_install_003);
+    // g_installTextures[3] = LOAD_ZSTD_TEXTURE(g_install_004);
+    // g_installTextures[4] = LOAD_ZSTD_TEXTURE(g_install_005);
+    // g_installTextures[5] = LOAD_ZSTD_TEXTURE(g_install_006);
+    // g_installTextures[6] = LOAD_ZSTD_TEXTURE(g_install_007);
+    // g_installTextures[7] = LOAD_ZSTD_TEXTURE(g_install_008);
+    
     g_upLibertyDev = LOAD_ZSTD_TEXTURE(g_libertyrecomp);
-    g_upGTA4Logo = LOAD_ZSTD_TEXTURE(g_gta4_logo);
-    g_upTLADLogo = LOAD_ZSTD_TEXTURE(g_tlad_logo);
-    g_upTBOGTLogo = LOAD_ZSTD_TEXTURE(g_tbogt_logo);
+    
+    // Logo textures disabled for clean installer
+    // g_upGTA4Logo = LOAD_ZSTD_TEXTURE(g_gta4_logo);
+    // g_upTLADLogo = LOAD_ZSTD_TEXTURE(g_tlad_logo);
+    // g_upTBOGTLogo = LOAD_ZSTD_TEXTURE(g_tbogt_logo);
 
     for (int i = 0; i < g_credits.size(); i++)
     {
@@ -2019,6 +2092,9 @@ void InstallerWizard::Shutdown()
         g_currentPickerThread->join();
         g_currentPickerThread.reset();
     }
+
+    // Clean up any temp extraction directories
+    Installer::cleanupTempFiles();
 
     // Erase the sources.
     g_installerSources.game.reset();

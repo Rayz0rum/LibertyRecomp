@@ -16,6 +16,7 @@ StfsParser::StfsParser()
     , m_packageType(StfsPackageType::kCon)
     , m_contentType(XContentType::kSavedGame)
     , m_titleId(0)
+    , m_mediaId(0)
     , m_version(0)
     , m_baseVersion(0)
     , m_headerSize(0)
@@ -69,6 +70,11 @@ void StfsParser::Close()
 bool StfsParser::IsTitleUpdate() const
 {
     return m_contentType == XContentType::kInstaller;
+}
+
+bool StfsParser::IsDLC() const
+{
+    return m_contentType == XContentType::kMarketplaceContent;
 }
 
 TitleUpdateInfo StfsParser::GetTitleUpdateInfo() const
@@ -155,11 +161,12 @@ bool StfsParser::ParseHeader()
     
     // Read execution info (title ID, version) at metadata + 0x10
     // Execution info structure:
-    // +0x00: Media ID (4 bytes)
+    // +0x00: Media ID (4 bytes) - Used for DLC identification
     // +0x04: Version (4 bytes)
     // +0x08: Base Version (4 bytes)
     // +0x0C: Title ID (4 bytes)
     uint64_t execInfoOffset = metadataOffset + 0x10;
+    m_mediaId = ReadUInt32BE(execInfoOffset);          // Read Media ID for DLC detection
     m_version = ReadUInt32BE(execInfoOffset + 0x04);
     m_baseVersion = ReadUInt32BE(execInfoOffset + 0x08);
     m_titleId = ReadUInt32BE(execInfoOffset + 0x0C);

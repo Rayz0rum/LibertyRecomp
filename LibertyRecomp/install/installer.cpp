@@ -5,6 +5,8 @@
 #include "rpf_extractor.h"
 #include "platform_paths.h"
 #include "xbox360/title_update_manager.h"
+#include "xbox360/stfs_parser.h"
+#include "xbox360/xex_validator.h"
 
 #include <xxh3.h>
 
@@ -17,6 +19,9 @@
 #include "hashes/dlc_tlad.h"
 #include "hashes/dlc_tbogt.h"
 #include "hashes/title_update.h"
+
+// TitleUpdateManager singleton for install flow integration
+static liberty::install::TitleUpdateManager g_installerTitleUpdateManager;
 
 static const std::string GameDirectory = "game";
 static const std::string DLCDirectory = "dlc";
@@ -291,7 +296,34 @@ static bool copyFile(const FilePair &pair, const uint64_t *fileHashes, VirtualFi
 
 static DLC detectDLC(const std::filesystem::path &sourcePath, VirtualFileSystem &sourceVfs, Journal &journal)
 {
-    // GTA IV DLC detection - check for specific files
+    // Priority 1: Parse STFS header for Media ID (most reliable)
+    // STFS packages have definitive Media ID that identifies the DLC type
+    if (XContentFileSystem::check(sourcePath))
+    {
+        liberty::install::StfsParser parser;
+        if (parser.Open(sourcePath))
+        {
+            // Check Title ID matches GTA IV
+            if (parser.GetTitleId() == GTA4TitleId)
+            {
+                // Use Media ID to identify DLC type
+                uint32_t mediaId = parser.GetMediaId();
+                switch (mediaId)
+                {
+                    case GTA4MediaId::TLAD:
+                        return DLC::TheLostAndDamned;
+                    case GTA4MediaId::TBOGT:
+                        return DLC::TheBalladOfGayTony;
+                    default:
+                        // Unknown media ID, fall through to file-based detection
+                        break;
+                }
+            }
+            parser.Close();
+        }
+    }
+    
+    // Priority 2: Check for characteristic files in VFS
     // TLAD has tlad.rpf, TBOGT has tbogt.rpf
     if (sourceVfs.exists("tlad.rpf") || sourceVfs.exists("TLAD/tlad.rpf"))
     {
@@ -302,7 +334,8 @@ static DLC detectDLC(const std::filesystem::path &sourcePath, VirtualFileSystem 
         return DLC::TheBalladOfGayTony;
     }
     
-    // Try to detect by folder name
+    // Priority 3: Folder name heuristics (fallback for extracted content)
+    // Only use this as last resort since filenames can be changed
     std::string pathStr = sourcePath.filename().string();
     std::transform(pathStr.begin(), pathStr.end(), pathStr.begin(), ::tolower);
     
@@ -316,7 +349,7 @@ static DLC detectDLC(const std::filesystem::path &sourcePath, VirtualFileSystem 
     }
 
     journal.lastResult = Journal::Result::UnknownDLCType;
-    journal.lastErrorMessage = fmt::format("Could not detect GTA IV DLC type for {}.", sourcePath.string());
+    journal.lastErrorMessage = fmt::format("Could not detect GTA IV DLC type for {}. Please use original STFS package.", sourcePath.string());
     return DLC::Unknown;
 }
 
@@ -934,6 +967,10 @@ bool Installer::install(const Sources &sources, const std::filesystem::path &tar
 void Installer::rollback(Journal &journal)
 {
     std::error_code ec;
+    
+    // Clean up temp extraction directories first
+    cleanupTempFiles();
+    
     for (const auto &path : journal.createdFiles)
     {
         std::filesystem::remove(path, ec);
@@ -954,6 +991,70 @@ bool Installer::parseGame(const std::filesystem::path &sourcePath)
     }
 
     return sourceVfs->exists(GameExecutableFile);
+}
+
+GameVersionResult Installer::validateGameVersion(const std::filesystem::path &sourcePath)
+{
+    GameVersionResult result;
+    
+    // Create VFS to access the game content
+    std::unique_ptr<VirtualFileSystem> sourceVfs = createFileSystemFromPath(sourcePath);
+    if (sourceVfs == nullptr)
+    {
+        result.errorTitle = "Invalid Source";
+        result.errorMessage = "Could not open game source file.";
+        return result;
+    }
+    
+    // Check if default.xex exists
+    if (!sourceVfs->exists(GameExecutableFile))
+    {
+        result.errorTitle = "Invalid Game";
+        result.errorMessage = "Game source does not contain default.xex.";
+        return result;
+    }
+    
+    // Load the XEX file for validation
+    std::vector<uint8_t> xexData;
+    if (!sourceVfs->load(GameExecutableFile, xexData))
+    {
+        result.errorTitle = "Read Error";
+        result.errorMessage = "Could not read default.xex from game source.";
+        return result;
+    }
+    
+    // Validate using XexValidator
+    liberty::install::XexValidator validator;
+    auto xexResult = validator.validate(xexData.data(), xexData.size());
+    
+    result.isValid = xexResult.isValid;
+    result.isCorrectGame = xexResult.isCorrectGame;
+    result.isCorrectRegion = xexResult.isCorrectRegion;
+    result.titleId = xexResult.titleId;
+    result.region = xexResult.region;
+    result.detectedRegion = xexResult.detectedRegionName;
+    result.requiredRegion = xexResult.requiredRegionName;
+    
+    // Generate user-friendly error messages
+    if (!xexResult.isValid)
+    {
+        result.errorTitle = "Invalid XEX";
+        result.errorMessage = xexResult.errorMessage;
+    }
+    else if (!xexResult.isCorrectGame)
+    {
+        result.errorTitle = "Wrong Game";
+        result.errorMessage = "This is not Grand Theft Auto IV.\n"
+                              "Please select the correct Xbox 360 game disc or ISO.";
+    }
+    else if (!xexResult.isCorrectRegion)
+    {
+        result.errorTitle = "Liberty Recompiled";
+        result.errorMessage = "This ROM is the correct game, but the wrong version.\n"
+                              "This project requires the NTSC-U (USA) version of the game.";
+    }
+    
+    return result;
 }
 
 DLC Installer::parseDLC(const std::filesystem::path &sourcePath)
@@ -999,4 +1100,91 @@ TitleUpdate Installer::detectUpdateVersion(const std::filesystem::path &sourcePa
         return TitleUpdate::V4;
     
     return TitleUpdate::Unknown;
+}
+
+std::string Installer::checkGameUpdateCompatibility(
+    const std::filesystem::path& gameSourcePath,
+    const std::filesystem::path& updatePath)
+{
+    // Load base game VFS
+    std::unique_ptr<VirtualFileSystem> gameVfs = createFileSystemFromPath(gameSourcePath);
+    if (!gameVfs)
+    {
+        return "Could not open game source";
+    }
+    
+    if (!gameVfs->exists(GameExecutableFile))
+    {
+        return "Game source does not contain default.xex";
+    }
+    
+    // Check if update is an STFS package
+    if (XContentFileSystem::check(updatePath))
+    {
+        liberty::install::StfsParser parser;
+        if (!parser.Open(updatePath))
+        {
+            return "Failed to open Title Update package";
+        }
+        
+        // Check if it's actually a Title Update
+        if (!parser.IsTitleUpdate())
+        {
+            return "Selected file is not a Title Update (Content Type mismatch)";
+        }
+        
+        // Check Title ID matches GTA IV
+        if (parser.GetTitleId() != GTA4TitleId)
+        {
+            return fmt::format("Title Update is for a different game (Title ID: {:08X}, expected {:08X})",
+                parser.GetTitleId(), GTA4TitleId);
+        }
+        
+        parser.Close();
+    }
+    else if (std::filesystem::is_directory(updatePath))
+    {
+        // Directory - check for default.xex inside
+        std::filesystem::path xexPath = updatePath / GameExecutableFile;
+        if (!std::filesystem::exists(xexPath))
+        {
+            return "Title Update folder does not contain default.xex";
+        }
+    }
+    else if (std::filesystem::is_regular_file(updatePath))
+    {
+        // Single file - must be the XEX itself or an STFS container
+        std::string ext = updatePath.extension().string();
+        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+        
+        if (ext != ".xex" && !XContentFileSystem::check(updatePath))
+        {
+            return "Title Update must be an .xex file, STFS package, or folder containing default.xex";
+        }
+    }
+    else
+    {
+        return "Title Update path does not exist";
+    }
+    
+    return "";  // Success - empty string means compatible
+}
+
+void Installer::cleanupTempFiles()
+{
+    std::error_code ec;
+    
+    // Clean up temp extraction directories
+    if (!g_tempExtractDir.empty() && std::filesystem::exists(g_tempExtractDir, ec))
+    {
+        std::filesystem::remove_all(g_tempExtractDir, ec);
+        g_tempExtractDir.clear();
+    }
+    
+    // Also clean up LibertyRecomp temp directory in system temp
+    std::filesystem::path tempBase = std::filesystem::temp_directory_path(ec) / "LibertyRecomp_DLC";
+    if (!ec && std::filesystem::exists(tempBase, ec))
+    {
+        std::filesystem::remove_all(tempBase, ec);
+    }
 }

@@ -5,6 +5,11 @@
 // This pre-populates vtables with valid function pointers before game starts
 #include "../../gta_iv/vtable_prepopulate.h"
 
+// RMPTFX worker thread hook - suspend during Init to prevent signal_sem accumulation
+// This must be registered via InsertFunction (not PatchFuncMapping) because
+// the thread trampoline uses PPC_CALL_INDIRECT_FUNC which consults PPC_LOOKUP_FUNC
+extern "C" void sub_821966D0_hook(PPCContext &ctx, uint8_t *base);
+
 static constexpr size_t AlignDown(size_t value, size_t alignment) noexcept
 {
     return value & ~(alignment - 1);
@@ -49,6 +54,11 @@ Memory::Memory()
         if (PPCFuncMappings[i].host != nullptr)
             InsertFunction(PPCFuncMappings[i].guest, PPCFuncMappings[i].host);
     }
+
+    // RMPTFX worker thread hook - patches PPC_LOOKUP_FUNC table (used by indirect calls)
+    // PatchFuncMapping only patches PPCFuncMappings[] which is NOT consulted by
+    // PPC_CALL_INDIRECT_FUNC in thread trampolines (sub_827DAE40)
+    InsertFunction(0x821966D0, sub_821966D0_hook);
 
     // Register stubs for missing callbacks - must be done BEFORE memory protection
     // 0x829FBE38 - called from sub_829A7960

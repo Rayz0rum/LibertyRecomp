@@ -92,10 +92,15 @@ public:
     // Check if this is a valid Title Update package
     bool IsTitleUpdate() const;
     
+    // Check if this is a DLC package
+    bool IsDLC() const;
+    
     // Get metadata
     TitleUpdateInfo GetTitleUpdateInfo() const;
     uint32_t GetTitleId() const { return m_titleId; }
     uint32_t GetVersion() const { return m_version; }
+    uint32_t GetMediaId() const { return m_mediaId; }
+    XContentType GetContentType() const { return m_contentType; }
     StfsPackageType GetPackageType() const { return m_packageType; }
     
     // List all files in the package
@@ -134,6 +139,7 @@ private:
     StfsPackageType m_packageType;
     XContentType m_contentType;
     uint32_t m_titleId;
+    uint32_t m_mediaId;         // Media ID for DLC identification
     uint32_t m_version;
     uint32_t m_baseVersion;
     std::string m_displayName;

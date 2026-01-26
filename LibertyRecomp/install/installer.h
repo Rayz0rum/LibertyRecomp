@@ -24,6 +24,31 @@ enum class TitleUpdate {
     V8,         // Title Update v8 (latest)
 };
 
+// GTA IV Media IDs for DLC detection via STFS header
+namespace GTA4MediaId {
+    constexpr uint32_t BaseGame = 0x00000001;
+    constexpr uint32_t TLAD     = 0x00000002;  // The Lost and Damned
+    constexpr uint32_t TBOGT    = 0x00000003;  // The Ballad of Gay Tony
+}
+
+// GTA IV Title ID
+constexpr uint32_t GTA4TitleId = 0x545407F2;
+
+// Game version validation result (for UI dialogs like Banjo Recompiled)
+struct GameVersionResult {
+    bool isValid = false;
+    bool isCorrectGame = false;
+    bool isCorrectRegion = false;
+    
+    uint32_t titleId = 0;
+    uint32_t region = 0;
+    
+    std::string errorTitle;      // Short error title
+    std::string errorMessage;    // Detailed explanation
+    std::string detectedRegion;  // e.g., "PAL (Europe)"
+    std::string requiredRegion;  // e.g., "NTSC-U (USA)"
+};
+
 struct Journal
 {
     enum class Result
@@ -39,6 +64,8 @@ struct Journal
         FileWriteFailed,
         ValidationFileMissing,
         DLCParsingFailed,
+        PatchProcessFailed,     // Title Update patching failed
+        IncompatibleUpdate,     // Title Update incompatible with base game
         UnknownDLCType
     };
 
@@ -90,6 +117,10 @@ struct Installer
 
     // Convenience method for checking if the specified file contains the game. This should be used when the user selects the file.
     static bool parseGame(const std::filesystem::path &sourcePath);
+    
+    // Validate game version and region (like Banjo Recompiled's version check dialog)
+    // Returns detailed result for UI display
+    static GameVersionResult validateGameVersion(const std::filesystem::path &sourcePath);
 
     // Convenience method for checking if the specified file contains a title update. This should be used when the user selects the file.
     static bool parseUpdate(const std::filesystem::path &sourcePath);
@@ -99,4 +130,19 @@ struct Installer
 
     // Convenience method for the installer to check which DLC the file that was specified corresponds to. This should be used when the user selects the file.
     static DLC parseDLC(const std::filesystem::path &sourcePath);
+    
+    // Check if a title update is compatible with the base game XEX
+    // Returns empty string on success, error message on failure
+    static std::string checkGameUpdateCompatibility(
+        const std::filesystem::path& gameSourcePath,
+        const std::filesystem::path& updatePath);
+    
+    // Clean up temporary extraction directories
+    static void cleanupTempFiles();
+    
+    // Hash validation skip mode (enabled during development when hash tables are incomplete)
+    // TODO: Set to false once proper hashes are generated with fshasher
+    static constexpr bool SkipHashValidation = true;
+    static constexpr const char* HashSkipWarning = 
+        "File integrity validation is disabled during development.";
 };

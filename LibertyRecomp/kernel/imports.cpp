@@ -135,6 +135,9 @@ extern "C" void sub_829D8568_hook(PPCContext &ctx,
 
 extern "C" void sub_82300C78_hook(PPCContext &ctx, uint8_t *base);
 
+// RMPTFX worker thread hook - suspend during Init to prevent signal accumulation
+extern "C" void sub_821966D0_hook(PPCContext &ctx, uint8_t *base);
+
 // Menu hooks - monitor menu state and sync Config values
 // NOTE: sub_8213B268/B350 are lookup helpers, NOT value accessors - do not hook!
 extern "C" void sub_8212FCC8_hook(PPCContext &ctx, uint8_t *base);  // Menu frame update (monitors byte_82BEC62A)
@@ -194,6 +197,9 @@ void PatchSyncPrimitives() {
   PatchFuncMapping(
       0x829D8568,
       &sub_829D8568_hook); // GPU command buffer flush - simulate consumption
+
+  // RMPTFX worker thread - suspend during Init to prevent signal_sem accumulation
+  PatchFuncMapping(0x821966D0, &sub_821966D0_hook);
 
   // Menu hooks - monitor menu state via byte_82BEC62A and sync Config values
   // NOTE: sub_8213B268/B350 are lookup helpers, NOT value accessors - do not hook!
@@ -2544,10 +2550,10 @@ uint32_t NtWaitForSingleObjectEx(uint32_t Handle, uint32_t WaitMode,
     // FIX: Validate handle is in valid guest memory range before translating
     // Valid ranges: 0x82000000-0x84000000 (heap/BSS), 0xA0000000+ (physical),
     // 0xB0000000+ (kernel objects from NtCreate*)
-    // Reject handles in invalid ranges like 0xC0000000-0xFFFFFFFF (garbage)
+    // 0xC0000000-0xD0000000 (SYNC-TABLE semaphores/events created by game subsystems)
     bool isValidRange = (Handle >= 0x82000000 && Handle < 0x84000000) ||
-                        (Handle >= 0xA0000000 && Handle < 0xC0000000) ||
-                        (Handle >= 0xB0000000 && Handle < 0xC0000000);
+                        (Handle >= 0xA0000000 && Handle < 0xD0000000) ||
+                        (Handle >= 0xB0000000 && Handle < 0xD0000000);
     if (!isValidRange) {
       static int s_invalidHandleCount = 0;
       static std::unordered_set<uint32_t> s_reportedHandles;
@@ -6214,6 +6220,37 @@ extern "C" void sub_829A21F8_hook(PPCContext &ctx, uint8_t *base) {
   if (handle != 0) {
     SyncTable_InitSemaphore(handle, 0, 32767, callerLR);
   }
+}
+
+// =============================================================================
+// Hook sub_821966D0 - RMPTFX Worker Thread
+// =============================================================================
+// This is the particle effects worker thread that:
+//   1. Waits on wait_sem (+21688) via sub_827DACD8
+//   2. Processes 256 particle slots
+//   3. Signals signal_sem (+21692) via sub_827DAD60
+//   4. Loops while delta_time (+21696) != -999.0
+//
+// PROBLEM: During Init phase, wait_sem waits are fail-opened (return success
+// immediately). This causes the worker to loop rapidly, signaling signal_sem
+// repeatedly. Since the consumer (sub_821948F0) isn't running during Init,
+// signal_sem count accumulates (3→4→5→6...).
+//
+// FIX: Return early during Init phase. The worker has no legitimate work
+// during Init anyway - the producer (sub_82195588) never runs during Init.
+// This matches original Xbox behavior where the worker would block on wait_sem.
+// =============================================================================
+extern "C" void __imp__sub_821966D0(PPCContext &ctx, uint8_t *base);
+extern "C" void sub_821966D0_hook(PPCContext &ctx, uint8_t *base) {
+  // During Init phase, suspend the worker to prevent signal accumulation
+  if (ShouldFailOpenWait()) {
+    // No work during Init - matches original Xbox blocking behavior
+    // The producer never runs during Init, so there's nothing to process
+    return;
+  }
+  
+  // During Runtime, run the actual worker
+  __imp__sub_821966D0(ctx, base);
 }
 
 // Hook sub_829A9738 - Wait-with-retry helper (calls NtWaitForSingleObjectEx)
@@ -10155,33 +10192,8 @@ PPC_FUNC(sub_82851F30) {
   printf("[GPU_INIT_DEBUG] sub_82851F30 EXIT #%d GPU_CONTEXT=0x%08X\n", s_count, gpuContext);
 }
 
-// Trace internal calls of sub_82851F30 to find blocker
-extern "C" void __imp__sub_827DAE20(PPCContext &ctx, uint8_t *base);
-PPC_FUNC(sub_827DAE20) {
-  static int s_count = 0;
-  ++s_count;
-  LOGF_WARNING("[sub_82851F30] sub_827DAE20 ENTER #{}", s_count);
-  __imp__sub_827DAE20(ctx, base);
-  LOGF_WARNING("[sub_82851F30] sub_827DAE20 EXIT #{}", s_count);
-}
-
-extern "C" void __imp__sub_827EEE40(PPCContext &ctx, uint8_t *base);
-PPC_FUNC(sub_827EEE40) {
-  static int s_count = 0;
-  ++s_count;
-  LOGF_WARNING("[sub_82851F30] sub_827EEE40 ENTER #{}", s_count);
-  __imp__sub_827EEE40(ctx, base);
-  LOGF_WARNING("[sub_82851F30] sub_827EEE40 EXIT #{}", s_count);
-}
-
-extern "C" void __imp__sub_828508B8(PPCContext &ctx, uint8_t *base);
-PPC_FUNC(sub_828508B8) {
-  static int s_count = 0;
-  ++s_count;
-  LOGF_WARNING("[sub_82851F30] sub_828508B8 ENTER #{}", s_count);
-  __imp__sub_828508B8(ctx, base);
-  LOGF_WARNING("[sub_82851F30] sub_828508B8 EXIT #{}", s_count);
-}
+// Debug hooks removed - were causing 2GB log spam
+// sub_827DAE20, sub_827EEE40, sub_828508B8 now use default PPC implementations
 
 // Hook sub_829DF358 - Called inside sub_829DF440
 // If this returns ZERO, GPU init bails out before writing context!
@@ -16503,10 +16515,23 @@ PPC_FUNC(sub_8249BE88) {
 // =============================================================================
 // This function processes GPU ring buffer commands. Without full GPU emulation,
 // it crashes trying to access invalid command buffer memory (0x400000000).
-// Stub it to prevent crash - GPU rendering is handled separately.
+// 
+// Fix: Set read_ptr = write_ptr to drain the queue instantly, preventing the
+// worker loop (sub_829DDC90) from blocking indefinitely waiting for events.
+// Worker context layout:
+//   +56: write_ptr (commands submitted)
+//   +60: read_ptr (commands processed)
 // =============================================================================
 PPC_FUNC(sub_829DD978) {
-  // Stub: Return success without processing GPU commands
+  uint32_t ctx_addr = ctx.r3.u32;
+  
+  // Read write pointer from ctx+56
+  uint32_t write_ptr = PPC_LOAD_U32(ctx_addr + 56);
+  
+  // Set read pointer = write pointer (all commands consumed)
+  PPC_STORE_U32(ctx_addr + 60, write_ptr);
+  
+  // Return success
   ctx.r3.u32 = 0;
 }
 
