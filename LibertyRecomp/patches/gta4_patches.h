@@ -94,3 +94,23 @@ namespace GTA4SavePatches
     // Get save file path
     const char* GetSavePath();
 }
+
+// =============================================================================
+// Motion Control Patches - PlayStation controller motion sensing
+// =============================================================================
+namespace GTA4MotionPatches
+{
+    // Initialize motion control system
+    void Init();
+    
+    // Update motion state (called per frame)
+    void Update();
+    
+    // Motion sensor value access
+    void GetMotionSensorValues(float* outX, float* outY, float* outZ);
+    void GetPadOrientation(float* outPitch, float* outRoll);
+    
+    // Motion control preferences
+    void SetMotionControlPreference(bool enabled);
+    bool GetMotionControlPreference();
+}

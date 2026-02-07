@@ -309,52 +309,156 @@ CONFIG_DEFINE_ENUM_LOCALE(EControllerIcons)
     {
         ELanguage::English,
         {
-            { EControllerIcons::Auto,        { "Auto", "Auto: the game will determine which icons to use based on the current input device." } },
-            { EControllerIcons::Xbox,        { "Xbox", "" } },
-            { EControllerIcons::PlayStation, { "PlayStation", "" } }
+            { EControllerIcons::Auto,            { "Auto", "Auto: the game will determine which icons to use based on the current input device." } },
+            { EControllerIcons::Xbox360,         { "Xbox 360", "" } },
+            { EControllerIcons::XboxOne,         { "Xbox One", "" } },
+            { EControllerIcons::XboxSeriesX,     { "Xbox Series X", "" } },
+            { EControllerIcons::PlayStation3,    { "PlayStation 3", "" } },
+            { EControllerIcons::PlayStation4,    { "PlayStation 4", "" } },
+            { EControllerIcons::PlayStation5,    { "PlayStation 5", "" } },
+            { EControllerIcons::NintendoSwitch,  { "Nintendo Switch", "" } },
+            { EControllerIcons::SteamDeck,       { "Steam Deck", "" } },
+            { EControllerIcons::SteamController, { "Steam Controller", "" } }
         }
     },
     {
         ELanguage::Japanese,
         {
-            { EControllerIcons::Auto,        { "自動検出", "自動検出: コントローラーアイコンを使用している入力デバイスに応じて自動的に決定します" } },
-            { EControllerIcons::Xbox,        { "Xbox", "" } },
-            { EControllerIcons::PlayStation, { "PlayStation", "" } }
+            { EControllerIcons::Auto,            { "自動検出", "自動検出: コントローラーアイコンを使用している入力デバイスに応じて自動的に決定します" } },
+            { EControllerIcons::Xbox360,         { "Xbox 360", "" } },
+            { EControllerIcons::XboxOne,         { "Xbox One", "" } },
+            { EControllerIcons::XboxSeriesX,     { "Xbox Series X", "" } },
+            { EControllerIcons::PlayStation3,    { "PlayStation 3", "" } },
+            { EControllerIcons::PlayStation4,    { "PlayStation 4", "" } },
+            { EControllerIcons::PlayStation5,    { "PlayStation 5", "" } },
+            { EControllerIcons::NintendoSwitch,  { "Nintendo Switch", "" } },
+            { EControllerIcons::SteamDeck,       { "Steam Deck", "" } },
+            { EControllerIcons::SteamController, { "Steam Controller", "" } }
         }
     },
     {
         ELanguage::German,
         {
-            { EControllerIcons::Auto,        { "Auto", "Auto: Das Spiel erkennt automatisch deinen Controller um die Symbole dementsprechend anzupassen." } },
-            { EControllerIcons::Xbox,        { "Xbox", "" } },
-            { EControllerIcons::PlayStation, { "PlayStation", "" } }
+            { EControllerIcons::Auto,            { "Auto", "Auto: Das Spiel erkennt automatisch deinen Controller um die Symbole dementsprechend anzupassen." } },
+            { EControllerIcons::Xbox360,         { "Xbox 360", "" } },
+            { EControllerIcons::XboxOne,         { "Xbox One", "" } },
+            { EControllerIcons::XboxSeriesX,     { "Xbox Series X", "" } },
+            { EControllerIcons::PlayStation3,    { "PlayStation 3", "" } },
+            { EControllerIcons::PlayStation4,    { "PlayStation 4", "" } },
+            { EControllerIcons::PlayStation5,    { "PlayStation 5", "" } },
+            { EControllerIcons::NintendoSwitch,  { "Nintendo Switch", "" } },
+            { EControllerIcons::SteamDeck,       { "Steam Deck", "" } },
+            { EControllerIcons::SteamController, { "Steam Controller", "" } }
         }
     },
     {
         ELanguage::French,
         {
-            { EControllerIcons::Auto,        { "Auto", "Auto : le jeu déterminera automatiquement quelles icônes utiliser en fonction du périphérique d'entrée." } },
-            { EControllerIcons::Xbox,        { "Xbox", "" } },
-            { EControllerIcons::PlayStation, { "PlayStation", "" } }
+            { EControllerIcons::Auto,            { "Auto", "Auto : le jeu déterminera automatiquement quelles icônes utiliser en fonction du périphérique d'entrée." } },
+            { EControllerIcons::Xbox360,         { "Xbox 360", "" } },
+            { EControllerIcons::XboxOne,         { "Xbox One", "" } },
+            { EControllerIcons::XboxSeriesX,     { "Xbox Series X", "" } },
+            { EControllerIcons::PlayStation3,    { "PlayStation 3", "" } },
+            { EControllerIcons::PlayStation4,    { "PlayStation 4", "" } },
+            { EControllerIcons::PlayStation5,    { "PlayStation 5", "" } },
+            { EControllerIcons::NintendoSwitch,  { "Nintendo Switch", "" } },
+            { EControllerIcons::SteamDeck,       { "Steam Deck", "" } },
+            { EControllerIcons::SteamController, { "Steam Controller", "" } }
         }
     },
     {
         ELanguage::Spanish,
         {
-            { EControllerIcons::Auto,        { "Auto", "Auto: el juego determinará de forma automática qué iconos utilizar dependiendo del dispositivo de entrada actual." } },
-            { EControllerIcons::Xbox,        { "Xbox", "" } },
-            { EControllerIcons::PlayStation, { "PlayStation", "" } }
+            { EControllerIcons::Auto,            { "Auto", "Auto: el juego determinará de forma automática qué iconos utilizar dependiendo del dispositivo de entrada actual." } },
+            { EControllerIcons::Xbox360,         { "Xbox 360", "" } },
+            { EControllerIcons::XboxOne,         { "Xbox One", "" } },
+            { EControllerIcons::XboxSeriesX,     { "Xbox Series X", "" } },
+            { EControllerIcons::PlayStation3,    { "PlayStation 3", "" } },
+            { EControllerIcons::PlayStation4,    { "PlayStation 4", "" } },
+            { EControllerIcons::PlayStation5,    { "PlayStation 5", "" } },
+            { EControllerIcons::NintendoSwitch,  { "Nintendo Switch", "" } },
+            { EControllerIcons::SteamDeck,       { "Steam Deck", "" } },
+            { EControllerIcons::SteamController, { "Steam Controller", "" } }
         }
     },
     {
         ELanguage::Italian,
         {
-            { EControllerIcons::Auto,        { "Auto", "Auto: il gioco determinerà quali icone da utilizzare in base al dispositivo di input attuale." } },
-            { EControllerIcons::Xbox,        { "Xbox", "" } },
-            { EControllerIcons::PlayStation, { "PlayStation", "" } }
+            { EControllerIcons::Auto,            { "Auto", "Auto: il gioco determinerà quali icone da utilizzare in base al dispositivo di input attuale." } },
+            { EControllerIcons::Xbox360,         { "Xbox 360", "" } },
+            { EControllerIcons::XboxOne,         { "Xbox One", "" } },
+            { EControllerIcons::XboxSeriesX,     { "Xbox Series X", "" } },
+            { EControllerIcons::PlayStation3,    { "PlayStation 3", "" } },
+            { EControllerIcons::PlayStation4,    { "PlayStation 4", "" } },
+            { EControllerIcons::PlayStation5,    { "PlayStation 5", "" } },
+            { EControllerIcons::NintendoSwitch,  { "Nintendo Switch", "" } },
+            { EControllerIcons::SteamDeck,       { "Steam Deck", "" } },
+            { EControllerIcons::SteamController, { "Steam Controller", "" } }
         }
     }
 };
+
+// Motion Control Settings (PlayStation controllers with gyro/accelerometer)
+CONFIG_DEFINE_LOCALE(MotionControlsEnabled)
+{
+    { ELanguage::English,  { "Motion Controls", "Enable gyroscope and accelerometer features on supported controllers." } },
+    { ELanguage::Japanese, { "モーションコントロール", "対応コントローラーでジャイロスコープと加速度センサーを有効にします" } },
+    { ELanguage::German,   { "Bewegungssteuerung", "Aktiviere Gyroskop und Beschleunigungssensor für unterstützte Controller." } },
+    { ELanguage::French,   { "Contrôles de mouvement", "Active le gyroscope et l'accéléromètre sur les manettes compatibles." } },
+    { ELanguage::Spanish,  { "Controles de movimiento", "Habilita el giroscopio y el acelerómetro en mandos compatibles." } },
+    { ELanguage::Italian,  { "Controlli di movimento", "Abilita giroscopio e accelerometro sui controller supportati." } }
+};
+
+CONFIG_DEFINE_LOCALE(MotionSensitivity)
+{
+    { ELanguage::English,  { "Motion Sensitivity", "Adjust the sensitivity of motion controls." } },
+    { ELanguage::Japanese, { "モーション感度", "モーションコントロールの感度を調整します" } },
+    { ELanguage::German,   { "Bewegungsempfindlichkeit", "Passe die Empfindlichkeit der Bewegungssteuerung an." } },
+    { ELanguage::French,   { "Sensibilité de mouvement", "Ajuste la sensibilité des contrôles de mouvement." } },
+    { ELanguage::Spanish,  { "Sensibilidad de movimiento", "Ajusta la sensibilidad de los controles de movimiento." } },
+    { ELanguage::Italian,  { "Sensibilità del movimento", "Regola la sensibilità dei controlli di movimento." } }
+};
+
+CONFIG_DEFINE_LOCALE(MotionAiming)
+{
+    { ELanguage::English,  { "Motion Aiming", "Use gyroscope for precise aiming adjustments." } },
+    { ELanguage::Japanese, { "モーションエイム", "ジャイロスコープを使用して精密なエイム調整を行います" } },
+    { ELanguage::German,   { "Bewegungszielen", "Nutze das Gyroskop für präzise Zielanpassungen." } },
+    { ELanguage::French,   { "Visée de mouvement", "Utilise le gyroscope pour des ajustements de visée précis." } },
+    { ELanguage::Spanish,  { "Apuntado con movimiento", "Usa el giroscopio para ajustes precisos de puntería." } },
+    { ELanguage::Italian,  { "Mira con movimento", "Usa il giroscopio per regolazioni precise della mira." } }
+};
+
+CONFIG_DEFINE_LOCALE(MotionSteering)
+{
+    { ELanguage::English,  { "Motion Steering", "Tilt controller to steer vehicles." } },
+    { ELanguage::Japanese, { "モーションステアリング", "コントローラーを傾けて車両を操縦します" } },
+    { ELanguage::German,   { "Bewegungslenkung", "Kippe den Controller um Fahrzeuge zu lenken." } },
+    { ELanguage::French,   { "Direction de mouvement", "Inclinez la manette pour diriger les véhicules." } },
+    { ELanguage::Spanish,  { "Dirección con movimiento", "Inclina el mando para conducir vehículos." } },
+    { ELanguage::Italian,  { "Sterzo con movimento", "Inclina il controller per sterzare i veicoli." } }
+};
+
+CONFIG_DEFINE_LOCALE(MotionReload)
+{
+    { ELanguage::English,  { "Motion Reload", "Shake controller to reload weapons (like PS3 version)." } },
+    { ELanguage::Japanese, { "モーションリロード", "コントローラーを振って武器をリロードします（PS3版と同様）" } },
+    { ELanguage::German,   { "Bewegungsnachladen", "Schüttle den Controller um Waffen nachzuladen (wie bei der PS3 Version)." } },
+    { ELanguage::French,   { "Rechargement de mouvement", "Secouez la manette pour recharger les armes (comme sur PS3)." } },
+    { ELanguage::Spanish,  { "Recarga con movimiento", "Agita el mando para recargar armas (como en PS3)." } },
+    { ELanguage::Italian,  { "Ricarica con movimento", "Scuoti il controller per ricaricare le armi (come su PS3)." } }
+};
+
+CONFIG_DEFINE_LOCALE(MotionHelicopter)
+{
+    { ELanguage::English,  { "Motion Helicopter", "Tilt controller to control helicopters." } },
+    { ELanguage::Japanese, { "モーションヘリコプター", "コントローラーを傾けてヘリコプターを操縦します" } },
+    { ELanguage::German,   { "Bewegungshelikopter", "Kippe den Controller um Helikopter zu steuern." } },
+    { ELanguage::French,   { "Hélicoptère de mouvement", "Inclinez la manette pour contrôler les hélicoptères." } },
+    { ELanguage::Spanish,  { "Helicóptero con movimiento", "Inclina el mando para controlar helicópteros." } },
+    { ELanguage::Italian,  { "Elicottero con movimento", "Inclina il controller per controllare gli elicotteri." } }
+};
+
 CONFIG_DEFINE_LOCALE(LightDash)
 {
     { ELanguage::English,  { "Light Dash", "Change how Light Dash is activated for Sonic and Shadow." } },

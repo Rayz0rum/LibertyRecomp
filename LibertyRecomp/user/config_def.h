@@ -66,6 +66,14 @@ CONFIG_DEFINE_LOCALISED("Input", float, MouseSensitivityY, 1.0f, false);
 CONFIG_DEFINE_LOCALISED("Input", bool, MouseInvertY, false, false);
 CONFIG_DEFINE_LOCALISED("Input", float, MouseSmoothing, 0.5f, false);
 
+// Motion Control Settings (PlayStation controllers with gyro/accelerometer)
+CONFIG_DEFINE_LOCALISED("Input", bool, MotionControlsEnabled, true, false);
+CONFIG_DEFINE_LOCALISED("Input", float, MotionSensitivity, 1.0f, false);
+CONFIG_DEFINE_LOCALISED("Input", bool, MotionAiming, false, false);        // Use gyro for aiming fine-tuning
+CONFIG_DEFINE_LOCALISED("Input", bool, MotionSteering, false, false);      // Tilt to steer vehicles
+CONFIG_DEFINE_LOCALISED("Input", bool, MotionReload, true, false);         // Shake to reload (like PS3)
+CONFIG_DEFINE_LOCALISED("Input", bool, MotionHelicopter, false, false);    // Tilt to control helicopters
+
 CONFIG_DEFINE_LOCALISED("Audio", float, MasterVolume, 1.0f, false);
 CONFIG_DEFINE_LOCALISED("Audio", float, MusicVolume, 0.6f, false);
 CONFIG_DEFINE_LOCALISED("Audio", float, EffectsVolume, 0.6f, false);

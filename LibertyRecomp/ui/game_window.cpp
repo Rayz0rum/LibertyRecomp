@@ -7,6 +7,10 @@
 #include <sdl_listener.h>
 #include <SDL_syswm.h>
 
+#if defined(__APPLE__)
+#include <CoreGraphics/CoreGraphics.h>
+#endif
+
 #if _WIN32
 #include <dwmapi.h>
 #include <shellscalingapi.h>
@@ -154,8 +158,18 @@ int Window_OnSDLEvent(void*, SDL_Event* event)
     return 0;
 }
 
-void GameWindow::Init(const char* sdlVideoDriver)
+bool GameWindow::Init(const char* sdlVideoDriver)
 {
+#if defined(__APPLE__)
+    uint32_t displayCount = 0;
+    CGError cgErr = CGGetActiveDisplayList(0, nullptr, &displayCount);
+    if (cgErr != kCGErrorSuccess || displayCount == 0)
+    {
+        LOGFN_ERROR("No active display/WindowServer access (CGError={}, count={}). Aborting video init.", (int)cgErr, displayCount);
+        return false;
+    }
+#endif
+
 #ifdef __linux__
     SDL_SetHint("SDL_APP_ID", "io.github.ozordi.libertyrecomp");
 #endif
@@ -170,6 +184,8 @@ void GameWindow::Init(const char* sdlVideoDriver)
 
     if (videoDriverName)
         LOGFN("SDL video driver: \"{}\"", videoDriverName);
+    else
+        LOGFN_ERROR("Failed to initialise any SDL video driver: {}", SDL_GetError());
 
     SDL_EventState(SDL_SYSWMEVENT, SDL_ENABLE);
     SDL_AddEventWatch(Window_OnSDLEvent, s_pWindow);
@@ -254,6 +270,11 @@ void GameWindow::Init(const char* sdlVideoDriver)
         GameWindow::ResetDimensions();
 
     s_pWindow = SDL_CreateWindow("Liberty Recompiled", s_x, s_y, s_width, s_height, GetWindowFlags());
+    if (!s_pWindow)
+    {
+        LOGFN_ERROR("SDL_CreateWindow failed: {}", SDL_GetError());
+        return false;
+    }
 
     if (IsFullscreen())
         SDL_ShowCursor(SDL_DISABLE);
@@ -266,7 +287,11 @@ void GameWindow::Init(const char* sdlVideoDriver)
 
     SDL_SysWMinfo info;
     SDL_VERSION(&info.version);
-    SDL_GetWindowWMInfo(s_pWindow, &info);
+    if (!SDL_GetWindowWMInfo(s_pWindow, &info))
+    {
+        LOGFN_ERROR("SDL_GetWindowWMInfo failed: {}", SDL_GetError());
+        return false;
+    }
 
 #if defined(_WIN32)
     s_renderWindow = info.info.win.window;
@@ -290,6 +315,7 @@ void GameWindow::Init(const char* sdlVideoDriver)
     SetTitleBarColour();
 
     SDL_ShowWindow(s_pWindow);
+    return true;
 }
 
 void GameWindow::Update()

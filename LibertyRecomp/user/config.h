@@ -65,8 +65,15 @@ enum class ESlidingAttack : uint32_t
 enum class EControllerIcons : uint32_t
 {
     Auto,
-    Xbox,
-    PlayStation
+    Xbox360,
+    XboxOne,
+    XboxSeriesX,
+    PlayStation3,
+    PlayStation4,
+    PlayStation5,
+    NintendoSwitch,
+    SteamDeck,
+    SteamController
 };
 
 enum class EChannelConfiguration : uint32_t

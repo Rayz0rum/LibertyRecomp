@@ -3,17 +3,25 @@
 #include <user/config.h>
 #include <hid/hid.h>
 #include <hid/mouse_camera.h>
+#include <hid/dualsense.h>
 #include <os/logger.h>
 #include <ui/game_window.h>
 #include <kernel/xdm.h>
 #include <kernel/xam.h>
+#include <kernel/button_prompts.h>
 #include <app.h>
 #include <chrono>
 #include <queue>
 #include <mutex>
+#include <cstring>
+#include <cmath>
 
 #define TRANSLATE_INPUT(S, X) SDL_GameControllerGetButton(controller, S) << FirstBitLow(X)
 #define VIBRATION_TIMEOUT_MS 5000
+
+// Motion sensing state (global for active controller)
+static hid::MotionState g_motionState{};
+static bool g_motionSensorEnabled = false;
 
 class Controller
 {
@@ -24,6 +32,17 @@ public:
     XAMINPUT_GAMEPAD state{};
     XAMINPUT_VIBRATION vibration{ 0, 0 };
     int index{};
+    
+    // Motion sensor state
+    bool hasGyro{};
+    bool hasAccel{};
+    bool motionEnabled{};
+    
+    // For orientation integration
+    float integratedPitch{};
+    float integratedRoll{};
+    float integratedYaw{};
+    uint64_t lastMotionTimestamp{};
 
     Controller() = default;
 
@@ -39,6 +58,14 @@ public:
 
         joystick = SDL_GameControllerGetJoystick(controller);
         id = SDL_JoystickInstanceID(joystick);
+        
+        // Check for motion sensor support
+        hasGyro = SDL_GameControllerHasSensor(controller, SDL_SENSOR_GYRO) == SDL_TRUE;
+        hasAccel = SDL_GameControllerHasSensor(controller, SDL_SENSOR_ACCEL) == SDL_TRUE;
+        
+        if (hasGyro || hasAccel) {
+            LOGFN("Motion sensors detected - Gyro: {}, Accel: {}", hasGyro ? "Yes" : "No", hasAccel ? "Yes" : "No");
+        }
     }
 
     SDL_GameControllerType GetControllerType() const
@@ -76,17 +103,132 @@ public:
     {
         if (!controller)
             return;
+        
+        // Disable motion sensors before closing
+        if (motionEnabled) {
+            SetMotionEnabled(false);
+        }
 
         SDL_GameControllerClose(controller);
 
         controller = nullptr;
         joystick = nullptr;
         id = -1;
+        hasGyro = false;
+        hasAccel = false;
+        motionEnabled = false;
     }
 
     bool CanPoll()
     {
         return controller;
+    }
+    
+    // Enable/disable motion sensors
+    void SetMotionEnabled(bool enabled)
+    {
+        if (!controller) return;
+        if (enabled == motionEnabled) return;
+        
+        if (enabled) {
+            if (hasGyro) {
+                SDL_GameControllerSetSensorEnabled(controller, SDL_SENSOR_GYRO, SDL_TRUE);
+            }
+            if (hasAccel) {
+                SDL_GameControllerSetSensorEnabled(controller, SDL_SENSOR_ACCEL, SDL_TRUE);
+            }
+            LOG_INFO("Motion sensors enabled");
+        } else {
+            if (hasGyro) {
+                SDL_GameControllerSetSensorEnabled(controller, SDL_SENSOR_GYRO, SDL_FALSE);
+            }
+            if (hasAccel) {
+                SDL_GameControllerSetSensorEnabled(controller, SDL_SENSOR_ACCEL, SDL_FALSE);
+            }
+            LOG_INFO("Motion sensors disabled");
+        }
+        
+        motionEnabled = enabled;
+        
+        // Reset integration when enabling
+        if (enabled) {
+            integratedPitch = 0.0f;
+            integratedRoll = 0.0f;
+            integratedYaw = 0.0f;
+            lastMotionTimestamp = SDL_GetTicks64() * 1000; // Convert to microseconds
+        }
+    }
+    
+    // Poll motion sensors
+    void PollMotion(hid::MotionState& outState)
+    {
+        if (!controller || !motionEnabled) {
+            outState = {};
+            return;
+        }
+        
+        outState.hasGyro = hasGyro;
+        outState.hasAccel = hasAccel;
+        outState.isCalibrated = true; // SDL handles calibration
+        outState.timestamp = SDL_GetTicks64() * 1000; // Microseconds
+        
+        // Read gyroscope (radians/second)
+        if (hasGyro) {
+            float gyroData[3] = {0, 0, 0};
+            if (SDL_GameControllerGetSensorData(controller, SDL_SENSOR_GYRO, gyroData, 3) == 0) {
+                outState.gyroX = gyroData[0];
+                outState.gyroY = gyroData[1];
+                outState.gyroZ = gyroData[2];
+            }
+        }
+        
+        // Read accelerometer (m/s² - divide by 9.81 to get g-forces)
+        if (hasAccel) {
+            float accelData[3] = {0, 0, 0};
+            if (SDL_GameControllerGetSensorData(controller, SDL_SENSOR_ACCEL, accelData, 3) == 0) {
+                // SDL returns m/s², convert to g-forces
+                constexpr float GRAVITY = 9.81f;
+                outState.accelX = accelData[0] / GRAVITY;
+                outState.accelY = accelData[1] / GRAVITY;
+                outState.accelZ = accelData[2] / GRAVITY;
+            }
+        }
+        
+        // Calculate derived orientation using complementary filter
+        // This combines gyro integration (fast but drifts) with accelerometer (noisy but absolute)
+        float dt = 0.0f;
+        if (lastMotionTimestamp > 0) {
+            dt = (outState.timestamp - lastMotionTimestamp) / 1000000.0f; // Convert μs to seconds
+        }
+        lastMotionTimestamp = outState.timestamp;
+        
+        if (dt > 0.0f && dt < 0.1f) { // Sanity check on delta time
+            // Integrate gyroscope for orientation
+            integratedPitch += outState.gyroX * dt;
+            integratedRoll += outState.gyroZ * dt;
+            integratedYaw += outState.gyroY * dt;
+            
+            // Calculate pitch/roll from accelerometer (absolute reference)
+            float accelPitch = atan2f(-outState.accelY, sqrtf(outState.accelX * outState.accelX + outState.accelZ * outState.accelZ));
+            float accelRoll = atan2f(outState.accelX, -outState.accelZ);
+            
+            // Complementary filter: 98% gyro, 2% accelerometer
+            constexpr float ALPHA = 0.98f;
+            integratedPitch = ALPHA * integratedPitch + (1.0f - ALPHA) * accelPitch;
+            integratedRoll = ALPHA * integratedRoll + (1.0f - ALPHA) * accelRoll;
+            // Yaw cannot be corrected without magnetometer, so it will drift
+        }
+        
+        outState.pitch = integratedPitch;
+        outState.roll = integratedRoll;
+        outState.yaw = integratedYaw;
+    }
+    
+    void ResetMotionOrientation()
+    {
+        integratedPitch = 0.0f;
+        integratedRoll = 0.0f;
+        integratedYaw = 0.0f;
     }
 
     void PollAxis()
@@ -202,6 +344,68 @@ inline Controller* FindController(int which)
     return nullptr;
 }
 
+// Maps SDL_GameControllerType to EInputDeviceExplicit with name-based detection for special controllers
+static hid::EInputDeviceExplicit MapControllerType(SDL_GameControllerType sdlType, const char* controllerName)
+{
+    // First check name for special controllers that SDL doesn't have dedicated types for
+    if (controllerName)
+    {
+        // Steam Deck detection
+        if (strstr(controllerName, "Steam Deck") != nullptr ||
+            strstr(controllerName, "Deck Controller") != nullptr)
+        {
+            return hid::EInputDeviceExplicit::SteamDeck;
+        }
+        
+        // Steam Controller detection
+        if (strstr(controllerName, "Steam Controller") != nullptr ||
+            strstr(controllerName, "Steam Virtual Gamepad") != nullptr)
+        {
+            return hid::EInputDeviceExplicit::SteamController;
+        }
+        
+        // Xbox Series X detection (check name since SDL reports as XboxOne)
+        if (strstr(controllerName, "Xbox Series") != nullptr ||
+            strstr(controllerName, "Xbox Wireless Controller") != nullptr)
+        {
+            return hid::EInputDeviceExplicit::XboxSeriesX;
+        }
+    }
+    
+    // Fall back to SDL type mapping
+    switch (sdlType)
+    {
+        case SDL_CONTROLLER_TYPE_XBOX360:
+            return hid::EInputDeviceExplicit::Xbox360;
+        case SDL_CONTROLLER_TYPE_XBOXONE:
+            return hid::EInputDeviceExplicit::XboxOne;
+        case SDL_CONTROLLER_TYPE_PS3:
+            return hid::EInputDeviceExplicit::DualShock3;
+        case SDL_CONTROLLER_TYPE_PS4:
+            return hid::EInputDeviceExplicit::DualShock4;
+        case SDL_CONTROLLER_TYPE_PS5:
+            return hid::EInputDeviceExplicit::DualSense;
+        case SDL_CONTROLLER_TYPE_NINTENDO_SWITCH_PRO:
+            return hid::EInputDeviceExplicit::SwitchPro;
+        case SDL_CONTROLLER_TYPE_NINTENDO_SWITCH_JOYCON_LEFT:
+            return hid::EInputDeviceExplicit::SwitchJCLeft;
+        case SDL_CONTROLLER_TYPE_NINTENDO_SWITCH_JOYCON_RIGHT:
+            return hid::EInputDeviceExplicit::SwitchJCRight;
+        case SDL_CONTROLLER_TYPE_NINTENDO_SWITCH_JOYCON_PAIR:
+            return hid::EInputDeviceExplicit::SwitchJCPair;
+        case SDL_CONTROLLER_TYPE_VIRTUAL:
+            return hid::EInputDeviceExplicit::Virtual;
+        case SDL_CONTROLLER_TYPE_AMAZON_LUNA:
+            return hid::EInputDeviceExplicit::Luna;
+        case SDL_CONTROLLER_TYPE_GOOGLE_STADIA:
+            return hid::EInputDeviceExplicit::Stadia;
+        case SDL_CONTROLLER_TYPE_NVIDIA_SHIELD:
+            return hid::EInputDeviceExplicit::NvShield;
+        default:
+            return hid::EInputDeviceExplicit::Unknown;
+    }
+}
+
 static void SetControllerInputDevice(Controller* controller)
 {
     g_activeController = controller;
@@ -213,8 +417,8 @@ static void SetControllerInputDevice(Controller* controller)
     hid::g_inputDevice = controller->GetInputDevice();
     hid::g_inputDeviceController = hid::g_inputDevice;
 
-    auto controllerType = (hid::EInputDeviceExplicit)controller->GetControllerType();
     auto controllerName = controller->GetControllerName();
+    auto controllerType = MapControllerType(controller->GetControllerType(), controllerName);
 
     // Only proceed if the controller type changes.
     if (hid::g_inputDeviceExplicit != controllerType)
@@ -229,6 +433,9 @@ static void SetControllerInputDevice(Controller* controller)
         {
             LOGFN("Detected controller: {}", controllerName);
         }
+        
+        // Notify button prompts system to refresh cache for the new controller type
+        ButtonPrompts::RefreshCache();
     }
     
     // Notify game of input device change
@@ -695,4 +902,187 @@ void hid::ClearKeystrokeQueue(uint8_t userIndex) {
             s_keystrokeQueues[userIndex].pop();
         }
     }
+}
+
+// ============================================================================
+// Motion Sensing API Implementation
+// ============================================================================
+
+bool hid::HasMotionSensor()
+{
+    if (!g_activeController)
+        return false;
+    
+    return g_activeController->hasGyro || g_activeController->hasAccel;
+}
+
+void hid::SetMotionSensorEnabled(bool enabled)
+{
+    g_motionSensorEnabled = enabled;
+    
+    if (g_activeController) {
+        g_activeController->SetMotionEnabled(enabled);
+    }
+}
+
+bool hid::IsMotionSensorEnabled()
+{
+    return g_motionSensorEnabled;
+}
+
+const hid::MotionState& hid::GetMotionState()
+{
+    return g_motionState;
+}
+
+void hid::UpdateMotionState()
+{
+    if (!g_activeController || !g_motionSensorEnabled) {
+        g_motionState = {};
+        return;
+    }
+    
+    g_activeController->PollMotion(g_motionState);
+}
+
+void hid::ResetMotionOrientation()
+{
+    if (g_activeController) {
+        g_activeController->ResetMotionOrientation();
+    }
+    
+    g_motionState.pitch = 0.0f;
+    g_motionState.roll = 0.0f;
+    g_motionState.yaw = 0.0f;
+}
+
+// ============================================================================
+// Light Bar API Implementation (DualShock 4 / DualSense)
+// ============================================================================
+
+bool hid::HasLightBar()
+{
+    if (!g_activeController || !g_activeController->controller)
+        return false;
+    
+    // DualShock 4 and DualSense have light bars
+    auto type = SDL_GameControllerGetType(g_activeController->controller);
+    return type == SDL_CONTROLLER_TYPE_PS4 || type == SDL_CONTROLLER_TYPE_PS5;
+}
+
+void hid::SetLightBarColor(uint8_t r, uint8_t g, uint8_t b)
+{
+    if (!g_activeController || !g_activeController->controller)
+        return;
+    
+    g_activeController->SetLED(r, g, b);
+}
+
+// ============================================================================
+// Touchpad API Implementation (DualShock 4 / DualSense)
+// ============================================================================
+
+static hid::TouchpadState g_touchpadState{};
+static float g_lastTouchX = 0.0f;
+static float g_lastTouchY = 0.0f;
+static uint64_t g_lastTouchTime = 0;
+
+bool hid::HasTouchpad()
+{
+    if (!g_activeController || !g_activeController->controller)
+        return false;
+    
+    // DualShock 4 and DualSense have touchpads
+    auto type = SDL_GameControllerGetType(g_activeController->controller);
+    return type == SDL_CONTROLLER_TYPE_PS4 || type == SDL_CONTROLLER_TYPE_PS5;
+}
+
+const hid::TouchpadState& hid::GetTouchpadState()
+{
+    return g_touchpadState;
+}
+
+void hid::UpdateTouchpadState()
+{
+    if (!g_activeController || !g_activeController->controller || !HasTouchpad()) {
+        g_touchpadState = {};
+        return;
+    }
+    
+#if SDL_VERSION_ATLEAST(2, 0, 14)
+    // Get touchpad state from SDL (touchpad API added in 2.0.14)
+    Uint8 state;
+    float x, y, pressure;
+    
+    // Finger 0
+    if (SDL_GameControllerGetTouchpadFinger(g_activeController->controller, 0, 0, &state, &x, &y, &pressure) == 0) {
+        g_touchpadState.finger0Down = (state == SDL_PRESSED);
+        g_touchpadState.finger0X = x;
+        g_touchpadState.finger0Y = y;
+        
+        // Calculate swipe velocity
+        if (g_touchpadState.finger0Down) {
+            uint64_t now = SDL_GetTicks64();
+            float dt = (now - g_lastTouchTime) / 1000.0f;
+            
+            if (dt > 0.0f && dt < 0.1f && g_lastTouchTime > 0) {
+                g_touchpadState.swipeVelocityX = (x - g_lastTouchX) / dt;
+                g_touchpadState.swipeVelocityY = (y - g_lastTouchY) / dt;
+                
+                // Detect swipe gesture (velocity threshold)
+                float swipeSpeed = sqrtf(g_touchpadState.swipeVelocityX * g_touchpadState.swipeVelocityX +
+                                         g_touchpadState.swipeVelocityY * g_touchpadState.swipeVelocityY);
+                g_touchpadState.isSwiping = swipeSpeed > 2.0f;
+            }
+            
+            g_lastTouchX = x;
+            g_lastTouchY = y;
+            g_lastTouchTime = now;
+        } else {
+            g_touchpadState.swipeVelocityX = 0.0f;
+            g_touchpadState.swipeVelocityY = 0.0f;
+            g_touchpadState.isSwiping = false;
+            g_lastTouchTime = 0;
+        }
+    }
+    
+    // Finger 1 (multi-touch)
+    if (SDL_GameControllerGetTouchpadFinger(g_activeController->controller, 0, 1, &state, &x, &y, &pressure) == 0) {
+        g_touchpadState.finger1Down = (state == SDL_PRESSED);
+        g_touchpadState.finger1X = x;
+        g_touchpadState.finger1Y = y;
+    }
+#else
+    // SDL version too old for touchpad support
+    g_touchpadState = {};
+#endif
+}
+
+// ============================================================================
+// DualSense Adaptive Trigger API Implementation
+// ============================================================================
+
+bool hid::HasAdaptiveTriggers()
+{
+    if (!g_activeController || !g_activeController->controller)
+        return false;
+    
+    // Only DualSense has adaptive triggers
+    auto type = SDL_GameControllerGetType(g_activeController->controller);
+    return type == SDL_CONTROLLER_TYPE_PS5;
+}
+
+void hid::InitDualSense()
+{
+    DualSense::Initialize();
+}
+
+void hid::UpdateDualSense()
+{
+    DualSense::Update();
+}
+
+void hid::ShutdownDualSense()
+{
+    DualSense::Shutdown();
 }

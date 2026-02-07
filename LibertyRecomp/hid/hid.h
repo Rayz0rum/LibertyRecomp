@@ -16,6 +16,7 @@ namespace hid
         Unknown,
         Xbox360,
         XboxOne,
+        XboxSeriesX,
         DualShock3,
         DualShock4,
         SwitchPro,
@@ -26,7 +27,9 @@ namespace hid
         NvShield,
         SwitchJCLeft,
         SwitchJCRight,
-        SwitchJCPair
+        SwitchJCPair,
+        SteamDeck,
+        SteamController
     };
 
     extern EInputDevice g_inputDevice;
@@ -62,4 +65,113 @@ namespace hid
     void EnqueueKeystroke(const KeystrokeEvent& event);
     bool DequeueKeystroke(uint8_t userIndex, KeystrokeEvent& outEvent);
     void ClearKeystrokeQueue(uint8_t userIndex);
+    
+    // ========================================================================
+    // Motion Sensing (Gyroscope/Accelerometer) Support
+    // ========================================================================
+    // For PlayStation controllers (DualShock 3/4, DualSense) and Switch Pro
+    // Provides gyroscope (angular velocity) and accelerometer (linear acceleration) data
+    
+    struct MotionState {
+        // Gyroscope - angular velocity in radians/second
+        // X = pitch rate (nose up/down), Y = yaw rate (turn left/right), Z = roll rate
+        float gyroX;
+        float gyroY;
+        float gyroZ;
+        
+        // Accelerometer - linear acceleration in g-forces (1g = 9.81 m/s²)
+        // X = left/right, Y = forward/backward, Z = up/down
+        // When controller is flat and still: X≈0, Y≈0, Z≈-1 (gravity)
+        float accelX;
+        float accelY;
+        float accelZ;
+        
+        // Derived orientation (calculated from gyro integration + accel correction)
+        float pitch;  // Forward/backward tilt in radians
+        float roll;   // Left/right tilt in radians
+        float yaw;    // Heading/rotation in radians (requires magnetometer or drift)
+        
+        // Sensor availability flags
+        bool hasGyro;
+        bool hasAccel;
+        bool isCalibrated;
+        
+        // Timestamp for sensor fusion (microseconds)
+        uint64_t timestamp;
+    };
+    
+    // Check if current controller supports motion sensing
+    bool HasMotionSensor();
+    
+    // Enable/disable motion sensor polling (may affect battery life)
+    void SetMotionSensorEnabled(bool enabled);
+    bool IsMotionSensorEnabled();
+    
+    // Get current motion state
+    const MotionState& GetMotionState();
+    
+    // Poll motion sensors (called from input update loop)
+    void UpdateMotionState();
+    
+    // Reset gyro orientation (recalibrate to current position)
+    void ResetMotionOrientation();
+    
+    // ========================================================================
+    // Light Bar Support (DualShock 4 / DualSense)
+    // ========================================================================
+    
+    // Check if current controller has a light bar
+    bool HasLightBar();
+    
+    // Set light bar color (RGB 0-255)
+    void SetLightBarColor(uint8_t r, uint8_t g, uint8_t b);
+    
+    // ========================================================================
+    // Touchpad Support (DualShock 4 / DualSense)
+    // ========================================================================
+    
+    struct TouchpadState {
+        // Finger 0 state
+        bool finger0Down;
+        float finger0X;  // 0.0 (left) to 1.0 (right)
+        float finger0Y;  // 0.0 (top) to 1.0 (bottom)
+        
+        // Finger 1 state (for multi-touch)
+        bool finger1Down;
+        float finger1X;
+        float finger1Y;
+        
+        // Gesture detection
+        bool isTapping;
+        bool isSwiping;
+        float swipeVelocityX;
+        float swipeVelocityY;
+    };
+    
+    // Check if current controller has a touchpad
+    bool HasTouchpad();
+    
+    // Get current touchpad state
+    const TouchpadState& GetTouchpadState();
+    
+    // Update touchpad state (called from input update loop)
+    void UpdateTouchpadState();
+    
+    // ========================================================================
+    // DualSense Adaptive Trigger Support
+    // ========================================================================
+    // For DualSense (PS5) controllers - provides trigger resistance effects
+    // and enhanced HD haptic feedback. See hid/dualsense.h for full API.
+    
+    // Check if current controller is DualSense with adaptive trigger support
+    bool HasAdaptiveTriggers();
+    
+    // Initialize DualSense subsystem (call once at startup)
+    void InitDualSense();
+    
+    // Update DualSense state (call each frame in main loop)
+    void UpdateDualSense();
+    
+    // Shutdown DualSense subsystem
+    void ShutdownDualSense();
 }

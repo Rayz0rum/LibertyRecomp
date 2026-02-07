@@ -165,18 +165,14 @@ Liberty Recompiled supports several command-line arguments for troubleshooting a
 │      ├── Linux: HLSL → SPIR-V (DXC)                                    │
 │      └── macOS: HLSL → AIR (Metal compiler)                            │
 │                                                                         │
-│  11. MULTIPLAYER SETUP (Optional)                                       │
-│      User selects multiplayer backend:                                 │
-│      ├── Community Server (Recommended)                                │
-│      ├── Firebase (Self-Hosted)                                        │
-│      └── LAN Only                                                      │
-│                                                                         │
-│  12. FINALIZE                                                           │
+│  11. FINALIZE                                                           │
 │      ├── Write shader_cache.marker                                     │
 │      ├── Save installed TU version to config                           │
-│      ├── Save multiplayer backend choice to config                     │
 │      ├── Clean up temp files                                           │
 │      └── Signal completion                                             │
+│                                                                         │
+│  Note: Multiplayer backend is configured in settings,                  │
+│        not during installation. Default is Community Server.           │
 │                                                                         │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
@@ -510,28 +506,6 @@ LibertyRecomp/kernel/io/
 ```
 
 ---
-
----
-
-## Mod Support
-
-Liberty Recompiled includes built-in support for mods through a **FusionFix-compatible file overlay system**.
-
-### Quick Setup
-
-1. Create an `update/` folder next to the LibertyRecomp executable
-2. Place mod files inside, mirroring the game's folder structure
-3. Launch the game - mod files automatically override base files
-
-### Supported Locations
-
-| Priority | Location | Description |
-|----------|----------|-------------|
-| 100 | `mods/update/` | Highest priority |
-| 50 | `update/` | Standard FusionFix location |
-| 40 | `GTAIV.EFLC.FusionFix/update/` | Alternative location |
-
-For detailed mod support documentation, see [MOD_SUPPORT.md](MOD_SUPPORT.md).
 
 ---
 

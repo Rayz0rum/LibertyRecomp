@@ -69,6 +69,7 @@ namespace GTAIV {
 #include <ui/options_menu.h>
 #include <ui/game_window.h>
 #include <ui/black_bar.h>
+#include <ui/main_menu.h>
 #include <patches/aspect_ratio_patches.h>
 #include <user/config.h>
 #include <sdl_listener.h>
@@ -2038,7 +2039,11 @@ bool Video::CreateHostDevice(const char *sdlVideoDriver, bool graphicsApiRetry)
     ImGui::CreateContext();
     ImPlot::CreateContext();
 
-    GameWindow::Init(sdlVideoDriver);
+    if (!GameWindow::Init(sdlVideoDriver))
+    {
+        LOG_ERROR("Game window initialization failed.");
+        return false;
+    }
 
 #if defined(LIBERTY_RECOMP_D3D12)
     g_backend = (DetectWine() || Config::GraphicsAPI == EGraphicsAPI::Vulkan) ? Backend::VULKAN : Backend::D3D12;
@@ -3125,27 +3130,32 @@ static void DrawImGui()
     // ImGui doesn't know that we center the screen for specific aspect ratio
     // settings, which causes mouse events to not work correctly. To fix this, 
     // we can adjust the mouse events before ImGui processes them.
-    uint32_t width = g_swapChain->getWidth();
-    uint32_t height = g_swapChain->getHeight();
-    float mousePosScaleX = float(width) / float(GameWindow::s_width);
-    float mousePosScaleY = float(height) / float(GameWindow::s_height);
-    float mousePosOffsetX = (width - Video::s_viewportWidth) / 2.0f;
-    float mousePosOffsetY = (height - Video::s_viewportHeight) / 2.0f;
-    for (int i = 0; i < io.Ctx->InputEventsQueue.Size; i++)
+    // Skip this adjustment during main menu / installer as it can cause issues
+    // when the viewport equals the swap chain size.
+    if (!MainMenu::s_isVisible && !InstallerWizard::s_isVisible)
     {
-        auto& e = io.Ctx->InputEventsQueue[i];
-        if (e.Type == ImGuiInputEventType_MousePos)
+        uint32_t width = g_swapChain->getWidth();
+        uint32_t height = g_swapChain->getHeight();
+        float mousePosScaleX = float(width) / float(GameWindow::s_width);
+        float mousePosScaleY = float(height) / float(GameWindow::s_height);
+        float mousePosOffsetX = (width - Video::s_viewportWidth) / 2.0f;
+        float mousePosOffsetY = (height - Video::s_viewportHeight) / 2.0f;
+        for (int i = 0; i < io.Ctx->InputEventsQueue.Size; i++)
         {
-            if (e.MousePos.PosX != -FLT_MAX)
+            auto& e = io.Ctx->InputEventsQueue[i];
+            if (e.Type == ImGuiInputEventType_MousePos)
             {
-                e.MousePos.PosX *= mousePosScaleX;
-                e.MousePos.PosX -= mousePosOffsetX;
-            }
+                if (e.MousePos.PosX != -FLT_MAX)
+                {
+                    e.MousePos.PosX *= mousePosScaleX;
+                    e.MousePos.PosX -= mousePosOffsetX;
+                }
 
-            if (e.MousePos.PosY != -FLT_MAX)
-            {
-                e.MousePos.PosY *= mousePosScaleY;
-                e.MousePos.PosY -= mousePosOffsetY;
+                if (e.MousePos.PosY != -FLT_MAX)
+                {
+                    e.MousePos.PosY *= mousePosScaleY;
+                    e.MousePos.PosY -= mousePosOffsetY;
+                }
             }
         }
     }
@@ -3170,6 +3180,7 @@ static void DrawImGui()
     ImGui::End();
 #endif
 
+    MainMenu::Draw();  // Main menu UI (must be first so other overlays draw on top)
     AchievementMenu::Draw();
     OptionsMenu::Draw();
     AchievementOverlay::Draw();
@@ -3642,8 +3653,8 @@ void Video::Present()
     }
 
     // ImGui has threading issues during gameplay - crashes with iterator assertions
-    // But the installer runs single-threaded, so enable ImGui for installer UI
-    if (InstallerWizard::s_isVisible)
+    // But the installer and main menu run single-threaded, so enable ImGui for their UI
+    if (InstallerWizard::s_isVisible || MainMenu::s_isVisible)
     {
         DrawImGui();
     }

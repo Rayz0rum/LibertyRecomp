@@ -1,4 +1,6 @@
 #include "gta4_patches.h"
+#include "gta4_motion_patches.h"
+#include "gta4_ds4_patches.h"
 #include "player_limit_patches.h"
 #include <api/Liberty.h>
 #include <gpu/video.h>
@@ -30,6 +32,16 @@ namespace GTA4Patches
         // Initialize extended multiplayer (64-player support)
         PlayerLimitPatches::Init();
         
+        // Initialize motion control support for PlayStation controllers
+        if (Config::MotionControlsEnabled) {
+            MotionPatches::Init();
+        }
+        
+        // Initialize DualShock 4 / DualSense features (light bar, touchpad)
+        if (hid::HasLightBar() || hid::HasTouchpad()) {
+            DS4Patches::Init();
+        }
+        
         LOG_INFO("GTA4Patches: Initialized (64-player multiplayer enabled)");
     }
     
@@ -37,6 +49,16 @@ namespace GTA4Patches
     {
         GTA4InputPatches::UpdateInput();
         GTA4AudioPatches::UpdateAudio(deltaTime);
+        
+        // Update motion controls if enabled
+        if (Config::MotionControlsEnabled && hid::HasMotionSensor()) {
+            MotionPatches::Update();
+        }
+        
+        // Update DualShock 4 / DualSense features
+        if (hid::HasLightBar() || hid::HasTouchpad()) {
+            DS4Patches::Update();
+        }
     }
 }
 
@@ -233,3 +255,40 @@ namespace GTA4SavePatches
 //     GTA4Patches::Update(App::s_deltaTime);
 //     __imp__sub_82YYYYYY(ctx, base);
 // }
+
+// =============================================================================
+// Motion Control Patches - Public API Wrappers
+// =============================================================================
+
+namespace GTA4MotionPatches
+{
+    void Init()
+    {
+        MotionPatches::Init();
+    }
+    
+    void Update()
+    {
+        MotionPatches::Update();
+    }
+    
+    void GetMotionSensorValues(float* outX, float* outY, float* outZ)
+    {
+        MotionPatches::GetMotionSensorValues(outX, outY, outZ);
+    }
+    
+    void GetPadOrientation(float* outPitch, float* outRoll)
+    {
+        MotionPatches::GetPadOrientation(outPitch, outRoll);
+    }
+    
+    void SetMotionControlPreference(bool enabled)
+    {
+        MotionPatches::SetMotionControlPreference(enabled);
+    }
+    
+    bool GetMotionControlPreference()
+    {
+        return MotionPatches::GetMotionControlPreference();
+    }
+}

@@ -37,6 +37,7 @@
 #include <os/registry.h>
 #include <ui/game_window.h>
 #include <ui/installer_wizard.h>
+#include <ui/main_menu.h>
 #include <mod/mod_loader.h>
 #include <preload_executable.h>
 #include <iostream>
@@ -134,6 +135,20 @@ static void InstallCrashHandlers() {
 }
 #endif
 // ============================================================================
+
+static void ShowVideoBackendErrorAndExit()
+{
+    if (GameWindow::s_pWindow)
+    {
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, GameWindow::GetTitle(), Localise("Video_BackendError").c_str(), GameWindow::s_pWindow);
+    }
+    else
+    {
+        fprintf(stderr, "[Main] Video backend initialization failed (no window available for message box).\n");
+        fflush(stderr);
+    }
+    std::_Exit(1);
+}
 
 void HostStartup()
 {
@@ -529,18 +544,6 @@ int main(int argc, char *argv[])
     }
 #endif
 
-    // Check the time since the last time an update was checked. Store the new time if the difference is more than six hours.
-    constexpr double TimeBetweenUpdateChecksInSeconds = 6 * 60 * 60;
-    time_t timeNow = std::time(nullptr);
-    double timeDifferenceSeconds = difftime(timeNow, Config::LastChecked);
-    if (timeDifferenceSeconds > TimeBetweenUpdateChecksInSeconds)
-    {
-        UpdateChecker::initialize();
-        UpdateChecker::start();
-        Config::LastChecked = timeNow;
-        Config::Save();
-    }
-
     if (Config::ShowConsole)
         os::process::ShowConsole();
     LOGN_WARNING("Host Startup");
@@ -558,8 +561,7 @@ int main(int argc, char *argv[])
      {
          if (!Video::CreateHostDevice(sdlVideoDriver, graphicsApiRetry))
          {
-             SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, GameWindow::GetTitle(), Localise("Video_BackendError").c_str(), GameWindow::s_pWindow);
-             std::_Exit(1);
+             ShowVideoBackendErrorAndExit();
          }
 
          if (!InstallerWizard::Run(GetGamePath(), isGameInstalled && forceDLCInstaller))
@@ -568,7 +570,51 @@ int main(int argc, char *argv[])
          }
      }
 
+    // Show main menu before starting the game
+    // This provides a launcher-style experience like Banjo-Recompiled
+    // TEMPORARY: Disabled main menu for debugging - set to false to skip
+    bool showMainMenu = false; // TODO: Re-enable main menu after debugging
+    for (uint32_t i = 1; i < argc; i++)
+    {
+        if (strcmp(argv[i], "--skip-menu") == 0)
+            showMainMenu = false;
+        if (strcmp(argv[i], "--show-menu") == 0)
+            showMainMenu = true;
+    }
+    
+    if (showMainMenu)
+    {
+        // Create video device if not already created by installer
+        if (!runInstallerWizard)
+        {
+            if (!Video::CreateHostDevice(sdlVideoDriver, graphicsApiRetry))
+            {
+                ShowVideoBackendErrorAndExit();
+            }
+        }
+        
+        MainMenu::Init();
+        if (!MainMenu::Run())
+        {
+            // User selected Exit from main menu
+            MainMenu::Shutdown();
+            std::_Exit(0);
+        }
+        MainMenu::Shutdown();
+    }
+
     // ModLoader::Init();
+
+    // Create video device if not already created by installer or main menu
+    if (!runInstallerWizard && !showMainMenu)
+    {
+        printf("[Main] Creating video device...\n"); fflush(stdout);
+        if (!Video::CreateHostDevice(sdlVideoDriver, graphicsApiRetry))
+        {
+            ShowVideoBackendErrorAndExit();
+        }
+        printf("[Main] Video device created\n"); fflush(stdout);
+    }
 
     printf("[Main] Calling KiSystemStartup...\n"); fflush(stdout);
     KiSystemStartup();
@@ -578,15 +624,16 @@ int main(int argc, char *argv[])
     uint32_t entry = LdrLoadModule(modulePath);
     printf("[Main] Module loaded, entry=0x%08X\n", entry); fflush(stdout);
 
-    if (!runInstallerWizard)
+    // Check the time since the last time an update was checked. Store the new time if the difference is more than six hours.
+    constexpr double TimeBetweenUpdateChecksInSeconds = 6 * 60 * 60;
+    time_t timeNow = std::time(nullptr);
+    double timeDifferenceSeconds = difftime(timeNow, Config::LastChecked);
+    if (timeDifferenceSeconds > TimeBetweenUpdateChecksInSeconds)
     {
-        printf("[Main] Creating video device...\n"); fflush(stdout);
-        if (!Video::CreateHostDevice(sdlVideoDriver, graphicsApiRetry))
-        {
-            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, GameWindow::GetTitle(), Localise("Video_BackendError").c_str(), GameWindow::s_pWindow);
-            std::_Exit(1);
-        }
-        printf("[Main] Video device created\n"); fflush(stdout);
+        UpdateChecker::initialize();
+        UpdateChecker::start();
+        Config::LastChecked = timeNow;
+        Config::Save();
     }
     LOGN_WARNING("Start Guest Thread");
     LOGN_WARNING(modulePath.string());

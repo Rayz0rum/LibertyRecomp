@@ -144,6 +144,9 @@ extern "C" void sub_8212FCC8_hook(PPCContext &ctx, uint8_t *base);  // Menu fram
 extern "C" void sub_821485D8_hook(PPCContext &ctx, uint8_t *base);  // Menu XML parser (Phase 2)
 extern "C" void sub_82273620_hook(PPCContext &ctx, uint8_t *base);  // GXT string lookup (Phase 3)
 
+// Main loop entry override - via strong symbol in save_hooks.cpp
+// Uses PPC_FUNC(sub_821200D0) to override weak symbol and intercept direct bl calls
+
 namespace {
 
 // Patch a single entry in PPCFuncMappings by guest address
@@ -206,6 +209,11 @@ void PatchSyncPrimitives() {
   PatchFuncMapping(0x8212FCC8, &sub_8212FCC8_hook);  // Menu frame update (monitors byte_82BEC62A)
   PatchFuncMapping(0x821485D8, &sub_821485D8_hook);  // Menu XML parser (Phase 2 - item injection)
   PatchFuncMapping(0x82273620, &sub_82273620_hook);  // GXT string lookup (Phase 3 - custom strings)
+
+  // LOADING SCREEN FIX (Issue 2): sub_821200D0 override is now via strong symbol
+  // Defined in save_hooks.cpp as PPC_FUNC(sub_821200D0) which overrides the weak symbol.
+  // PatchFuncMapping removed - it only redirects function table lookups, not direct bl calls.
+  // The strong symbol intercepts ALL calls including direct bl instructions from sub_8218BEB0.
 
   printf("[PATCH] Sync primitive patching complete.\n");
   fflush(stdout);

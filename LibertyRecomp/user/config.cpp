@@ -29,9 +29,16 @@ CONFIG_DEFINE_ENUM_TEMPLATE(ECameraRotationMode)
 
 CONFIG_DEFINE_ENUM_TEMPLATE(EControllerIcons)
 {
-    { "Auto",        EControllerIcons::Auto },
-    { "Xbox",        EControllerIcons::Xbox },
-    { "PlayStation", EControllerIcons::PlayStation }
+    { "Auto",            EControllerIcons::Auto },
+    { "Xbox360",         EControllerIcons::Xbox360 },
+    { "XboxOne",         EControllerIcons::XboxOne },
+    { "XboxSeriesX",     EControllerIcons::XboxSeriesX },
+    { "PlayStation3",    EControllerIcons::PlayStation3 },
+    { "PlayStation4",    EControllerIcons::PlayStation4 },
+    { "PlayStation5",    EControllerIcons::PlayStation5 },
+    { "NintendoSwitch",  EControllerIcons::NintendoSwitch },
+    { "SteamDeck",       EControllerIcons::SteamDeck },
+    { "SteamController", EControllerIcons::SteamController }
 };
 CONFIG_DEFINE_ENUM_TEMPLATE(ELightDash)
 {
@@ -1082,12 +1089,18 @@ void Config::Save()
 
 bool Config::IsControllerIconsPS3()
 {
-    auto result = Config::ControllerIcons == EControllerIcons::PlayStation;
-
-    if (Config::ControllerIcons == EControllerIcons::Auto)
-        result = hid::g_inputDeviceController == hid::EInputDevice::PlayStation;
-
-    return result;
+    // Check if using PlayStation-style controller icons
+    switch (Config::ControllerIcons)
+    {
+        case EControllerIcons::PlayStation3:
+        case EControllerIcons::PlayStation4:
+        case EControllerIcons::PlayStation5:
+            return true;
+        case EControllerIcons::Auto:
+            return hid::g_inputDeviceController == hid::EInputDevice::PlayStation;
+        default:
+            return false;
+    }
 }
 
 std::string Config::GetButtonPromptsSubdir()
@@ -1095,10 +1108,24 @@ std::string Config::GetButtonPromptsSubdir()
     // Check user override first
     if (Config::ControllerIcons != EControllerIcons::Auto) {
         switch (Config::ControllerIcons) {
-            case EControllerIcons::Xbox:
-                return "xbox360";  // Default Xbox uses 360 prompts
-            case EControllerIcons::PlayStation:
-                return "ps4";      // Default PlayStation uses PS4 prompts
+            case EControllerIcons::Xbox360:
+                return "xbox360";
+            case EControllerIcons::XboxOne:
+                return "xbox_one";
+            case EControllerIcons::XboxSeriesX:
+                return "xbox_series_x";
+            case EControllerIcons::PlayStation3:
+                return "ps3";
+            case EControllerIcons::PlayStation4:
+                return "ps4";
+            case EControllerIcons::PlayStation5:
+                return "ps5";
+            case EControllerIcons::NintendoSwitch:
+                return "switch";
+            case EControllerIcons::SteamDeck:
+                return "steam_deck";
+            case EControllerIcons::SteamController:
+                return "steam_controller";
             default:
                 break;
         }
@@ -1110,6 +1137,8 @@ std::string Config::GetButtonPromptsSubdir()
             return "xbox360";
         case hid::EInputDeviceExplicit::XboxOne:
             return "xbox_one";
+        case hid::EInputDeviceExplicit::XboxSeriesX:
+            return "xbox_series_x";
         case hid::EInputDeviceExplicit::DualShock3:
             return "ps3";
         case hid::EInputDeviceExplicit::DualShock4:
@@ -1121,6 +1150,10 @@ std::string Config::GetButtonPromptsSubdir()
         case hid::EInputDeviceExplicit::SwitchJCRight:
         case hid::EInputDeviceExplicit::SwitchJCPair:
             return "switch";
+        case hid::EInputDeviceExplicit::SteamDeck:
+            return "steam_deck";
+        case hid::EInputDeviceExplicit::SteamController:
+            return "steam_controller";
         case hid::EInputDeviceExplicit::Stadia:
         case hid::EInputDeviceExplicit::Luna:
         case hid::EInputDeviceExplicit::NvShield:
@@ -1129,7 +1162,7 @@ std::string Config::GetButtonPromptsSubdir()
             // Fallback: check generic input device
             if (hid::g_inputDeviceController == hid::EInputDevice::PlayStation)
                 return "ps4";
-            return "xbox360";  // Default fallback
+            return "xbox_one";  // Default fallback to Xbox One
     }
 }
 

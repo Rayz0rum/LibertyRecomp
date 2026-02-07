@@ -56,9 +56,12 @@ namespace ButtonPrompts
         if (platform == "steam_deck")
             return { g_button_prompts_steam_deck, sizeof(g_button_prompts_steam_deck), g_button_prompts_steam_deck_uncompressed_size };
         
-        // Default fallback to xbox360
-        return { g_button_prompts_xbox360, sizeof(g_button_prompts_xbox360), g_button_prompts_xbox360_uncompressed_size };
+        // Default fallback to Xbox One for unknown platforms
+        return { g_button_prompts_xbox_one, sizeof(g_button_prompts_xbox_one), g_button_prompts_xbox_one_uncompressed_size };
     }
+
+    // Track if initialization was successful (for fallback behavior)
+    static bool s_initFailed = false;
 
     void Initialize()
     {
@@ -75,7 +78,14 @@ namespace ButtonPrompts
         
         if (ec)
         {
-            LOGF_ERROR("Failed to create button prompts cache directory: {}", ec.message());
+            LOGF_ERROR("[ButtonPrompts] Failed to create cache directory '{}': {}", 
+                       s_cacheDir.string(), ec.message());
+            s_initFailed = true;
+            // Still mark as initialized to avoid repeated attempts
+        }
+        else
+        {
+            s_initFailed = false;
         }
         
         s_initialized = true;
@@ -89,12 +99,24 @@ namespace ButtonPrompts
         {
             switch (Config::ControllerIcons)
             {
-                case EControllerIcons::Xbox:
-                    // Use Xbox 360 as default Xbox style
+                case EControllerIcons::Xbox360:
                     return "xbox360";
-                case EControllerIcons::PlayStation:
-                    // Use PS4 as default PlayStation style
+                case EControllerIcons::XboxOne:
+                    return "xbox_one";
+                case EControllerIcons::XboxSeriesX:
+                    return "xbox_series_x";
+                case EControllerIcons::PlayStation3:
+                    return "ps3";
+                case EControllerIcons::PlayStation4:
                     return "ps4";
+                case EControllerIcons::PlayStation5:
+                    return "ps5";
+                case EControllerIcons::NintendoSwitch:
+                    return "switch";
+                case EControllerIcons::SteamDeck:
+                    return "steam_deck";
+                case EControllerIcons::SteamController:
+                    return "steam_controller";
                 default:
                     break;
             }
@@ -107,7 +129,8 @@ namespace ButtonPrompts
                 return "xbox360";
             case hid::EInputDeviceExplicit::XboxOne:
                 return "xbox_one";
-            // Note: XboxSeriesX would need to be added to EInputDeviceExplicit if not present
+            case hid::EInputDeviceExplicit::XboxSeriesX:
+                return "xbox_series_x";
             case hid::EInputDeviceExplicit::DualShock3:
                 return "ps3";
             case hid::EInputDeviceExplicit::DualShock4:
@@ -119,13 +142,18 @@ namespace ButtonPrompts
             case hid::EInputDeviceExplicit::SwitchJCRight:
             case hid::EInputDeviceExplicit::SwitchJCPair:
                 return "switch";
-            // Stadia/Luna use Xbox-style prompts
+            case hid::EInputDeviceExplicit::SteamDeck:
+                return "steam_deck";
+            case hid::EInputDeviceExplicit::SteamController:
+                return "steam_controller";
+            // Stadia/Luna/NvShield use Xbox-style prompts
             case hid::EInputDeviceExplicit::Stadia:
             case hid::EInputDeviceExplicit::Luna:
+            case hid::EInputDeviceExplicit::NvShield:
                 return "xbox_one";
             default:
-                // Default to Xbox 360 for unknown controllers
-                return "xbox360";
+                // Default to Xbox One for unknown controllers
+                return "xbox_one";
         }
     }
 
@@ -188,7 +216,18 @@ namespace ButtonPrompts
             s_cacheDir = PlatformPaths::GetTempDirectory() / "button_prompts";
             std::error_code ec;
             std::filesystem::create_directories(s_cacheDir, ec);
+            if (ec)
+            {
+                LOGF_ERROR("[ButtonPrompts] Late init failed to create cache directory: {}", ec.message());
+                s_initFailed = true;
+            }
             s_initialized = true;
+        }
+        
+        // If init failed, return empty path to trigger fallback to original game file
+        if (s_initFailed)
+        {
+            return {};
         }
         
         std::string currentPlatform = GetCurrentPlatformName();
@@ -221,6 +260,7 @@ namespace ButtonPrompts
         s_cachedXtdPath.clear();
         s_cachedPlatform.clear();
         
-        LOG_UTILITY("[ButtonPrompts] Cache invalidated, will refresh on next request");
+        std::string newPlatform = GetCurrentPlatformName();
+        LOGF_UTILITY("[ButtonPrompts] Cache invalidated, switching to {} prompts", newPlatform);
     }
 }

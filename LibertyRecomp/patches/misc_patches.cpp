@@ -154,10 +154,21 @@ PPC_FUNC(sub_822CE930)
         }
     }
 
-    auto isPlayStation = Config::ControllerIcons == EControllerIcons::PlayStation;
-
-    if (Config::ControllerIcons == EControllerIcons::Auto)
-        isPlayStation = hid::g_inputDeviceController == hid::EInputDevice::PlayStation;
+    // Check if using PlayStation-style controller icons
+    bool isPlayStation = false;
+    switch (Config::ControllerIcons)
+    {
+        case EControllerIcons::PlayStation3:
+        case EControllerIcons::PlayStation4:
+        case EControllerIcons::PlayStation5:
+            isPlayStation = true;
+            break;
+        case EControllerIcons::Auto:
+            isPlayStation = hid::g_inputDeviceController == hid::EInputDevice::PlayStation;
+            break;
+        default:
+            break;
+    }
 
     if (!Config::ControlTutorial || isPlayStation)
     {

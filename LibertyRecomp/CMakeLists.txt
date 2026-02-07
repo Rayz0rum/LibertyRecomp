@@ -185,6 +185,7 @@ set(LIBERTY_RECOMP_APU_CXX_SOURCES
 set(LIBERTY_RECOMP_HID_CXX_SOURCES
     "hid/hid.cpp"
     "hid/mouse_camera.cpp"
+    "hid/dualsense.cpp"
     "hid/driver/sdl_hid.cpp"
 )
 
@@ -193,6 +194,8 @@ set(LIBERTY_RECOMP_PATCHES_CXX_SOURCES
     "patches/gta4_patches.cpp"
     "patches/gta4_aspect_ratio_patches.cpp"
     "patches/gta4_input_patches.cpp"  # GTA IV input remapping
+    "patches/gta4_motion_patches.cpp" # GTA IV motion control (PlayStation gyro/accel)
+    "patches/gta4_ds4_patches.cpp"    # DualShock 4/DualSense features (light bar, touchpad)
     "patches/audio_patches.cpp"       # GTA IV audio system (updated for RAGE)
     "patches/memcpy_patches.cpp"  # Native memcpy implementation to fix broken recompiled control flow
     "patches/player_limit_patches.cpp"  # Extended multiplayer - raise player limit from 16 to 32+
@@ -225,6 +228,7 @@ set(LIBERTY_RECOMP_UI_CXX_SOURCES
     "ui/game_window.cpp"
     "ui/imgui_utils.cpp"
     "ui/installer_wizard.cpp"
+    "ui/main_menu.cpp"             # Main menu launcher (GTA IV style)
     "ui/message_window_stub.cpp"   # Stub - GTA IV version needed
     "ui/network_status_overlay.cpp"
     "ui/options_menu_stub.cpp"     # Stub - GTA IV version needed
@@ -497,6 +501,7 @@ target_link_libraries(LibertyRecomp PRIVATE
 # Force-load LibertyRecompLib on macOS to include all weak symbols (PPC recompiled functions)
 if (APPLE)
     target_link_libraries(LibertyRecomp PRIVATE -Wl,-force_load,$<TARGET_FILE:LibertyRecompLib>)
+    target_link_libraries(LibertyRecomp PRIVATE "-framework CoreGraphics")
 else()
     target_link_libraries(LibertyRecomp PRIVATE LibertyRecompLib)
 endif()

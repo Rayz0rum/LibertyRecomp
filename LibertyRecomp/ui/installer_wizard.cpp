@@ -38,6 +38,8 @@
 
 // Forward declarations
 static bool AutoSelectTU8();
+static bool ValidateDLCUpdateRequirement();
+static bool InstallerParseSources(std::string &errorMessage);
 
 // One Shot Animations Constants
 static constexpr double SCANLINES_ANIMATION_TIME = 0.0;
@@ -277,6 +279,15 @@ public:
             {
                 if (event->key.keysym.scancode == SDL_SCANCODE_ESCAPE)
                 {
+                    if (g_escHeld && g_currentPage == WizardPage::SelectDLC)
+                    {
+                        // ESC released before hold completed - treat as back action
+                        double holdTime = ImGui::GetTime() - g_escHoldStartTime;
+                        if (holdTime < ESC_HOLD_DURATION)
+                        {
+                            g_currentCursorBack = true;
+                        }
+                    }
                     g_escHeld = false;
                 }
                 break;
@@ -599,8 +610,8 @@ static void DrawGTA4Header()
     
     float alpha = ComputeMotionInstaller(g_appearTime, g_disappearTime, CONTAINER_INNER_TIME, CONTAINER_INNER_DURATION);
     
-    // Get current page title
-    const std::string &pageTitle = GetPageName(g_currentPage);
+    // Get current page title using GetWizardText
+    const std::string &pageTitle = GetWizardText(g_currentPage);
     
     // Draw title text centered at top
     float titleFontSize = Scale(24);
@@ -1311,18 +1322,114 @@ static void DrawGTA4DLCSelection()
         }
     }
     
+    // Handle ENTER key to proceed (from event handler setting g_currentCursorAccepted)
+    if (g_currentCursorAccepted && g_dlcSelectionIndex == 1)
+    {
+        // Base game column selected - trigger navigation to next page
+        g_currentCursorAccepted = false;
+        Game_PlaySound("main_deside");
+        
+        // Same validation logic as DrawNavigationButton for DLC page
+        if (!ValidateDLCUpdateRequirement())
+        {
+            // DLC is added but TU8 not selected - show error
+            std::stringstream errorMsg;
+            errorMsg << "DLC Content Requires Title Update 1.06 (TU8)\n\n";
+            errorMsg << "The Lost and Damned and The Ballad of Gay Tony\n";
+            errorMsg << "require the latest title update to function correctly.\n\n";
+            
+            const auto& updates = g_titleUpdateManager.GetDetectedUpdates();
+            bool tu8Available = false;
+            for (const auto& update : updates)
+            {
+                if (update.info.version == 8)
+                {
+                    tu8Available = true;
+                    break;
+                }
+            }
+            
+            if (tu8Available)
+            {
+                errorMsg << "Press Y to auto-select TU8, or\n";
+                errorMsg << "Press BACK to manually select Title Update";
+            }
+            else
+            {
+                errorMsg << "TU8 not found in GAME UPDATES folder.\n";
+                errorMsg << "Please add TU8 or deselect DLC.";
+            }
+            
+            g_currentMessagePrompt = errorMsg.str();
+            g_currentMessagePromptConfirmation = false;
+            Game_PlaySound("error");
+        }
+        else
+        {
+            std::string sourcesErrorMessage;
+            if (!InstallerParseSources(sourcesErrorMessage))
+            {
+                std::stringstream stringStream;
+                stringStream << Localise("Installer_Message_InvalidFiles");
+                if (!sourcesErrorMessage.empty())
+                    stringStream << std::endl << std::endl << sourcesErrorMessage;
+                g_currentMessagePrompt = stringStream.str();
+                g_currentMessagePromptConfirmation = false;
+            }
+            else
+            {
+                SetCurrentPage(WizardPage::CheckSpace);
+            }
+        }
+        return;
+    }
+    
     // Check ESC hold progress and skip if complete
+    bool shouldSkipDLC = false;
     if (g_escHeld)
     {
         double holdTime = ImGui::GetTime() - g_escHoldStartTime;
         if (holdTime >= ESC_HOLD_DURATION)
         {
-            // Skip to next page
             g_escHeld = false;
-            SetCurrentPage(WizardPage::CheckSpace);
-            Game_PlaySound("deside");
-            return;
+            shouldSkipDLC = true;
         }
+    }
+    
+    if (shouldSkipDLC)
+    {
+        Game_PlaySound("deside");
+        
+        // Check if any DLC is actually added - if so, need to validate
+        bool anyDLCAdded = !g_dlcSourcePaths[0].empty() || !g_dlcSourcePaths[1].empty();
+        if (anyDLCAdded && !ValidateDLCUpdateRequirement())
+        {
+            // DLC added but TU8 not selected - show error
+            std::stringstream errorMsg;
+            errorMsg << "DLC Content Requires Title Update 1.06 (TU8)\n\n";
+            errorMsg << "Please go back and select TU8, or remove DLC.";
+            g_currentMessagePrompt = errorMsg.str();
+            g_currentMessagePromptConfirmation = false;
+            Game_PlaySound("error");
+        }
+        else
+        {
+            std::string sourcesErrorMessage;
+            if (!InstallerParseSources(sourcesErrorMessage))
+            {
+                std::stringstream stringStream;
+                stringStream << Localise("Installer_Message_InvalidFiles");
+                if (!sourcesErrorMessage.empty())
+                    stringStream << std::endl << std::endl << sourcesErrorMessage;
+                g_currentMessagePrompt = stringStream.str();
+                g_currentMessagePromptConfirmation = false;
+            }
+            else
+            {
+                SetCurrentPage(WizardPage::CheckSpace);
+            }
+        }
+        return;
     }
     
     // Draw navigation hints at bottom
@@ -1866,12 +1973,8 @@ static void CheckCancelAction()
     }
     else if (int(g_currentPage) > 0)
     {
-        // Just go back to the previous page, but skip SelectDLC (GTA IV has no DLC to install)
+        // Go back to the previous page
         WizardPage prevPage = WizardPage(int(g_currentPage) - 1);
-        if (prevPage == WizardPage::SelectDLC)
-        {
-            prevPage = WizardPage::SelectGame;
-        }
         SetCurrentPage(prevPage);
     }
 }
@@ -2050,9 +2153,11 @@ void InstallerWizard::Draw()
     
     DrawSources(); // This now handles the GTA IV DLC selection screen
     
+    DrawInstallingProgress();
+    
+    // Draw navigation button for all pages except DLC selection (which has its own skip hint)
     if (!isDLCSelectionPage)
     {
-        DrawInstallingProgress();
         DrawNavigationButton();
     }
     
@@ -2103,11 +2208,11 @@ void InstallerWizard::Shutdown()
     // Make sure the GPU is not currently active before deleting these textures.
     Video::WaitForGPU();
 
-    // Erase the textures.
-    for (auto &texture : g_installTextures)
-    {
-        texture.reset();
-    }
+    // Erase the textures - disabled since g_installTextures is not used
+    // for (auto &texture : g_installTextures)
+    // {
+    //     texture.reset();
+    // }
 }
 
 bool InstallerWizard::Run(std::filesystem::path installPath, bool skipGame)

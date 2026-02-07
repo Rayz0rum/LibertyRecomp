@@ -168,9 +168,17 @@ PPC_FUNC(sub_82122CA0)
 // Loads profile and enumerates/opens save files
 // =============================================================================
 extern "C" void __imp__sub_821200D0(PPCContext& ctx, uint8_t* base);
+// sub_821238D0 is declared in ppc_recomp_shared.h via PPC_EXTERN_FUNC
 extern void ShutdownAllWorkers();  // From imports.cpp - sets exit flags and signals workers
 
-// sub_821200D0 - Main game loop entry point
+// Memory addresses for loading screen state (Python-verified from PPC source)
+// Base: lis r11,-31981 = 0x83130000
+// byte_83137BB7 = base + 31671 = 0x83137BB7 (loading in progress flag)
+// byte_83137BC9 = base + 31689 = 0x83137BC9 (loading step - exit when 0)
+constexpr uint32_t LOADING_FLAG_ADDR = 0x83137BB7;  // Loading in progress flag
+constexpr uint32_t LOADING_STEP_ADDR = 0x83137BC9;  // Loading step (non-zero = still loading)
+
+// sub_821200D0_hook - Main game loop entry point (extern "C" for PatchFuncMapping)
 // This is the correct point to enter Runtime phase:
 // - All 63 subsystems initialized
 // - GPU device created, shaders loaded
@@ -179,6 +187,14 @@ extern void ShutdownAllWorkers();  // From imports.cpp - sets exit flags and sig
 // CRITICAL FIX: Force Runtime phase HERE to break circular dependency:
 //   Runtime Phase requires Proper Sync requires Render Loop requires VdSwap requires Runtime Phase
 // By forcing Runtime at main loop entry, semaphore waits become real waits instead of fail-open bypasses.
+//
+// LOADING SCREEN FIX (Issue 2): Call sub_821238D0 (loading screen render) when loading is active.
+// Root cause: sub_821238D0 is defined but NEVER called in the actual PPC code.
+// This function handles timer updates, fade effects, and sets byte_83137BC9 = 0 to exit loading.
+//
+// CRITICAL: Named `sub_821200D0` (not `sub_821200D0_hook`) to OVERRIDE the weak symbol in ppc_recomp.0.cpp!
+// PatchFuncMapping only redirects function TABLE lookups, not direct bl (branch) calls.
+// By defining a strong symbol, we intercept ALL calls including direct bl instructions.
 PPC_FUNC(sub_821200D0)
 {
     static int s_count = 0;
@@ -193,6 +209,23 @@ PPC_FUNC(sub_821200D0)
         if (g_kernelPhase.load(std::memory_order_acquire) != KernelPhase::Runtime) {
             KernelPhase_EnterRuntime();
             LOG_WARNING("[KERNEL_PHASE] Forced Init -> Runtime at sub_821200D0 (main loop entry)");
+        }
+    }
+    
+    // LOADING SCREEN FIX (Issue 2): Invoke the missing render function
+    // The loading screen state machine is stuck because sub_821238D0 is never called.
+    // This function advances the loading timer and transitions states.
+    uint8_t loadingActive = PPC_LOAD_U8(LOADING_FLAG_ADDR);
+    if (loadingActive) {
+        // Call the loading screen render function to advance the state machine
+        sub_821238D0(ctx, base);
+        
+        // Log state for debugging (first 50 calls only to avoid spam)
+        if (s_count <= 50) {
+            uint8_t loadingStep = PPC_LOAD_U8(LOADING_STEP_ADDR);
+            printf("[821200D0] Loading active: flag=%d step=%d, called sub_821238D0\n", 
+                   loadingActive, loadingStep);
+            fflush(stdout);
         }
     }
     
