@@ -15,6 +15,9 @@
 #include "xdm.h"
 #include "xex.h"
 #include <SDL.h>
+#ifdef __APPLE__
+#include <CommonCrypto/CommonCryptor.h>
+#endif
 #include <apu/audio.h>
 #include <atomic>
 #include <cpu/guest_thread.h>
@@ -940,6 +943,63 @@ PPC_FUNC(sub_822054F8) {
 }
 
 // =============================================================================
+// NATIVE AES DECRYPTION — Replace recompiled RAGE AES with hardware-accelerated
+// =============================================================================
+// sub_827FC7F0 is RAGE's AES decrypt wrapper. Original PPC code calls
+// sub_827FC738 which applies sub_827FC190 (AES-256-ECB block cipher) 16 times
+// per 16-byte block. The recompiled table-based AES with PPC byte-swap
+// emulation is ~1000x slower than native. Replace with CommonCrypto AES.
+//
+// Calling convention:
+//   r3 = keySchedule (guest ptr — ignored, we use the extracted key)
+//   r4 = dataPtr (guest ptr to data, decrypted IN-PLACE)
+//   r5 = size in bytes (masked to 16-byte alignment internally)
+//   Returns r3 = 1 (success)
+// =============================================================================
+
+#ifdef __APPLE__
+static const uint8_t s_rageAesKey[32] = {
+    0x1a, 0xb5, 0x6f, 0xed, 0x7e, 0xc3, 0xff, 0x01,
+    0x22, 0x7b, 0x69, 0x15, 0x33, 0x97, 0x5d, 0xce,
+    0x47, 0xd7, 0x69, 0x65, 0x3f, 0xf7, 0x75, 0x42,
+    0x6a, 0x96, 0xcd, 0x6d, 0x53, 0x07, 0x56, 0x5d
+};
+#endif
+
+PPC_FUNC(sub_827FC7F0) {
+    uint32_t dataAddr = ctx.r4.u32;
+    uint32_t size = ctx.r5.u32 & 0xFFFFFFF0u;
+
+    if (dataAddr == 0 || size == 0) {
+        ctx.r3.u32 = 1;
+        return;
+    }
+
+    uint8_t* data = static_cast<uint8_t*>(g_memory.Translate(dataAddr));
+
+#ifdef __APPLE__
+    // Apply AES-256-ECB decrypt 16 times per block (matches RAGE cipher)
+    for (uint32_t offset = 0; offset < size; offset += 16) {
+        for (int pass = 0; pass < 16; ++pass) {
+            size_t outLen = 0;
+            CCCrypt(kCCDecrypt, kCCAlgorithmAES, kCCOptionECBMode,
+                    s_rageAesKey, sizeof(s_rageAesKey),
+                    nullptr,
+                    data + offset, 16,
+                    data + offset, 16, &outLen);
+        }
+    }
+#else
+    // Non-Apple: fall through to original PPC code
+    extern "C" void __imp__sub_827FC7F0(PPCContext &ctx, uint8_t *base);
+    __imp__sub_827FC7F0(ctx, base);
+    return;
+#endif
+
+    ctx.r3.u32 = 1;
+}
+
+// =============================================================================
 // RAGE VFS DIAGNOSTIC — log what file path the game tries to open
 // =============================================================================
 extern "C" void __imp__sub_827E0898(PPCContext &ctx, uint8_t *base);
@@ -975,7 +1035,13 @@ PPC_FUNC(sub_8218BEA8) {
     LOG_WARNING("[MAIN] Initialization complete, entering render loop");
   }
 
+  static int s_loopCount = 0;
   while (true) {
+    ++s_loopCount;
+    if (s_loopCount <= 20 || (s_loopCount % 500) == 0) {
+        printf("[MAIN_LOOP] Iteration #%d\n", s_loopCount);
+        fflush(stdout);
+    }
     __imp__sub_82856F08(ctx, base);
     std::this_thread::sleep_for(std::chrono::milliseconds(16));
   }

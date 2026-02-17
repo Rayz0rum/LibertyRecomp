@@ -9296,14 +9296,41 @@ GUEST_FUNCTION_HOOK(sub_829D6830, LockVertexBuffer);
 GUEST_FUNCTION_HOOK(sub_829D69D8, UnlockVertexBuffer);
 #endif
 
-// NOTE(GTAIV): Hook the game's D3D Present wrapper directly to Video::Present.
-// This follows the UnleashedRecomp pattern where game Present → host Present.
-// VdSwap is a stub since actual presentation happens in Video::Present().
+// NOTE(GTAIV): Hook the game's D3D Present wrapper.
 // Render path: sub_82856F08 → sub_828529B0 → sub_828507F8 → sub_829D5388 → Video::Present
-GUEST_FUNCTION_HOOK(sub_829D5388, Video::Present);
+// 
+// CRITICAL: The original sub_829D5388 increments device[16544] (FrameCounter), which
+// sub_828507F8 uses for frame pacing: "if (submitted - presented >= 2) skip Present".
+// Since GUEST_FUNCTION_HOOK replaces the function entirely, we must increment the
+// counter ourselves or the game stops presenting after 2 frames.
+PPC_FUNC(sub_829D5388)
+{
+    static int s_hookCount = 0;
+    ++s_hookCount;
+    
+    // Increment the presented frame counter (device[16544]) to maintain frame pacing.
+    // Original PPC code does: ++*(_DWORD *)(a1 + 16544);
+    uint32_t device = ctx.r3.u32;
+    if (device != 0) {
+        uint8_t* devicePtr = static_cast<uint8_t*>(g_memory.Translate(device));
+        uint32_t frameCounter = GTAIV::GetDeviceU32(devicePtr, GTAIV::DeviceOffset::FrameCounter);
+        GTAIV::SetDeviceU32(devicePtr, GTAIV::DeviceOffset::FrameCounter, frameCounter + 1);
+        
+        if (s_hookCount <= 10 || (s_hookCount % 100) == 0) {
+            printf("[sub_829D5388] Hook #%d: device=0x%08X, frameCounter %u -> %u\n",
+                   s_hookCount, device, frameCounter, frameCounter + 1);
+            fflush(stdout);
+        }
+    }
+    
+    // Now do the actual host-side Present
+    Video::Present();
+}
 
-// PM4 ring buffer hooks — defined via PPC_FUNC above (sub_829D95E8, sub_829D8568)
+// PM4 buffer flush — defined via PPC_FUNC above (sub_829D8568)
 // PPC_FUNC(name) auto-registers as a guest function hook, no GUEST_FUNCTION_HOOK needed.
+// sub_829D95E8 (ring buffer write loop) runs as original PPC code — it calls
+// sub_829D8568 internally, which now properly resets the buffer.
 
 // =============================================================================
 // Sonic 06 D3D hooks - DISABLED for GTA IV
@@ -9379,21 +9406,13 @@ PPC_FUNC(sub_829D7E58)
     ctx.r3.u64 = ctx.r4.u64;
 }
 
-// PM4 Ring Buffer Write - No-op since there's no Xenos GPU hardware.
-// Original function writes PM4 command packets into the GPU ring buffer,
-// calling sub_829D8568 (flush) when space runs out. Without real hardware,
-// the flush never frees space, causing an infinite loop.
-// Fix: skip all ring buffer writes, return write pointer unchanged.
-PPC_FUNC(sub_829D95E8)
-{
-    // r3=device, r4=writePtr — return writePtr unchanged in r3
-    ctx.r3.u32 = ctx.r4.u32;
-}
-
-// PM4 Buffer Flush - Replicate sub_829D83E0's buffer pointer reset
-// Original function submits commands to Xenos ring buffer (skipped — no hardware)
-// then resets device[48] so callers see available buffer space.
-// Without reset, sub_829D95E8 loops forever (zero available space).
+// PM4 Buffer Flush — simulates sub_829D83E0 buffer pointer reset.
+// Original function submits PM4 commands to Xenos hardware then resets
+// the write pointer. We skip the hardware submission (no Xenos) but must
+// properly reset pointers so callers see available buffer space.
+// Normal case: advance within segment (matches sub_829D83E0 epilogue).
+// Segment-full case: recycle the entire buffer from its original base
+// (device+14888, set by sub_829D88B8/CreateDevice, never modified).
 PPC_FUNC(sub_829D8568)
 {
     uint32_t device = ctx.r3.u32;
@@ -9415,14 +9434,17 @@ PPC_FUNC(sub_829D8568)
             GTAIV::SetDeviceU32(devicePtr, GTAIV::DeviceOffset::BufferSegmentBase, aligned);
             GTAIV::SetDeviceU32(devicePtr, GTAIV::DeviceOffset::CommandBufferPtr, aligned - 4);
         } else {
-            // Buffer full or uninitialized: reset to secondary buffer (sub_829D8188 fallback)
-            uint32_t secBuf = GTAIV::GetDeviceU32(devicePtr, GTAIV::DeviceOffset::SecondaryBufferBase);
-            if (secBuf != 0) {
-                GTAIV::SetDeviceU32(devicePtr, GTAIV::DeviceOffset::CommandBufferPtr, secBuf);
-                GTAIV::SetDeviceU32(devicePtr, GTAIV::DeviceOffset::CommandBufferEnd, secBuf + 4800);
-                GTAIV::SetDeviceU32(devicePtr, GTAIV::DeviceOffset::CommandBufferLimit, secBuf + 4800 - 160);
+            // Segment full: recycle the entire buffer from its original base.
+            // device+14888 (GpuContextPtr) is the immutable allocation address
+            // set by sub_829D88B8 (CreateDevice) and never modified after init.
+            // Since no Xenos hardware reads the PM4 data, overwriting is safe.
+            uint32_t bufBase = GTAIV::GetDeviceU32(devicePtr, GTAIV::DeviceOffset::GpuContextPtr);
+            if (bufBase != 0 && bufBase != 0xCDCDCDCD) {
+                GTAIV::SetDeviceU32(devicePtr, GTAIV::DeviceOffset::BufferSegmentBase, bufBase);
+                GTAIV::SetDeviceU32(devicePtr, GTAIV::DeviceOffset::CommandBufferPtr, bufBase - 4);
+                // device[52] and device[56] retain their original init values
             } else {
-                // Last resort: advance writePtr to break the loop
+                // bufBase not initialized — advance writePtr minimally
                 GTAIV::SetDeviceU32(devicePtr, GTAIV::DeviceOffset::CommandBufferPtr, writePtr + 4);
             }
         }
