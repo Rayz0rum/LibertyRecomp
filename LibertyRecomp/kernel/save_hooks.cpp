@@ -200,37 +200,38 @@ PPC_FUNC(sub_821200D0)
     static int s_count = 0;
     static bool s_runtimeForced = false;
     ++s_count;
-    
+
     printf("[821200D0] #%d ENTER\n", s_count); fflush(stdout);
-    
-    // PHASE 1 FIX: Force Runtime phase at main loop entry to break circular dependency
+
+    // Force Runtime phase on first entry to break circular dependency
     if (!s_runtimeForced) {
         s_runtimeForced = true;
         if (g_kernelPhase.load(std::memory_order_acquire) != KernelPhase::Runtime) {
             KernelPhase_EnterRuntime();
-            LOG_WARNING("[KERNEL_PHASE] Forced Init -> Runtime at sub_821200D0 (main loop entry)");
+            LOG_WARNING("[KERNEL_PHASE] Forced Init -> Runtime at sub_821200D0");
         }
     }
-    
-    // LOADING SCREEN FIX (Issue 2): Invoke the missing render function
-    // The loading screen state machine is stuck because sub_821238D0 is never called.
-    // This function advances the loading timer and transitions states.
-    uint8_t loadingActive = PPC_LOAD_U8(LOADING_FLAG_ADDR);
-    if (loadingActive) {
-        // Call the loading screen render function to advance the state machine
-        sub_821238D0(ctx, base);
-        
-        // Log state for debugging (first 50 calls only to avoid spam)
-        if (s_count <= 50) {
-            uint8_t loadingStep = PPC_LOAD_U8(LOADING_STEP_ADDR);
-            printf("[821200D0] Loading active: flag=%d step=%d, called sub_821238D0\n", 
-                   loadingActive, loadingStep);
-            fflush(stdout);
+
+    // On Xbox 360, sub_821238D0 ran on a dedicated rendering thread during loading.
+    // It advances dword_83137D20[v3] via Present calls; when it reaches 3, BC9
+    // (byte_83137BC9) is cleared to 0, allowing sub_821200D0's busy-wait to exit.
+    // We emulate the missing thread by pumping sub_821238D0 until BC9 = 0.
+    //   sub_82124490() returns BB7 ? BC9 : 0  — 0 means loading is complete.
+    {
+        PPCContext gateCtx = ctx;
+        sub_82124490(gateCtx, base);
+        while (gateCtx.r3.u8 != 0) {
+            sub_821238D0(ctx, base);
+            gateCtx = ctx;
+            sub_82124490(gateCtx, base);
         }
     }
-    
-    // Run the actual function
+
+    // Clear BB7 (loading active flag) — mirrors the post-loop store the game would do
+    PPC_STORE_U8(LOADING_FLAG_ADDR, 0);
+
+    // BC9 is now 0 so the busy-wait inside __imp__sub_821200D0 exits immediately
     __imp__sub_821200D0(ctx, base);
-    
+
     printf("[821200D0] #%d EXIT r3=%d\n", s_count, ctx.r3.s32); fflush(stdout);
 }

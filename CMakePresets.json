@@ -202,6 +202,167 @@
                 "CMAKE_BUILD_TYPE": "Release",
                 "CMAKE_INTERPROCEDURAL_OPTIMIZATION": true
             }
+        },
+        {
+            "name": "ios-base",
+            "hidden": true,
+            "generator": "Xcode",
+            "binaryDir": "${sourceDir}/out/build/${presetName}",
+            "installDir": "${sourceDir}/out/install/${presetName}",
+            "cacheVariables": {
+                "CMAKE_TOOLCHAIN_FILE": {
+                    "value": "${sourceDir}/toolchains/ios.cmake",
+                    "type": "FILEPATH"
+                },
+                "LIBERTY_RECOMP_TARGET_PLATFORM": {
+                    "value": "ios",
+                    "type": "STRING"
+                },
+                "LIBERTY_RECOMP_EMBEDDED_GAME_PATH": {
+                    "value": "${sourceDir}/tools/local_game_payload",
+                    "type": "PATH"
+                }
+            },
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Darwin"
+            }
+        },
+        {
+            "name": "ios-debug",
+            "displayName": "iOS-Debug",
+            "inherits": "ios-base",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug"
+            }
+        },
+        {
+            "name": "ios-release",
+            "displayName": "iOS-Release",
+            "inherits": "ios-base",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release"
+            }
+        },
+        {
+            "name": "android-base",
+            "hidden": true,
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/out/build/${presetName}",
+            "installDir": "${sourceDir}/out/install/${presetName}",
+            "cacheVariables": {
+                "CMAKE_TOOLCHAIN_FILE": {
+                    "value": "${sourceDir}/toolchains/android.cmake",
+                    "type": "FILEPATH"
+                },
+                "LIBERTY_RECOMP_TARGET_PLATFORM": {
+                    "value": "android",
+                    "type": "STRING"
+                },
+                "ANDROID_ABI": {
+                    "value": "arm64-v8a",
+                    "type": "STRING"
+                },
+                "ANDROID_PLATFORM": {
+                    "value": "android-26",
+                    "type": "STRING"
+                },
+                "LIBERTY_RECOMP_EMBEDDED_GAME_PATH": {
+                    "value": "${sourceDir}/tools/local_game_payload",
+                    "type": "PATH"
+                }
+            }
+        },
+        {
+            "name": "android-debug",
+            "displayName": "Android-Debug",
+            "inherits": "android-base",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug"
+            }
+        },
+        {
+            "name": "android-release",
+            "displayName": "Android-Release",
+            "inherits": "android-base",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release"
+            }
+        },
+        {
+            "name": "ps4-base",
+            "hidden": true,
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/out/build/${presetName}",
+            "installDir": "${sourceDir}/out/install/${presetName}",
+            "cacheVariables": {
+                "CMAKE_TOOLCHAIN_FILE": {
+                    "value": "${sourceDir}/toolchains/ps4-openorbis.cmake",
+                    "type": "FILEPATH"
+                },
+                "LIBERTY_RECOMP_TARGET_PLATFORM": {
+                    "value": "ps4",
+                    "type": "STRING"
+                },
+                "LIBERTY_RECOMP_EMBEDDED_GAME_PATH": {
+                    "value": "${sourceDir}/tools/local_game_payload",
+                    "type": "PATH"
+                }
+            }
+        },
+        {
+            "name": "ps4-debug",
+            "displayName": "PS4-Debug",
+            "inherits": "ps4-base",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug"
+            }
+        },
+        {
+            "name": "ps4-release",
+            "displayName": "PS4-Release",
+            "inherits": "ps4-base",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release"
+            }
+        },
+        {
+            "name": "switch-base",
+            "hidden": true,
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/out/build/${presetName}",
+            "installDir": "${sourceDir}/out/install/${presetName}",
+            "cacheVariables": {
+                "CMAKE_TOOLCHAIN_FILE": {
+                    "value": "${sourceDir}/toolchains/switch-libnx.cmake",
+                    "type": "FILEPATH"
+                },
+                "LIBERTY_RECOMP_TARGET_PLATFORM": {
+                    "value": "switch",
+                    "type": "STRING"
+                },
+                "LIBERTY_RECOMP_EMBEDDED_GAME_PATH": {
+                    "value": "${sourceDir}/tools/local_game_payload",
+                    "type": "PATH"
+                }
+            }
+        },
+        {
+            "name": "switch-debug",
+            "displayName": "Switch-Debug",
+            "inherits": "switch-base",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug"
+            }
+        },
+        {
+            "name": "switch-release",
+            "displayName": "Switch-Release",
+            "inherits": "switch-base",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release"
+            }
         }
     ]
 }

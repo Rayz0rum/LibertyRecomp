@@ -270,7 +270,7 @@ void StartVBlankTimer() {
       // Set frame-ready flag
       constexpr uint32_t GUEST_FRAME_READY_FLAG = 0x83128A80;
       if (g_memory.base) {
-        *(g_memory.base + (GUEST_FRAME_READY_FLAG - 0x80000000)) = 1;
+        *(g_memory.base + GUEST_FRAME_READY_FLAG) = 1;
       }
 
       if (g_gpuRingBuffer.interruptCallback != 0) {

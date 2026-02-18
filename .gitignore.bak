@@ -14,10 +14,6 @@ game/
 game
 gta_iv/
 
-# Embedded payload staging area (keep README only)
-tools/local_game_payload/*
-!tools/local_game_payload/README.md
-
 # GTA IV DLC ZIP files - DO NOT COMMIT (Copyrighted)
 GAME DLC/*.zip
 
@@ -41,7 +37,6 @@ docs/*.md
 !docs/DUMPING-en.md
 !docs/INSTALLATION_ARCHITECTURE.md
 !docs/ONLINE_MULTIPLAYER.md
-!docs/PLATFORM_SETUP.md
 
 # Sample/Reference Projects - Not part of this repo
 Sample Recomp Projects/
@@ -540,6 +535,7 @@ build/
 # Development/debug directories
 FRAMERATE_ISSUES/
 gemini-env/
+glue/
 
 # LLDB debug files
 lldb_*.cmd
@@ -564,35 +560,3 @@ tools/research_calc.py
 # Misc temp files
 buttons_360.xtd
 xex_hash.txt
-
-# ── Cross-platform build artifacts ──────────────────────────────────────────
-# Game payload — never commit game files; populate tools/local_game_payload/ locally
-tools/local_game_payload/default.xex
-tools/local_game_payload/common.rpf
-tools/local_game_payload/xbox360.rpf
-tools/local_game_payload/audio.rpf
-tools/local_game_payload/dlc/
-
-# Generated build-time manifest
-out/build/*/manifest.json
-
-# Android Gradle output
-android/.gradle/
-android/app/build/
-android/local.properties
-
-# iOS / Xcode generated
-*.xcuserstate
-xcuserdata/
-DerivedData/
-*.ipa
-
-# Switch / devkitPro build artifacts
-*.nro
-*.nacp
-*.nso
-
-# PS4 / OpenOrbis build artifacts
-*.bin
-eboot.bin
-*.pkg

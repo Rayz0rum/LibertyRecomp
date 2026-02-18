@@ -1644,12 +1644,19 @@ void* PosixCondition<Thread>::ThreadStartRoutine(void* parameter) {
     std::unique_lock<std::mutex> lock(thread->handle_.state_mutex_);
     thread->handle_.state_ =
         create_suspended ? State::kSuspended : State::kRunning;
+    // Set suspend_count_ here, while holding the lock, before notify_all().
+    // If we release the lock first and then re-acquire for suspend_count_,
+    // Resume() can race in between: it sees state_==kSuspended, decrements
+    // suspend_count_ from 0 to UINT_MAX, then we overwrite it with 1, and
+    // the thread deadlocks forever waiting for suspend_count_==0.
+    if (create_suspended) {
+      thread->handle_.suspend_count_ = 1;
+    }
     thread->handle_.state_signal_.notify_all();
   }
 
   if (create_suspended) {
     std::unique_lock<std::mutex> lock(thread->handle_.state_mutex_);
-    thread->handle_.suspend_count_ = 1;
     thread->handle_.state_signal_.wait(
         lock, [thread] { return thread->handle_.suspend_count_ == 0; });
   }

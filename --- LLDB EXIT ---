@@ -1,0 +1,4 @@
+(lldb) target create ""
+Current executable set to '' (unknown).
+(lldb) run
+error: no file in target, create a debug target using the 'target create' command

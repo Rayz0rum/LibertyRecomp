@@ -117,6 +117,40 @@ if (WIN32)
         "os/win32/user_win32.cpp"
         "os/win32/version_win32.cpp"
     )
+elseif (LIBERTY_RECOMP_TARGET_PLATFORM STREQUAL "ios" OR CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    set(LIBERTY_RECOMP_OS_CXX_SOURCES
+        "os/ios/logger_ios.cpp"
+        "os/ios/media_ios.cpp"
+        "os/ios/process_ios.cpp"
+        "os/ios/user_ios.cpp"
+        "os/ios/version_ios.cpp"
+        "os/ios/ios_paths_objc.mm"
+    )
+elseif (LIBERTY_RECOMP_TARGET_PLATFORM STREQUAL "android" OR ANDROID)
+    set(LIBERTY_RECOMP_OS_CXX_SOURCES
+        "os/android/logger_android.cpp"
+        "os/android/media_android.cpp"
+        "os/android/process_android.cpp"
+        "os/android/user_android.cpp"
+        "os/android/version_android.cpp"
+        "os/android/jni_glue.cpp"
+    )
+elseif (LIBERTY_RECOMP_TARGET_PLATFORM STREQUAL "ps4" OR CMAKE_SYSTEM_NAME STREQUAL "PS4")
+    set(LIBERTY_RECOMP_OS_CXX_SOURCES
+        "os/ps4/logger_ps4.cpp"
+        "os/ps4/media_ps4.cpp"
+        "os/ps4/process_ps4.cpp"
+        "os/ps4/user_ps4.cpp"
+        "os/ps4/version_ps4.cpp"
+    )
+elseif (LIBERTY_RECOMP_TARGET_PLATFORM STREQUAL "switch" OR CMAKE_SYSTEM_NAME STREQUAL "Switch")
+    set(LIBERTY_RECOMP_OS_CXX_SOURCES
+        "os/switch/logger_switch.cpp"
+        "os/switch/media_switch.cpp"
+        "os/switch/process_switch.cpp"
+        "os/switch/user_switch.cpp"
+        "os/switch/version_switch.cpp"
+    )
 elseif (CMAKE_SYSTEM_NAME MATCHES "Linux")
     set(LIBERTY_RECOMP_OS_CXX_SOURCES
         "os/linux/logger_linux.cpp"
@@ -133,6 +167,12 @@ elseif (APPLE)
         "os/macos/user_macos.cpp"
         "os/macos/version_macos.cpp"
     )
+endif()
+
+# ── Embedded assets compile definition ──────────────────────────────────────
+if (LIBERTY_RECOMP_EMBEDDED_ASSETS)
+    add_compile_definitions(LIBERTY_RECOMP_EMBEDDED_ASSETS)
+    message(STATUS "Building with embedded game assets (no installer wizard)")
 endif()
 
 set(LIBERTY_RECOMP_CPU_CXX_SOURCES
@@ -233,6 +273,7 @@ set(LIBERTY_RECOMP_INSTALL_CXX_SOURCES
     "install/iso_file_system.cpp"
     "install/iso_extractor.cpp"
     "install/platform_paths.cpp"
+    "install/embedded_assets.cpp"
     "install/rpf_extractor.cpp"
     "install/shader_converter.cpp"
     "install/thread_pool.cpp"

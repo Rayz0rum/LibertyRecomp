@@ -63,6 +63,9 @@ namespace ButtonPrompts
     // Track if initialization was successful (for fallback behavior)
     static bool s_initFailed = false;
 
+    // Forward declaration for WriteXtdToCache (defined later in this file)
+    static bool WriteXtdToCache(const std::string& platform);
+
     void Initialize()
     {
         std::lock_guard<std::mutex> lock(s_mutex);
@@ -70,15 +73,17 @@ namespace ButtonPrompts
         if (s_initialized)
             return;
         
-        // Create cache directory for button prompts
-        s_cacheDir = PlatformPaths::GetTempDirectory() / "button_prompts";
-        
+        // Write to the game textures directory so RexGlue VFS can find the file.
+        // The game opens "platform:\textures\buttons_360.xtd" which resolves to
+        // <gameDir>/xbox360/textures/buttons_360.xtd via the RexGlue VFS.
+        s_cacheDir = PlatformPaths::GetGameDirectory() / "xbox360" / "textures";
+
         std::error_code ec;
         std::filesystem::create_directories(s_cacheDir, ec);
-        
+
         if (ec)
         {
-            LOGF_ERROR("[ButtonPrompts] Failed to create cache directory '{}': {}", 
+            LOGF_ERROR("[ButtonPrompts] Failed to create textures directory '{}': {}",
                        s_cacheDir.string(), ec.message());
             s_initFailed = true;
             // Still mark as initialized to avoid repeated attempts
@@ -86,8 +91,10 @@ namespace ButtonPrompts
         else
         {
             s_initFailed = false;
+            // Write eagerly so the file is present before the game first opens it
+            WriteXtdToCache(GetCurrentPlatformName());
         }
-        
+
         s_initialized = true;
         LOG_UTILITY("[ButtonPrompts] Initialized");
     }
@@ -212,13 +219,13 @@ namespace ButtonPrompts
         
         if (!s_initialized)
         {
-            // Late initialization
-            s_cacheDir = PlatformPaths::GetTempDirectory() / "button_prompts";
+            // Late initialization — mirror the same path used in Initialize()
+            s_cacheDir = PlatformPaths::GetGameDirectory() / "xbox360" / "textures";
             std::error_code ec;
             std::filesystem::create_directories(s_cacheDir, ec);
             if (ec)
             {
-                LOGF_ERROR("[ButtonPrompts] Late init failed to create cache directory: {}", ec.message());
+                LOGF_ERROR("[ButtonPrompts] Late init failed to create textures directory: {}", ec.message());
                 s_initFailed = true;
             }
             s_initialized = true;
