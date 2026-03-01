@@ -13,7 +13,9 @@
 #include <rex/audio/audio_driver.h>
 #include <rex/audio/audio_system.h>
 #include <rex/audio/flags.h>
+#ifndef __APPLE__
 #include <rex/audio/xma/decoder.h>
+#endif
 #include <rex/dbg.h>
 #include <rex/logging.h>
 #include <rex/math.h>
@@ -50,23 +52,29 @@ AudioSystem::AudioSystem(runtime::Processor* processor)
   assert_not_null(shutdown_event_);
   wait_handles_[kMaximumClientCount] = shutdown_event_.get();
 
+#ifndef __APPLE__
   xma_decoder_ = std::make_unique<rex::audio::XmaDecoder>(processor_);
+#endif
 
   resume_event_ = rex::thread::Event::CreateAutoResetEvent(false);
   assert_not_null(resume_event_);
 }
 
 AudioSystem::~AudioSystem() {
+#ifndef __APPLE__
   if (xma_decoder_) {
     xma_decoder_->Shutdown();
   }
+#endif
 }
 
 X_STATUS AudioSystem::Setup(system::KernelState* kernel_state) {
+#ifndef __APPLE__
   X_STATUS result = xma_decoder_->Setup(kernel_state);
   if (result) {
     return result;
   }
+#endif
 
   worker_running_ = true;
   worker_thread_ = system::object_ref<system::XHostThread>(
@@ -301,7 +309,9 @@ void AudioSystem::Pause() {
   shutdown_event_->Set();
   pause_fence_.Wait();
 
+#ifndef __APPLE__
   xma_decoder_->Pause();
+#endif
 }
 
 void AudioSystem::Resume() {
@@ -312,7 +322,9 @@ void AudioSystem::Resume() {
 
   resume_event_->Set();
 
+#ifndef __APPLE__
   xma_decoder_->Resume();
+#endif
 }
 
 }  // namespace rex::audio

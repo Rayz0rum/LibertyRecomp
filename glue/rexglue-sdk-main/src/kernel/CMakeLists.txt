@@ -51,8 +51,12 @@ set(REXKERNEL_SOURCES
     xboxkrnl/xboxkrnl_video.cpp
     xboxkrnl/xboxkrnl_xconfig.cpp
     xboxkrnl/xboxkrnl_audio.cpp
-    xboxkrnl/xboxkrnl_audio_xma.cpp
 )
+
+# XMA audio requires FFmpeg (not available on macOS)
+if(NOT APPLE)
+    list(APPEND REXKERNEL_SOURCES xboxkrnl/xboxkrnl_audio_xma.cpp)
+endif()
 
 add_library(rexkernel STATIC ${REXKERNEL_SOURCES})
 add_library(rex::kernel ALIAS rexkernel)

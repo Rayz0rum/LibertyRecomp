@@ -31,7 +31,9 @@ namespace rex::audio {
 constexpr memory::fourcc_t kAudioSaveSignature = memory::make_fourcc("XAUD");
 
 class AudioDriver;
+#ifndef __APPLE__
 class XmaDecoder;
+#endif
 
 class AudioSystem : public system::IAudioSystem {
  public:
@@ -39,7 +41,9 @@ class AudioSystem : public system::IAudioSystem {
 
   memory::Memory* memory() const { return memory_; }
   runtime::Processor* processor() const { return processor_; }
+#ifndef __APPLE__
   XmaDecoder* xma_decoder() const { return xma_decoder_.get(); }
+#endif
 
   virtual X_STATUS Setup(system::KernelState* kernel_state);
   virtual void Shutdown();
@@ -72,7 +76,9 @@ class AudioSystem : public system::IAudioSystem {
 
   memory::Memory* memory_ = nullptr;
   runtime::Processor* processor_ = nullptr;
+#ifndef __APPLE__
   std::unique_ptr<XmaDecoder> xma_decoder_;
+#endif
 
   std::atomic<bool> worker_running_ = {false};
   system::object_ref<system::XHostThread> worker_thread_;
