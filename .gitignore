@@ -596,3 +596,4 @@ DerivedData/
 *.bin
 eboot.bin
 *.pkg
+/flatpak
