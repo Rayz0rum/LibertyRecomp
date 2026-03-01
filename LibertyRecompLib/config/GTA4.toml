@@ -2,8 +2,8 @@
 # This is the main configuration file for XenonRecomp
 
 [main]
-file_path = "../../Grand Theft Auto IV (USA) (En,Fr,De,Es,It)/default.xex"
-out_directory_path = "../ppc"
+file_path = "../../../gta_iv/default.xex"
+out_directory_path = "../../glue/rexglue-sdk-main/gta4-recomp/generated"
 switch_table_file_path = "./gta4_switch_tables.toml"
 
 # Optimizations - disabled until we have a working build

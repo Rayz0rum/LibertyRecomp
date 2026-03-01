@@ -30,7 +30,7 @@ REXCVAR_DECLARE(bool, depth_transfer_not_equal_test);
 // GPU Render Targets
 REXCVAR_DECLARE(bool, native_stencil_value_output);
 REXCVAR_DECLARE(bool, native_stencil_value_output_d3d12_intel);
-REXCVAR_DECLARE(bool, gamma_render_target_as_srgb);
+REXCVAR_DECLARE(bool, gamma_render_target_as_unorm16);
 REXCVAR_DECLARE(bool, native_2x_msaa);
 REXCVAR_DECLARE(bool, snorm16_render_target_full_range);
 REXCVAR_DECLARE(bool, mrt_edram_used_range_clamp_to_min);
@@ -76,12 +76,5 @@ REXCVAR_DECLARE(bool, d3d12_dxbc_disasm_dxilconv);
 REXCVAR_DECLARE(int32_t, d3d12_pipeline_creation_threads);
 REXCVAR_DECLARE(bool, d3d12_tessellation_wireframe);
 REXCVAR_DECLARE(bool, d3d12_tiled_shared_memory);
-
-// GPU Backend Selection
-REXCVAR_DECLARE(std::string, gpu);
-
-// Metal specific (macOS)
-REXCVAR_DECLARE(bool, metal_validation_enabled);
-REXCVAR_DECLARE(int32_t, metal_gpu_family_override);
 
 #define XE_GPU_FINE_GRAINED_DRAW_SCOPES 1

@@ -10,7 +10,6 @@
  * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
  */
 
-
 #include <cstdint>
 
 #include <rex/assert.h>
@@ -34,16 +33,12 @@ class Surface {
     kTypeIndex_XcbWindow,
     // Windows.
     kTypeIndex_Win32Hwnd,
-    // macOS (CAMetalLayer via MoltenVK / VK_EXT_metal_surface).
-    kTypeIndex_MacOSMetalLayer,
   };
   using TypeFlags = uint32_t;
   enum : TypeFlags {
-    kTypeFlag_AndroidNativeWindow = TypeFlags(1)
-                                    << kTypeIndex_AndroidNativeWindow,
+    kTypeFlag_AndroidNativeWindow = TypeFlags(1) << kTypeIndex_AndroidNativeWindow,
     kTypeFlag_XcbWindow = TypeFlags(1) << kTypeIndex_XcbWindow,
     kTypeFlag_Win32Hwnd = TypeFlags(1) << kTypeIndex_Win32Hwnd,
-    kTypeFlag_MacOSMetalLayer = TypeFlags(1) << kTypeIndex_MacOSMetalLayer,
   };
 
   Surface(const Surface& surface) = delete;
@@ -83,4 +78,3 @@ class Surface {
 
 }  // namespace ui
 }  // namespace rex
-

@@ -101,6 +101,16 @@ bool build_xor(BuilderContext& ctx);
 bool build_xori(BuilderContext& ctx);
 bool build_xoris(BuilderContext& ctx);
 
+// Conditional Register operations
+bool build_crand(BuilderContext& ctx);
+bool build_crandc(BuilderContext& ctx);
+bool build_creqv(BuilderContext& ctx);
+bool build_crnand(BuilderContext& ctx);
+bool build_crnor(BuilderContext& ctx);
+bool build_cror(BuilderContext& ctx);
+bool build_crorc(BuilderContext& ctx);
+bool build_crxor(BuilderContext& ctx);
+
 // Equivalence (XNOR)
 bool build_eqv(BuilderContext& ctx);
 
@@ -184,6 +194,12 @@ bool build_bgtlr(BuilderContext& ctx);
 bool build_ble(BuilderContext& ctx);
 bool build_blelr(BuilderContext& ctx);
 
+// Conditional branch (so - summary overflow / unordered)
+bool build_bso(BuilderContext& ctx);
+bool build_bsolr(BuilderContext& ctx);
+bool build_bns(BuilderContext& ctx);
+bool build_bnslr(BuilderContext& ctx);
+
 //=============================================================================
 // Floating Point Builders
 //=============================================================================
@@ -226,6 +242,7 @@ bool build_fmadd(BuilderContext& ctx);
 bool build_fmadds(BuilderContext& ctx);
 bool build_fmsub(BuilderContext& ctx);
 bool build_fmsubs(BuilderContext& ctx);
+bool build_fnmadd(BuilderContext& ctx);
 bool build_fnmadds(BuilderContext& ctx);
 bool build_fnmsub(BuilderContext& ctx);
 bool build_fnmsubs(BuilderContext& ctx);
@@ -251,6 +268,7 @@ bool build_lis(BuilderContext& ctx);
 bool build_lbz(BuilderContext& ctx);
 bool build_lbzu(BuilderContext& ctx);
 bool build_lbzx(BuilderContext& ctx);
+bool build_lbzux(BuilderContext& ctx);
 
 // Halfword loads
 bool build_lha(BuilderContext& ctx);
@@ -275,6 +293,7 @@ bool build_lwzx(BuilderContext& ctx);
 bool build_ld(BuilderContext& ctx);
 bool build_ldu(BuilderContext& ctx);
 bool build_ldx(BuilderContext& ctx);
+bool build_ldux(BuilderContext& ctx);
 
 // Atomic load and reserve
 bool build_lwarx(BuilderContext& ctx);
@@ -294,6 +313,7 @@ bool build_lfsx(BuilderContext& ctx);
 bool build_stb(BuilderContext& ctx);
 bool build_stbu(BuilderContext& ctx);
 bool build_stbx(BuilderContext& ctx);
+bool build_stbux(BuilderContext& ctx);
 
 // Halfword stores
 bool build_sth(BuilderContext& ctx);
@@ -317,6 +337,7 @@ bool build_stdcx(BuilderContext& ctx);
 bool build_std(BuilderContext& ctx);
 bool build_stdu(BuilderContext& ctx);
 bool build_stdx(BuilderContext& ctx);
+bool build_stdux(BuilderContext& ctx);
 
 // Floating point stores
 bool build_stfd(BuilderContext& ctx);
@@ -325,6 +346,7 @@ bool build_stfdx(BuilderContext& ctx);
 bool build_stfiwx(BuilderContext& ctx);
 bool build_stfs(BuilderContext& ctx);
 bool build_stfsu(BuilderContext& ctx);
+bool build_stfsux(BuilderContext& ctx);
 bool build_stfsx(BuilderContext& ctx);
 
 // Vector loads
@@ -354,6 +376,7 @@ bool build_eieio(BuilderContext& ctx);
 bool build_db16cyc(BuilderContext& ctx);
 bool build_cctpl(BuilderContext& ctx);
 bool build_cctpm(BuilderContext& ctx);
+bool build_cctph(BuilderContext& ctx);
 
 // Trap instructions (generic builders - all specific variants map to these)
 bool build_twi(BuilderContext& ctx);  // Trap word immediate
@@ -415,9 +438,11 @@ bool build_vmsum4fp128(BuilderContext& ctx);
 // Vector rounding
 bool build_vrfim(BuilderContext& ctx);
 bool build_vrfin(BuilderContext& ctx);
+bool build_vrfip(BuilderContext& ctx);
 bool build_vrfiz(BuilderContext& ctx);
 
 // Vector integer arithmetic
+bool build_vaddsbs(BuilderContext& ctx);
 bool build_vaddshs(BuilderContext& ctx);
 bool build_vaddsws(BuilderContext& ctx);
 bool build_vaddubm(BuilderContext& ctx);
@@ -425,15 +450,26 @@ bool build_vaddubs(BuilderContext& ctx);
 bool build_vadduhm(BuilderContext& ctx);
 bool build_vadduwm(BuilderContext& ctx);
 bool build_vadduws(BuilderContext& ctx);
+bool build_vadduhs(BuilderContext& ctx);
+bool build_vsubsbs(BuilderContext& ctx);
 bool build_vsubshs(BuilderContext& ctx);
 bool build_vsubsws(BuilderContext& ctx);
+bool build_vsububm(BuilderContext& ctx);
 bool build_vsububs(BuilderContext& ctx);
+bool build_vsubuws(BuilderContext& ctx);
+bool build_vsubuhs(BuilderContext& ctx);
 bool build_vsubuhm(BuilderContext& ctx);
+bool build_vsubuwm(BuilderContext& ctx);
 bool build_vmaxsh(BuilderContext& ctx);
+bool build_vmaxsb(BuilderContext& ctx);
 bool build_vmaxsw(BuilderContext& ctx);
 bool build_vmaxuh(BuilderContext& ctx);
 bool build_vminsh(BuilderContext& ctx);
+bool build_vminsb(BuilderContext& ctx);
+bool build_vminsw(BuilderContext& ctx);
 bool build_vminuh(BuilderContext& ctx);
+bool build_vmaxub(BuilderContext& ctx);
+bool build_vminub(BuilderContext& ctx);
 
 // Vector average
 bool build_vavgsb(BuilderContext& ctx);
@@ -454,11 +490,15 @@ bool build_vsel(BuilderContext& ctx);
 bool build_vcmpbfp(BuilderContext& ctx);
 bool build_vcmpeqfp(BuilderContext& ctx);
 bool build_vcmpequb(BuilderContext& ctx);
+bool build_vcmpequh(BuilderContext& ctx);
 bool build_vcmpequw(BuilderContext& ctx);
 bool build_vcmpgefp(BuilderContext& ctx);
 bool build_vcmpgtfp(BuilderContext& ctx);
 bool build_vcmpgtub(BuilderContext& ctx);
 bool build_vcmpgtuh(BuilderContext& ctx);
+bool build_vcmpgtuw(BuilderContext& ctx);
+bool build_vcmpgtsh(BuilderContext& ctx);
+bool build_vcmpgtsw(BuilderContext& ctx);
 
 // Vector conversion
 bool build_vctsxs(BuilderContext& ctx);
@@ -488,11 +528,14 @@ bool build_vslw(BuilderContext& ctx);
 bool build_vslo(BuilderContext& ctx);
 bool build_vsr(BuilderContext& ctx);
 bool build_vsrh(BuilderContext& ctx);
+bool build_vsrb(BuilderContext& ctx);
+bool build_vsrab(BuilderContext& ctx);
 bool build_vsrah(BuilderContext& ctx);
 bool build_vsraw(BuilderContext& ctx);
 bool build_vsrw(BuilderContext& ctx);
 bool build_vsro(BuilderContext& ctx);
 bool build_vrlh(BuilderContext& ctx);
+bool build_vrlw(BuilderContext& ctx);
 
 // Vector splat
 bool build_vspltb(BuilderContext& ctx);
@@ -520,4 +563,4 @@ bool build_vupkhsh(BuilderContext& ctx);
 bool build_vupklsb(BuilderContext& ctx);
 bool build_vupklsh(BuilderContext& ctx);
 
-} // namespace rex::codegen
+}  // namespace rex::codegen

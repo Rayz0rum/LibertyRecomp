@@ -1,37 +1,8 @@
-# rexkernel: Kernel emulation (ported from Xenia)
+# rexkernel: Xbox 360 kernel/XAM export implementations (ported from Xenia)
 # Namespace: rex::kernel
-
-# Allow embedding in a parent project via REXGLUE_SDK_ROOT
-if(NOT DEFINED REXGLUE_SDK_ROOT)
-    set(REXGLUE_SDK_ROOT "${CMAKE_SOURCE_DIR}")
-endif()
+# System emulation layer has moved to rexsystem (rex::system)
 
 set(REXKERNEL_SOURCES
-    runtime.cpp
-    xmemory.cpp
-
-    kernel_module.cpp
-    kernel_state.cpp
-    user_module.cpp
-    xenumerator.cpp
-    xevent.cpp
-    xfile.cpp
-    xiocompletion.cpp
-    xmodule.cpp
-    xmutant.cpp
-    xnotifylistener.cpp
-    xobject.cpp
-    xsemaphore.cpp
-    xsocket.cpp
-    xsymboliclink.cpp
-    xthread.cpp
-    xtimer.cpp
-
-    # Utilities
-    util/native_list.cpp
-    util/object_table.cpp
-    util/xdbf_utils.cpp
-
     # XAM subsystem - provides __imp__Xam* symbols
     xam/xam_module.cpp
     xam/xam_avatar.cpp
@@ -41,7 +12,7 @@ set(REXKERNEL_SOURCES
     xam/xam_debug.cpp
     xam/xam_enum.cpp
     xam/xam_info.cpp
-    # xam/xam_input.cpp           # Disabled: depends on rexinput
+    xam/xam_input.cpp
     xam/xam_locale.cpp
     xam/xam_msg.cpp
     xam/xam_net.cpp
@@ -53,9 +24,6 @@ set(REXKERNEL_SOURCES
     xam/xam_user.cpp
     xam/xam_video.cpp
     xam/xam_voice.cpp
-    xam/app_manager.cpp
-    xam/content_manager.cpp
-    xam/user_profile.cpp
     xam/apps/xam_app.cpp
     xam/apps/xgi_app.cpp
     xam/apps/xlivebase_app.cpp
@@ -64,61 +32,45 @@ set(REXKERNEL_SOURCES
     # xboxkrnl exports - provides __imp__ symbols for generated code
     # xboxkrnl/cert_monitor.cpp    # TODO: Translate JIT methods for AOT
     # xboxkrnl/debug_monitor.cpp   # TODO: Translate JIT methods for AOT
-     xboxkrnl/xboxkrnl_crypt.cpp
-     xboxkrnl/xboxkrnl_debug.cpp
-     xboxkrnl/xboxkrnl_error.cpp
-     xboxkrnl/xboxkrnl_hal.cpp
-     xboxkrnl/xboxkrnl_hid.cpp
-     xboxkrnl/xboxkrnl_io.cpp
-     xboxkrnl/xboxkrnl_io_info.cpp
-     xboxkrnl/xboxkrnl_memory.cpp
-     xboxkrnl/xboxkrnl_misc.cpp
-     xboxkrnl/xboxkrnl_module.cpp
-     xboxkrnl/xboxkrnl_modules.cpp
-     xboxkrnl/xboxkrnl_ob.cpp
-     xboxkrnl/xboxkrnl_rtl.cpp
-     xboxkrnl/xboxkrnl_strings.cpp
-     xboxkrnl/xboxkrnl_threading.cpp
+    xboxkrnl/xboxkrnl_crypt.cpp
+    xboxkrnl/xboxkrnl_debug.cpp
+    xboxkrnl/xboxkrnl_error.cpp
+    xboxkrnl/xboxkrnl_hal.cpp
+    xboxkrnl/xboxkrnl_hid.cpp
+    xboxkrnl/xboxkrnl_io.cpp
+    xboxkrnl/xboxkrnl_io_info.cpp
+    xboxkrnl/xboxkrnl_memory.cpp
+    xboxkrnl/xboxkrnl_misc.cpp
+    xboxkrnl/xboxkrnl_module.cpp
+    xboxkrnl/xboxkrnl_modules.cpp
+    xboxkrnl/xboxkrnl_ob.cpp
+    xboxkrnl/xboxkrnl_rtl.cpp
+    xboxkrnl/xboxkrnl_strings.cpp
+    xboxkrnl/xboxkrnl_threading.cpp
     # xboxkrnl/xboxkrnl_usbcam.cpp  # TODO: lol eventually.
     xboxkrnl/xboxkrnl_video.cpp
     xboxkrnl/xboxkrnl_xconfig.cpp
-    # xboxkrnl/xboxkrnl_audio.cpp       # Disabled: depends on rexaudio
-    # xboxkrnl/xboxkrnl_audio_xma.cpp   # Disabled: depends on rexaudio
+    xboxkrnl/xboxkrnl_audio.cpp
+    xboxkrnl/xboxkrnl_audio_xma.cpp
 )
 
 add_library(rexkernel STATIC ${REXKERNEL_SOURCES})
 add_library(rex::kernel ALIAS rexkernel)
 
 target_include_directories(rexkernel PUBLIC
-    $<BUILD_INTERFACE:${REXGLUE_SDK_ROOT}/include>
+    $<BUILD_INTERFACE:${REXGLUE_ROOT}/include>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 target_include_directories(rexkernel PRIVATE
-    ${REXGLUE_SDK_ROOT}/thirdparty
+    ${REXGLUE_ROOT}/thirdparty
 )
 
 target_link_libraries(rexkernel
     PUBLIC
-        rexcore
-        rexfilesystem
-        rexruntime
-        simde
+        rexsystem
     PRIVATE
-        # rexgraphics rexinput rexaudio - disabled for headless codegen build
-        aes128
+        rexgraphics
+        rexinput
+        $<$<NOT:$<BOOL:${APPLE}>>:rexaudio>
 )
-
-# Headless mode: no graphics/input/audio subsystems
-# Default ON for standalone RexGlue builds, but consumers (e.g. LibertyRecomp)
-# can set REXGLUE_HEADLESS=OFF before add_subdirectory() to get full subsystems.
-if(NOT DEFINED REXGLUE_HEADLESS)
-    set(REXGLUE_HEADLESS ON)
-endif()
-if(REXGLUE_HEADLESS)
-    target_compile_definitions(rexkernel PUBLIC REX_HEADLESS=1)
-endif()
-
-if(WIN32)
-    target_link_libraries(rexkernel PRIVATE ws2_32)
-endif()
 

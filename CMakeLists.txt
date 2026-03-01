@@ -1,9 +1,5 @@
 cmake_minimum_required (VERSION 3.20)
 
-if(NOT DEFINED ENV{VCPKG_ROOT})
-    message(FATAL_ERROR "VCPKG_ROOT is not defined!")
-endif()
-
 set(LIBERTY_RECOMP_THIRDPARTY_ROOT ${CMAKE_SOURCE_DIR}/thirdparty)
 set(LIBERTY_RECOMP_TOOLS_ROOT ${CMAKE_SOURCE_DIR}/tools)
 set(CMAKE_CXX_STANDARD 23)
@@ -18,6 +14,15 @@ endif()
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 project("LibertyRecomp-ALL")
+
+# ─── vcpkg check (desktop platforms only) ──────────────────────────────────
+# Mobile/console platforms use system SDKs and don't need vcpkg
+if(NOT DEFINED LIBERTY_RECOMP_TARGET_PLATFORM OR LIBERTY_RECOMP_TARGET_PLATFORM STREQUAL "desktop")
+    if(NOT DEFINED ENV{VCPKG_ROOT})
+        message(FATAL_ERROR "VCPKG_ROOT is not defined! Set it or use a platform-specific preset.")
+    endif()
+endif()
+# ────────────────────────────────────────────────────────────────────────────
 
 # ─── Cross-Platform Target Selection ───────────────────────────────────────
 # Set LIBERTY_RECOMP_TARGET_PLATFORM to one of: desktop, ios, android, ps4, switch

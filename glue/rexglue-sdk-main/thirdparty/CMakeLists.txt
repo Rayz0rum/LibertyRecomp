@@ -1,18 +1,34 @@
 # Third-party vendored dependencies for ReXGlue
-# Libraries available via vcpkg are no longer defined here
 
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 #=============================================================================
 # Verify git submodules are initialized (only vendored ones)
 #=============================================================================
 set(REQUIRED_SUBMODULES
-    abseil-cpp
+    cli11
     libmspack
     FFmpeg
-    glslang
     tomlplusplus
     simde
     xxHash
+    spdlog
+    fmt
+    snappy
+    utfcpp
+    imgui
+    sdl2
 )
+
+if(REXGLUE_USE_VULKAN)
+    list(APPEND REQUIRED_SUBMODULES
+        volk vulkan-headers vulkan-memory-allocator
+        spirv-headers spirv-tools glslang
+    )
+endif()
+
+if(REXGLUE_BUILD_TESTS)
+    list(APPEND REQUIRED_SUBMODULES catch2)
+endif()
 
 foreach(submodule ${REQUIRED_SUBMODULES})
     if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${submodule}/.git")
@@ -98,38 +114,165 @@ add_subdirectory(disasm)
 target_compile_options(disasm PRIVATE -w)
 
 #=============================================================================
-# glslang/SPIRV - SPIR-V code generation for shader translation
+# fmt - Formatting library (must come before spdlog)
 #=============================================================================
+set(FMT_DOC OFF CACHE BOOL "" FORCE)
+set(FMT_TEST OFF CACHE BOOL "" FORCE)
+set(FMT_INSTALL ON CACHE BOOL "" FORCE)
+add_subdirectory(fmt)
+target_compile_options(fmt PRIVATE -w)
 
-# glslang is used only for its SPIR-V building capabilities
-# We disable everything we don't need to minimize build time
-set(ENABLE_GLSLANG_BINARIES OFF CACHE BOOL "" FORCE)
-set(ENABLE_SPVREMAPPER OFF CACHE BOOL "" FORCE)
-set(ENABLE_HLSL OFF CACHE BOOL "" FORCE)
-set(ENABLE_OPT OFF CACHE BOOL "" FORCE)
-set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
-set(SKIP_GLSLANG_INSTALL ON CACHE BOOL "" FORCE)
-# Enable RTTI for spv::Builder inheritance in SpirvBuilder
-set(ENABLE_RTTI ON CACHE BOOL "" FORCE)
+#=============================================================================
+# spdlog - Logging library
+#=============================================================================
+set(SPDLOG_FMT_EXTERNAL ON CACHE BOOL "" FORCE)
+set(SPDLOG_BUILD_EXAMPLE OFF CACHE BOOL "" FORCE)
+set(SPDLOG_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(SPDLOG_BUILD_BENCH OFF CACHE BOOL "" FORCE)
+set(SPDLOG_INSTALL ON CACHE BOOL "" FORCE)
+add_subdirectory(spdlog)
+target_compile_options(spdlog PRIVATE -w)
 
-# Add glslang subdirectory
-# Set policy minimum for older glslang versions with outdated cmake_minimum_required
-set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE STRING "" FORCE)
-add_subdirectory(glslang)
-# Create alias for older glslang versions that don't provide it
-if(NOT TARGET glslang::SPIRV)
-    add_library(glslang::SPIRV ALIAS SPIRV)
+#=============================================================================
+# snappy - Fast compression/decompression (GPU traces)
+#=============================================================================
+set(SNAPPY_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(SNAPPY_BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
+set(SNAPPY_INSTALL ON CACHE BOOL "" FORCE)
+add_subdirectory(snappy)
+target_compile_options(snappy PRIVATE -w)
+
+#=============================================================================
+# utfcpp - UTF-8 string library (header-only)
+#=============================================================================
+add_subdirectory(utfcpp)
+
+#=============================================================================
+# Vulkan dependencies (only when Vulkan backend is enabled)
+#=============================================================================
+if(REXGLUE_USE_VULKAN)
+    # Vulkan-Headers
+    set(VULKAN_HEADERS_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
+    set(VULKAN_HEADERS_ENABLE_INSTALL ON CACHE BOOL "" FORCE)
+    set(VULKAN_HEADERS_ENABLE_MODULE OFF CACHE BOOL "" FORCE)
+    add_subdirectory(vulkan-headers)
+
+    # VulkanMemoryAllocator
+    set(VMA_ENABLE_INSTALL ON CACHE BOOL "" FORCE)
+    add_subdirectory(vulkan-memory-allocator)
+
+    # volk
+    set(VOLK_INSTALL ON CACHE BOOL "" FORCE)
+    set(VOLK_PULL_IN_VULKAN OFF CACHE BOOL "" FORCE)
+    add_subdirectory(volk)
+    target_link_libraries(volk PUBLIC Vulkan::Headers)
+    target_link_libraries(volk_headers INTERFACE Vulkan::Headers)
+    target_compile_options(volk PRIVATE -w)
 endif()
 
 #=============================================================================
-# abseil-cpp - Google's C++ common libraries
+# imgui - Immediate mode GUI (no CMakeLists.txt, manual target)
 #=============================================================================
-set(ABSL_PROPAGATE_CXX_STD ON CACHE BOOL "" FORCE)
-set(ABSL_BUILD_TESTING OFF CACHE BOOL "" FORCE)
-set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
-set(ABSL_ENABLE_INSTALL ON CACHE BOOL "" FORCE)
-add_subdirectory(abseil-cpp)
+set(IMGUI_DIR "${CMAKE_CURRENT_SOURCE_DIR}/imgui")
+add_library(imgui STATIC
+    ${IMGUI_DIR}/imgui.cpp
+    ${IMGUI_DIR}/imgui_demo.cpp
+    ${IMGUI_DIR}/imgui_draw.cpp
+    ${IMGUI_DIR}/imgui_tables.cpp
+    ${IMGUI_DIR}/imgui_widgets.cpp
+)
+add_library(imgui::imgui ALIAS imgui)
+target_include_directories(imgui PUBLIC
+    $<BUILD_INTERFACE:${IMGUI_DIR}>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
+target_compile_options(imgui PRIVATE -w)
 
+#=============================================================================
+# SDL2 - Cross-platform media layer
+#=============================================================================
+set(SDL2_DISABLE_INSTALL OFF CACHE BOOL "" FORCE)
+set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+set(SDL_STATIC ON CACHE BOOL "" FORCE)
+set(SDL_TEST OFF CACHE BOOL "" FORCE)
+
+# Disable unused subsystems
+set(SDL_VIDEO OFF CACHE BOOL "" FORCE)
+set(SDL_RENDER OFF CACHE BOOL "" FORCE)
+set(SDL_HAPTIC OFF CACHE BOOL "" FORCE)
+set(SDL_SENSOR OFF CACHE BOOL "" FORCE)
+set(SDL_POWER OFF CACHE BOOL "" FORCE)
+set(SDL_FILESYSTEM OFF CACHE BOOL "" FORCE)
+set(SDL_LOCALE OFF CACHE BOOL "" FORCE)
+set(SDL_FILE OFF CACHE BOOL "" FORCE)
+set(SDL_MISC OFF CACHE BOOL "" FORCE)
+
+# Disable graphics APIs (unused without video)
+set(SDL_OPENGL OFF CACHE BOOL "" FORCE)
+set(SDL_OPENGLES OFF CACHE BOOL "" FORCE)
+set(SDL_VULKAN OFF CACHE BOOL "" FORCE)
+set(SDL_METAL OFF CACHE BOOL "" FORCE)
+
+# Disable dummy drivers
+set(SDL_DISKAUDIO OFF CACHE BOOL "" FORCE)
+set(SDL_DUMMYAUDIO OFF CACHE BOOL "" FORCE)
+set(SDL_DUMMYVIDEO OFF CACHE BOOL "" FORCE)
+
+add_subdirectory(sdl2)
+
+#=============================================================================
+# DXC API headers (vendored from DirectXShaderCompiler, runtime-loaded)
+#=============================================================================
+if(REXGLUE_USE_D3D12)
+    add_library(dxc-headers INTERFACE)
+    target_include_directories(dxc-headers INTERFACE
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/dxc/include>
+        $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/dxc>)
+endif()
+
+#=============================================================================
+# SPIR-V toolchain (only when Vulkan backend is enabled)
+#=============================================================================
+if(REXGLUE_USE_VULKAN)
+    # SPIRV-Headers
+    set(SPIRV_HEADERS_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
+    set(SPIRV_HEADERS_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+    add_subdirectory(spirv-headers)
+
+    # SPIRV-Tools
+    set(SPIRV_SKIP_EXECUTABLES ON CACHE BOOL "" FORCE)
+    set(SPIRV_SKIP_TESTS ON CACHE BOOL "" FORCE)
+    set(SPIRV_WERROR OFF CACHE BOOL "" FORCE)
+    set(SKIP_SPIRV_TOOLS_INSTALL ON CACHE BOOL "" FORCE)
+    add_subdirectory(spirv-tools)
+    target_compile_options(SPIRV-Tools-static PRIVATE -w)
+
+    # glslang/SPIRV - SPIR-V code generation for shader translation
+    set(ENABLE_GLSLANG_BINARIES OFF CACHE BOOL "" FORCE)
+    set(ENABLE_SPVREMAPPER OFF CACHE BOOL "" FORCE)
+    set(ENABLE_HLSL OFF CACHE BOOL "" FORCE)
+    set(ENABLE_OPT OFF CACHE BOOL "" FORCE)
+    set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
+    set(SKIP_GLSLANG_INSTALL ON CACHE BOOL "" FORCE)
+    # Enable RTTI for spv::Builder inheritance in SpirvBuilder
+    set(ENABLE_RTTI ON CACHE BOOL "" FORCE)
+
+    # Set policy minimum for older glslang versions with outdated cmake_minimum_required
+    set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE STRING "" FORCE)
+    add_subdirectory(glslang)
+    # Create alias for older glslang versions that don't provide it
+    if(NOT TARGET glslang::SPIRV)
+        add_library(glslang::SPIRV ALIAS SPIRV)
+    endif()
+endif()
+
+#=============================================================================
+# Catch2 - Test framework (only when tests are enabled, not part of SDK install)
+#=============================================================================
+if(REXGLUE_BUILD_TESTS)
+    add_subdirectory(catch2)
+endif()
+
+if(NOT APPLE)  # FFmpeg requires configure on macOS — skip for codegen-only builds
 #=============================================================================
 # FFmpeg - Audio/video codec library (for XMA decoding)
 # Only builds libavutil and libavcodec needed for WMA Pro decoding
@@ -230,8 +373,8 @@ add_library(libavutil STATIC
     ${FFMPEG_DIR}/libavutil/film_grain_params.c
 )
 
-# Add x86 optimizations on x86_64 platforms only (not ARM64)
-if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+# Add x86 optimizations on Windows/Linux
+if(WIN32 OR (UNIX AND NOT APPLE))
     target_sources(libavutil PRIVATE
         ${FFMPEG_DIR}/libavutil/x86/cpu.c
         ${FFMPEG_DIR}/libavutil/x86/fixed_dsp_init.c
@@ -319,8 +462,8 @@ if(WIN32)
     )
 endif()
 
-# Add x86 optimizations on x86_64 platforms only (not ARM64)
-if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+# Add x86 optimizations on Windows/Linux
+if(WIN32 OR (UNIX AND NOT APPLE))
     target_sources(libavcodec PRIVATE
         ${FFMPEG_DIR}/libavcodec/x86/constants.c
         ${FFMPEG_DIR}/libavcodec/x86/fdctdsp_init.c
@@ -345,3 +488,4 @@ endif()
 
 # IDE folder organization
 set_target_properties(libavutil libavcodec PROPERTIES FOLDER "FFmpeg")
+endif()  # NOT APPLE (FFmpeg)

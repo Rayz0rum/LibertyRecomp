@@ -1,11 +1,6 @@
 # rexcore - Core utilities library
 # Foundation types, data structures, and threading primitives
 
-# Allow embedding in a parent project via REXGLUE_SDK_ROOT
-if(NOT DEFINED REXGLUE_SDK_ROOT)
-    set(REXGLUE_SDK_ROOT "${CMAKE_SOURCE_DIR}")
-endif()
-
 add_library(rexcore STATIC
     arena.cpp
     bit_map.cpp
@@ -33,53 +28,61 @@ add_library(rex::core ALIAS rexcore)
 # Platform-specific sources
 if(WIN32)
     target_sources(rexcore PRIVATE
-        debugging_win.cpp
+        atomic_win.cpp
+        clock_win.cpp
+        dbg_win.cpp
+        dynlib_win.cpp
         exception_handler_win.cpp
         filesystem_win.cpp
         mapped_memory_win.cpp
+        math_msvc.cpp
         memory_win.cpp
+        seh_win.cpp
+        socket_win.cpp
+        string_win.cpp
+        threading_win.cpp
     )
 elseif(UNIX)
     target_sources(rexcore PRIVATE
-        debugging_posix.cpp
+        atomic_posix.cpp
+        clock_posix.cpp
+        dbg_posix.cpp
+        dynlib_posix.cpp
         exception_handler_posix.cpp
         filesystem_posix.cpp
         mapped_memory_posix.cpp
+        math_gcc.cpp
         memory_posix.cpp
+        seh_posix.cpp
+        socket_posix.cpp
+        string_posix.cpp
+        threading_posix.cpp
     )
 endif()
 
 target_include_directories(rexcore PUBLIC
-    $<BUILD_INTERFACE:${REXGLUE_SDK_ROOT}/include>
+    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 
 target_include_directories(rexcore PRIVATE
-    ${REXGLUE_SDK_ROOT}
+    ${PROJECT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/thirdparty/cli11/include
 )
 
-if(UNIX)
-    target_link_libraries(rexcore PRIVATE pthread)
-    if(NOT APPLE)
-        # librt is needed on Linux for shm_open/shm_unlink but doesn't exist on macOS
-        target_link_libraries(rexcore PRIVATE rt)
-    endif()
-endif()
-
-# Allow parent project to override fmt target (e.g. for vcpkg compatibility)
-if(NOT DEFINED REXGLUE_FMT_TARGET)
-    set(REXGLUE_FMT_TARGET fmt::fmt)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(rexcore PRIVATE pthread rt dl)
+elseif(APPLE)
+    target_link_libraries(rexcore PRIVATE pthread dl)
 endif()
 
 target_link_libraries(rexcore
-    PUBLIC 
-        ${REXGLUE_FMT_TARGET}
-        date::date 
-        simde 
-        absl::flags 
-        absl::flags_parse 
+    PUBLIC
+        fmt::fmt
+        simde
         tomlplusplus
         spdlog::spdlog
-    PRIVATE 
+    PRIVATE
         disruptorplus
+        utf8cpp
 )

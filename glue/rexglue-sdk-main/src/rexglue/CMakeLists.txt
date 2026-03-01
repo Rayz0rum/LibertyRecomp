@@ -4,21 +4,34 @@ add_executable(rexglue
     main.cpp
     commands/codegen_command.cpp
     commands/init_command.cpp
+    commands/migrate_command.cpp
     commands/test_recompiler.cpp
 )
 
 target_include_directories(rexglue
     PRIVATE
-        ${CMAKE_SOURCE_DIR}/src
-        ${CMAKE_SOURCE_DIR}/thirdparty/disasm
+        ${REXGLUE_ROOT}/src
+        ${REXGLUE_ROOT}/thirdparty/disasm
 )
 
 target_link_libraries(rexglue
     PRIVATE
         rexcodegen
-        absl::flags
-        absl::flags_parse
-        absl::flags_usage
 )
+
+# TODO: fix the circular dependency with rexsystem and rexkernel (init/ordinals)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(rexglue PRIVATE
+        -Wl,--start-group
+        rexsystem
+        rexkernel
+        -Wl,--end-group
+    )
+elseif(APPLE)
+    target_link_libraries(rexglue PRIVATE
+        rexsystem
+        rexkernel
+    )
+endif()
 
 add_executable(rex::rexglue ALIAS rexglue)

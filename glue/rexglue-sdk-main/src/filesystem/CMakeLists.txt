@@ -1,8 +1,3 @@
-# Allow embedding in a parent project via REXGLUE_SDK_ROOT
-if(NOT DEFINED REXGLUE_SDK_ROOT)
-    set(REXGLUE_SDK_ROOT "${CMAKE_SOURCE_DIR}")
-endif()
-
 add_library(rexfilesystem STATIC
     device.cpp
     entry.cpp
@@ -24,7 +19,7 @@ add_library(rex::filesystem ALIAS rexfilesystem)
 
 target_link_libraries(rexfilesystem PUBLIC rexcore)
 target_include_directories(rexfilesystem PUBLIC
-    $<BUILD_INTERFACE:${REXGLUE_SDK_ROOT}/include>
+    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 target_include_directories(rexfilesystem PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/devices)

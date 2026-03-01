@@ -23,5 +23,6 @@ target_include_directories(rexaudio PUBLIC
 
 target_link_libraries(rexaudio
     PUBLIC rexcore SDL2::SDL2
-    PRIVATE libavcodec libavutil
+    $<$<NOT:$<BOOL:${APPLE}>>:libavcodec>
+    $<$<NOT:$<BOOL:${APPLE}>>:libavutil>
 )

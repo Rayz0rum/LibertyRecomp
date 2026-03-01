@@ -113,7 +113,7 @@ add_subdirectory(
 )
 
 add_subdirectory(
-    "${REXGLUE_SDK_ROOT}/src/runtime"
+    "${REXGLUE_SDK_ROOT}/src/system"
     "${CMAKE_CURRENT_BINARY_DIR}/rexglue-runtime"
 )
 

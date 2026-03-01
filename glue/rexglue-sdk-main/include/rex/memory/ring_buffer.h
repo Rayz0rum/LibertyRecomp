@@ -17,7 +17,7 @@
 #include <vector>
 
 #include <rex/assert.h>
-#include <rex/byte_order.h>
+#include <rex/types.h>
 
 namespace rex::memory {
 
@@ -75,8 +75,7 @@ class RingBuffer {
 
   template <typename T>
   T Read() {
-    static_assert(std::is_fundamental<T>::value,
-                  "Immediate read only supports basic types!");
+    static_assert(std::is_fundamental<T>::value, "Immediate read only supports basic types!");
 
     T imm;
     size_t read = Read(reinterpret_cast<uint8_t*>(&imm), sizeof(T));
@@ -86,11 +85,11 @@ class RingBuffer {
 
   template <typename T>
   T ReadAndSwap() {
-    static_assert(std::is_fundamental<T>::value,
-                  "Immediate read only supports basic types!");
+    static_assert(std::is_fundamental<T>::value, "Immediate read only supports basic types!");
 
     T imm;
-    assert_true(Read(reinterpret_cast<uint8_t*>(&imm), sizeof(T)) == sizeof(T));
+    size_t read = Read(reinterpret_cast<uint8_t*>(&imm), sizeof(T));
+    assert_true(read == sizeof(T));
     imm = rex::byte_swap(imm);
     return imm;
   }
@@ -114,4 +113,3 @@ class RingBuffer {
 };
 
 }  // namespace rex::memory
-

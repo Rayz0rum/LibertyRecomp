@@ -58,43 +58,11 @@ set(REXGRAPHICS_VULKAN_SOURCES
     vulkan/texture_cache.cpp
 )
 
-# Metal backend (macOS only)
-if(APPLE)
-    # DXBC shader translation (needed for DXBC → DXIL → Metal IR pipeline)
-    set(REXGRAPHICS_DXBC_THIRDPARTY_SOURCES_MAC
-        ${CMAKE_SOURCE_DIR}/thirdparty/dxbc/DXBCChecksum.cpp
-    )
-
-    set(REXGRAPHICS_DXBC_SOURCES_MAC
-        pipeline/shader/dxbc.cpp
-        pipeline/shader/dxbc_translator.cpp
-        pipeline/shader/dxbc_translator_alu.cpp
-        pipeline/shader/dxbc_translator_fetch.cpp
-        pipeline/shader/dxbc_translator_memexport.cpp
-        pipeline/shader/dxbc_translator_om.cpp
-    )
-
-    # Metal GPU backend
-    set(REXGRAPHICS_METAL_SOURCES
-        metal/graphics_system.mm
-        metal/command_processor.mm
-        metal/pipeline_cache.mm
-        metal/primitive_processor.mm
-        metal/render_target_cache.mm
-        metal/shader.mm
-        metal/shared_memory.mm
-        metal/texture_cache.mm
-        metal/dxbc_to_dxil_converter.mm
-        metal/metal_shader_converter.mm
-        metal/shader_cache.mm
-    )
-endif()
-
-# D3D12 backend (Windows only)
-if(WIN32)
+# D3D12 backend
+if(REXGLUE_USE_D3D12)
     # DXBC third-party dependency
     set(REXGRAPHICS_DXBC_THIRDPARTY_SOURCES
-        ${CMAKE_SOURCE_DIR}/thirdparty/dxbc/DXBCChecksum.cpp
+        ${REXGLUE_ROOT}/thirdparty/dxbc/DXBCChecksum.cpp
     )
 
     # DXBC shader translation (required for D3D12)
@@ -125,21 +93,13 @@ endif()
 set(REXGRAPHICS_SOURCES
     ${REXGRAPHICS_CORE_SOURCES}
     ${REXGRAPHICS_SYSTEM_SOURCES}
-    ${REXGRAPHICS_SPIRV_SOURCES}
-    ${REXGRAPHICS_VULKAN_SOURCES}
 )
 
-# Add Metal sources on macOS
-if(APPLE)
-    list(APPEND REXGRAPHICS_SOURCES
-        ${REXGRAPHICS_DXBC_THIRDPARTY_SOURCES_MAC}
-        ${REXGRAPHICS_DXBC_SOURCES_MAC}
-        ${REXGRAPHICS_METAL_SOURCES}
-    )
+if(REXGLUE_USE_VULKAN)
+    list(APPEND REXGRAPHICS_SOURCES ${REXGRAPHICS_SPIRV_SOURCES} ${REXGRAPHICS_VULKAN_SOURCES})
 endif()
 
-# Add D3D12 sources on Windows
-if(WIN32)
+if(REXGLUE_USE_D3D12)
     list(APPEND REXGRAPHICS_SOURCES ${REXGRAPHICS_DXBC_THIRDPARTY_SOURCES} ${REXGRAPHICS_DXBC_SOURCES} ${REXGRAPHICS_D3D12_SOURCES})
 endif()
 
@@ -147,58 +107,36 @@ add_library(rexgraphics STATIC ${REXGRAPHICS_SOURCES})
 add_library(rex::graphics ALIAS rexgraphics)
 
 target_include_directories(rexgraphics PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
+    $<BUILD_INTERFACE:${REXGLUE_ROOT}/include>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 target_include_directories(rexgraphics PRIVATE
-    ${CMAKE_SOURCE_DIR}/thirdparty/renderdoc
-    ${CMAKE_SOURCE_DIR}  # For thirdparty/DirectXShaderCompiler includes
+    ${REXGLUE_ROOT}/thirdparty/renderdoc
+    ${REXGLUE_ROOT}  # For thirdparty/dxbc/DXBCChecksum.h include
 )
 
 target_link_libraries(rexgraphics PUBLIC
     rexcore
-    rexkernel
+    rexsystem
     rexui
-    volk::volk
-    glslang::SPIRV
-    # Snappy::snappy - TODO(tomc): Enable on other platforms once the RTTI linking issue is resolved
     xxHash::xxhash
-    GPUOpen::VulkanMemoryAllocator
+    snappy
 )
 
-# Metal dependencies (macOS only)
-if(APPLE)
-    # Enable Objective-C++ for Metal .mm sources
-    set_source_files_properties(
-        metal/graphics_system.mm
-        metal/command_processor.mm
-        metal/shader.mm
-        metal/shared_memory.mm
-        metal/texture_cache.mm
-        metal/primitive_processor.mm
-        metal/pipeline_cache.mm
-        metal/render_target_cache.mm
-        metal/dxbc_to_dxil_converter.mm
-        metal/metal_shader_converter.mm
-        metal/shader_cache.mm
-        PROPERTIES COMPILE_FLAGS "-fobjc-arc"
-    )
+if(REXGLUE_USE_VULKAN)
     target_link_libraries(rexgraphics PUBLIC
-        "-framework Metal"
-        "-framework MetalKit"
-        "-framework QuartzCore"
-        "-framework Foundation"
+        volk::volk
+        glslang::SPIRV
+        GPUOpen::VulkanMemoryAllocator
     )
-    target_compile_definitions(rexgraphics PUBLIC REX_HAS_METAL=1)
+    target_compile_definitions(rexgraphics PUBLIC REX_HAS_VULKAN=1)
 endif()
 
-# D3D12 dependencies (Windows only)
-if(WIN32)
+if(REXGLUE_USE_D3D12)
     target_link_libraries(rexgraphics PUBLIC
         d3d12
         dxgi
         dxguid
-        Snappy::snappy
     )
     target_compile_definitions(rexgraphics PUBLIC REX_HAS_D3D12=1)
 endif()
