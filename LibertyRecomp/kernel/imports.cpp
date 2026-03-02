@@ -276,8 +276,13 @@ void StartVBlankTimer() {
       if (g_gpuRingBuffer.interruptCallback != 0) {
         PPCFunc *callback = g_memory.FindFunction(g_gpuRingBuffer.interruptCallback);
         if (callback) {
-          static PPCContext vblankCtx{};
-          vblankCtx.r3.u32 = 0;
+          // Fresh context every call — never share state between VBlanks.
+          // r3 = 1 → VBlank interrupt type (triggers frame-done vtable path in
+          //   sub_829D7368 which calls device+10900+16 and clears interrupt bits).
+          // r3 = 0 only triggers sub_829D4C48 (spinlock only, no events signaled)
+          //   causing deadlock in the init wait chain (sub_829A3178 waits forever).
+          PPCContext vblankCtx{};
+          vblankCtx.r3.u32 = 1;   // VBlank interrupt type
           vblankCtx.r4.u32 = g_gpuRingBuffer.interruptUserData;
           vblankCtx.r1.u64 = 0x80080000;
           vblankCtx.r13.u64 = 0x80000D20;
