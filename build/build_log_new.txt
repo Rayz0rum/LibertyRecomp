@@ -1,2 +1,0 @@
-CMake Error: Could not read presets from /Users/Ozordi/Downloads/LibertyRecomp/build:
-File not found: /Users/Ozordi/Downloads/LibertyRecomp/build/CMakePresets.json

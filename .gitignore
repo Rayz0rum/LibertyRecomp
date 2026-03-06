@@ -597,3 +597,34 @@ DerivedData/
 eboot.bin
 *.pkg
 /flatpak
+
+# Debug/log junk - keep local only
+--- LLDB EXIT ---
+.gitignore.bak
+*.lldb
+*.log
+*.log.*
+build/
+echo/
+out/
+run_log*.txt
+build_*.log
+cmake_*.log
+lldb_*.log
+lldb_*.txt
+lldb_*.cmd
+liberty_*.log
+hang_debug*.log
+debug_run*.log
+run_*.log
+chat_log.txt
+crash_log.txt
+*_SUMMARY.md
+*_ANALYSIS_*.md
+*_FINDINGS_*.md
+*_VERIFICATION.md
+*_PLAN.md
+Claude_export_*.jsonl
+gemini-env/
+review/
+buttons_360.xtd

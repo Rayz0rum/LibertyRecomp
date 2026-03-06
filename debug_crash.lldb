@@ -1,4 +1,0 @@
-process launch
-thread backtrace all
-frame variable
-bt 50
