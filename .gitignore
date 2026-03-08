@@ -638,3 +638,16 @@ tools/rage_fxc_extractor/build/
 *.dll
 *.so
 *.jar
+
+# Ignore all .md files except specific ones
+*.md
+!README.md
+!docs/DUMPING-en.md
+!docs/RPF_EXTRACTION_DESIGN.md
+!docs/SHADER_PIPELINE.md
+!docs/ONLINE_MULTIPLAYER.md
+!docs/FIREBASE_SETUP.md
+!README.md
+!docs/BUILDING.md
+!docs/INSTALLATION_ARCHITECTURE.md
+!docs/PLATFORM_SETUP.md
