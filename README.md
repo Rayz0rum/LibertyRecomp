@@ -12,7 +12,7 @@ Liberty Recompiled is an unofficial port of the Xbox 360 version of Grand Theft 
 
 **This project does not include any game assets. You must provide the files from your own legally acquired copy of the game to install or build Liberty Recompiled.**
 
-The runtime is powered by a fork of the [ReXGlue SDK](https://github.com/rexglue/rexglue-sdk) ([our fork](glue/rexglue-sdk-main)), which handles PowerPC → C++ recompilation and Xenos shader translation. The development of static recompilation tooling in this space was directly inspired by [N64: Recompiled](https://github.com/N64Recomp/N64Recomp), which was used to create [Zelda 64: Recompiled](https://github.com/Zelda64Recomp/Zelda64Recomp).
+The runtime is powered by a fork of the [ReXGlue SDK](https://github.com/rexglue/rexglue-sdk) ([our fork](https://github.com/OZORDI/LibertyRecomp/tree/beta/glue)), which handles PowerPC → C++ recompilation and Xenos shader translation. The development of static recompilation tooling in this space was directly inspired by [N64: Recompiled](https://github.com/N64Recomp/N64Recomp), which was used to create [Zelda 64: Recompiled](https://github.com/Zelda64Recomp/Zelda64Recomp).
 
 ## Table of Contents
 
