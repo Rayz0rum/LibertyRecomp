@@ -68,3 +68,6 @@
 [submodule "thirdparty/GameNetworkingSockets"]
 	path = thirdparty/GameNetworkingSockets
 	url = https://github.com/ValveSoftware/GameNetworkingSockets.git
+[submodule "glue/rexglue-sdk-main"]
+	path = glue/rexglue-sdk-main
+	url = https://github.com/sonicnext-dev/rexglue-sdk.git
