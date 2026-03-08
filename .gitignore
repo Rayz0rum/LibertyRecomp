@@ -652,3 +652,7 @@ docs/*.md
 !docs/PLATFORM_SETUP.md
 !docs/SHADER_PIPELINE.md
 !docs/RPF_EXTRACTION_DESIGN.md
+-e 
+# Claude and GitHub metadata - do not commit
+.claude/
+.github/
