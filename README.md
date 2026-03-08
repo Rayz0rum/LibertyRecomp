@@ -8,30 +8,46 @@
 > [!CAUTION]
 > This recompilation is in early development and is NOT meant for public use. This is a work-in-progress fork based on the MarathonRecomp framework.
 
-Liberty Recompiled is an unofficial PC port of the Xbox 360 version of Grand Theft Auto IV created through the process of static recompilation. The port aims to offer Windows, Linux, and macOS support.
+Liberty Recompiled is an unofficial port of the Xbox 360 version of Grand Theft Auto IV created through the process of static recompilation. The port supports **Windows, Linux, macOS, iOS, Android, PlayStation 4, and Nintendo Switch**.
 
 **This project does not include any game assets. You must provide the files from your own legally acquired copy of the game to install or build Liberty Recompiled.**
 
-[XenonRecomp](https://github.com/sonicnext-dev/XenonRecomp) and [XenosRecomp](https://github.com/sonicnext-dev/XenosRecomp) are the main recompilers used for converting the game's original PowerPC code and Xenos shaders into compatible C++ and HLSL code respectively. The development of these recompilers was directly inspired by [N64: Recompiled](https://github.com/N64Recomp/N64Recomp), which was used to create [Zelda 64: Recompiled](https://github.com/Zelda64Recomp/Zelda64Recomp).
+The runtime is powered by a fork of the [ReXGlue SDK](https://github.com/rexglue/rexglue-sdk) ([our fork](https://github.com/sonicnext-dev/rexglue-sdk)), which handles PowerPC → C++ recompilation and Xenos shader translation. The development of static recompilation tooling in this space was directly inspired by [N64: Recompiled](https://github.com/N64Recomp/N64Recomp), which was used to create [Zelda 64: Recompiled](https://github.com/Zelda64Recomp/Zelda64Recomp).
 
 ## Table of Contents
 
+- [Supported Platforms](#supported-platforms)
 - [Project Status](#project-status)
 - [Installation](#installation)
+- [Mod Support](#mod-support)
 - [Building](#building)
 - [Documentation](#documentation)
+
+## Supported Platforms
+
+| Platform | Graphics Backend | Status |
+|----------|-----------------|--------|
+| Windows | Vulkan | ✅ Supported |
+| Linux | Vulkan | ✅ Supported |
+| macOS | Metal | ✅ Supported |
+| iOS | Metal | ✅ Supported |
+| Android | Vulkan | ✅ Supported |
+| PlayStation 4 | Vulkan (OpenOrbis) | ✅ Supported (homebrew/jailbreak only) |
+| Nintendo Switch | Vulkan | ✅ Supported (homebrew) |
+
+See [Platform Setup Guide](/docs/PLATFORM_SETUP.md) for setup instructions for each platform.
 
 ## Project Status
 
 This project is in **early development**. Current progress:
 
 ### Completed
-- [x] XenonRecomp integration for PowerPC → C++ translation
-- [x] XenosRecomp integration for Xenos → HLSL shader conversion
-- [x] Cross-platform build system (Windows, Linux, macOS)
+- [x] ReXGlue SDK integration for PowerPC → C++ translation and shader conversion
+- [x] Cross-platform build system (Windows, Linux, macOS, iOS, Android, PS4, Switch)
 - [x] Installer wizard with ISO/folder/XContent support
 - [x] Shader extraction pipeline (RAGE FXC → Xbox 360 → platform-native)
 - [x] Platform-specific install directory support
+- [x] FusionFix-compatible mod overlay system
 
 ### In Progress
 - [ ] RAGE engine structure reverse engineering
@@ -55,6 +71,10 @@ This project is in **early development**. Current progress:
 | Windows | `%LOCALAPPDATA%\LibertyRecomp\` |
 | Linux | `~/.local/share/LibertyRecomp/` |
 | macOS | `~/Library/Application Support/LibertyRecomp/` |
+| iOS | `<Documents>/LibertyRecomp/saves/` |
+| Android | Internal storage (first boot extraction) |
+| PS4 | Internal storage via OpenOrbis VFS |
+| Switch | `sdmc:/LibertyRecomp/saves/` |
 
 ### Game Files Required
 
@@ -73,6 +93,35 @@ See [Dumping Guide](/docs/DUMPING-en.md) for detailed extraction instructions.
 | `--install-dlc` | Force DLC installation only |
 | `--install-check` | Verify file integrity |
 
+## Mod Support
+
+Liberty Recompiled includes **FusionFix-compatible mod loading**. Mods can override game files by placing them in overlay folders.
+
+### Quick Start
+
+1. Create an `update/` folder next to the LibertyRecomp executable
+2. Place mod files inside, mirroring the game's folder structure
+3. Launch the game - mod files automatically override base files
+
+```
+LibertyRecomp/
+├── game/           # Extracted game files
+└── update/         # Place mods here
+    └── common/
+        └── data/
+            └── handling.dat  # Overrides base handling.dat
+```
+
+### Supported Overlay Locations
+
+| Priority | Location | Description |
+|----------|----------|-------------|
+| 100 | `mods/update/` | Highest priority |
+| 50 | `update/` | Standard FusionFix location |
+| 40 | `GTAIV.EFLC.FusionFix/update/` | Alternative location |
+
+See [MOD_SUPPORT.md](/docs/MOD_SUPPORT.md) for detailed documentation.
+
 ## Building
 
 [Check out the building instructions here](/docs/BUILDING.md).
@@ -88,9 +137,16 @@ cd LibertyRecomp
 # - default.xex
 # - xbox360.rpf
 
-# Configure and build (macOS example)
-cmake . --preset macos-release
-cmake --build ./out/build/macos-release --target LibertyRecomp
+# Configure and build (select your platform preset)
+cmake . --preset macos-release      # macOS
+cmake . --preset windows-release    # Windows
+cmake . --preset linux-release      # Linux
+cmake . --preset ios-debug          # iOS (requires Xcode)
+cmake . --preset android-release    # Android
+cmake . --preset ps4-release        # PS4 (requires OpenOrbis)
+cmake . --preset switch-release     # Switch (requires devkitPro)
+
+cmake --build ./out/build/<preset> --target LibertyRecomp
 ```
 
 ## Documentation
@@ -98,8 +154,9 @@ cmake --build ./out/build/macos-release --target LibertyRecomp
 | Document | Description |
 |----------|-------------|
 | [Building Guide](/docs/BUILDING.md) | Build instructions for all platforms |
+| [Platform Setup Guide](/docs/PLATFORM_SETUP.md) | iOS, Android, PS4, and Switch setup |
 | [Dumping Guide](/docs/DUMPING-en.md) | How to extract game files from Xbox 360 |
-| [Shader Pipeline](/docs/SHADER_PIPELINE.md) | RAGE FXC → platform shader conversion |
+| [Mod Support](/docs/MOD_SUPPORT.md) | FusionFix-compatible mod loading |
 | [Installation Architecture](/docs/INSTALLATION_ARCHITECTURE.md) | Platform paths and install flow |
 | [Online Multiplayer Guide](/docs/ONLINE_MULTIPLAYER.md) | Setup guide for online play |
 
@@ -112,4 +169,3 @@ Performance comparison of GTA IV running on macOS using different methods:
 | **Crossover (Wine)** | ![Crossover Performance](docs/images/perf_crossover.png) |
 | **Xenia (Xbox 360 Emulator)** | ![Xenia Performance](docs/images/perf_xenia.png) |
 | **RPCS3 (PS3 Emulator)** | ![RPCS3 Performance](docs/images/perf_rpcs3.png) |
-
