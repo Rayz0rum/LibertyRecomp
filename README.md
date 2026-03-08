@@ -12,7 +12,7 @@ Liberty Recompiled is an unofficial PC port of the Xbox 360 version of Grand The
 
 **This project does not include any game assets. You must provide the files from your own legally acquired copy of the game to install or build Liberty Recompiled.**
 
-[XenonRecomp](https://github.com/sonicnext-dev/XenonRecomp) and [XenosRecomp](https://github.com/sonicnext-dev/XenosRecomp) are the main recompilers used for converting the game's original PowerPC code and Xenos shaders into compatible C++ and HLSL code respectively. The development of these recompilers was directly inspired by [N64: Recompiled](https://github.com/N64Recomp/N64Recomp), which was used to create [Zelda 64: Recompiled](https://github.com/Zelda64Recomp/Zelda64Recomp).
+The runtime is powered by a fork of the [ReXGlue SDK](https://github.com/rexglue/rexglue-sdk) ([our fork](https://github.com/sonicnext-dev/rexglue-sdk)), which handles PowerPC → C++ recompilation and Xenos shader translation. The development of static recompilation tooling in this space was directly inspired by [N64: Recompiled](https://github.com/N64Recomp/N64Recomp), which was used to create [Zelda 64: Recompiled](https://github.com/Zelda64Recomp/Zelda64Recomp).
 
 ## Table of Contents
 
@@ -27,8 +27,7 @@ Liberty Recompiled is an unofficial PC port of the Xbox 360 version of Grand The
 This project is in **early development**. Current progress:
 
 ### Completed
-- [x] XenonRecomp integration for PowerPC → C++ translation
-- [x] XenosRecomp integration for Xenos → HLSL shader conversion
+- [x] ReXGlue SDK integration for PowerPC → C++ translation and shader conversion
 - [x] Cross-platform build system (Windows, Linux, macOS)
 - [x] Installer wizard with ISO/folder/XContent support
 - [x] Shader extraction pipeline (RAGE FXC → Xbox 360 → platform-native)

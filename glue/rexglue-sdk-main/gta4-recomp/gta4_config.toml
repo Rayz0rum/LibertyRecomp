@@ -24,14 +24,15 @@ large_function_threshold = 1048576
 # Addresses verified via IDA Pro Hex-Rays decompilation + xref tracing.
 # Format: FunctionName = guest_address
 [rexcrt]
-# String/memory CRT (verified PR #180)
-memset   = 0x82995F90   # 360 xrefs - byte fill + unrolled word fill
-memcpy   = 0x82997C30   # 552 xrefs - alignment-aware copy with dcbt prefetch
-_stricmp = 0x82996440   # 466 xrefs - A-Z case folding (ori r6, r6, 0x20)
-strncmp  = 0x82997420   # 111 xrefs - byte compare with count (subfc)
-strncpy  = 0x829972F0   # 97 xrefs - copy with null-pad remainder
-strchr   = 0x829972B0   # 33 xrefs - search for char with null handling
-XMemCpy  = 0x829AF460   # ~50 xrefs - VMX vector copy with dcbz128
+# String/memory CRT (verified PR #180 — corrected pass 2)
+memset   = 0x82A11D08   # 255 xrefs - extsb fill byte + stb loop + VMX vspltb fast path
+memcpy   = 0x82A11940   # 183 xrefs - alignment-aware ld/std copy + dcbz128 prefetch
+_stricmp = 0x829FFCF0   # 477 xrefs - A-Z case folding (cmpwi 0x41/0x5A + ori r6,r6,0x20)
+strncmp  = 0x82A00C40   # 113 xrefs - byte compare with count (subfc. + bdnzf null-stop)
+strncpy  = 0x82A00BA0   # 101 xrefs - copy with null-pad remainder
+strchr   = 0x82A00B60   #  34 xrefs - lbz + cmpwi null + cmpw char match + lbzu advance
+XMemCpy  = 0x82A18CD0   #   1 xref  - VMX 128-byte streaming copy with dcbz128 (called from single hot path)
+strtok   = 0x82A01DE8   # token parser with static state (TLS-based on 360)
 
 # Heap CRT (verified via Hex-Rays: takes heap_handle, flags, size/ptr)
 RtlAllocateHeap  = 0x82A17180  # 6 callers - 2196 bytes, manages free-lists + NtAllocateVirtualMemory
@@ -55,6 +56,8 @@ GetFileAttributesA = 0x82A14AC8
 SetFileTime        = 0x82A14A18
 FindFirstFileA     = 0x82A19F88
 FindNextFileA      = 0x82A1A100
+FlushFileBuffers   = 0x82A188E0   # thin wrapper calling NtFlushBuffersFile
+CreateDirectoryA   = 0x82A14E98   # NtCreateFile + FILE_DIRECTORY_FILE, returns 1/0
 
 [functions]
 # v8 new unresolved branch targets (verified via capstone/IDA)
@@ -63,14 +66,15 @@ FindNextFileA      = 0x82A1A100
 "0x8219E410" = {}
 
 # CRT function boundaries: force codegen to split these out as separate functions
-# (codegen's auto-analysis merged them into larger parent functions)
-"0x82995F90" = { name = "memset" }
-"0x82997C30" = { name = "memcpy" }
-"0x82996440" = { name = "_stricmp" }
-"0x82997420" = { name = "strncmp" }
-"0x829972F0" = { name = "strncpy" }
-"0x829972B0" = { name = "strchr" }
-"0x829AF460" = { name = "XMemCpy" }
+# (corrected pass 2 — old 0x829xxxxx addresses were mid-function offsets in physics/animation code)
+"0x82A11D08" = { name = "memset" }
+"0x82A11940" = { name = "memcpy" }
+"0x829FFCF0" = { name = "_stricmp" }
+"0x82A00C40" = { name = "strncmp" }
+"0x82A00BA0" = { name = "strncpy" }
+"0x82A00B60" = { name = "strchr" }
+"0x82A18CD0" = { name = "XMemCpy" }
+"0x82A01DE8" = { name = "strtok" }
 
 # Heap CRT function boundaries
 "0x82A17180" = { name = "RtlAllocateHeap" }
@@ -94,3 +98,5 @@ FindNextFileA      = 0x82A1A100
 "0x82A14A18" = { name = "SetFileTime" }
 "0x82A19F88" = { name = "FindFirstFileA" }
 "0x82A1A100" = { name = "FindNextFileA" }
+"0x82A188E0" = { name = "FlushFileBuffers" }
+"0x82A14E98" = { name = "CreateDirectoryA" }
