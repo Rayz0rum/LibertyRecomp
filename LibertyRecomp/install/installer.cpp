@@ -28,7 +28,7 @@ static const std::string DLCDirectory = "dlc";
 static const std::string TLADDirectory = DLCDirectory + "/TLAD";  // The Lost and Damned
 static const std::string TBOGTDirectory = DLCDirectory + "/TBOGT"; // The Ballad of Gay Tony
 static const std::string GameExecutableFile = "default.xex";
-static const std::string DLCValidationFile = "default.xex";  // GTA IV DLC uses xex as validation
+static const std::string DLCValidationFile = "content.dat";  // GTA IV DLC content descriptor
 static const std::string ISOExtension = ".iso";
 static const std::string ZIPExtension = ".zip";
 

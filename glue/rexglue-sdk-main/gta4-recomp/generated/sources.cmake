@@ -5,6 +5,7 @@
 #   target_compile_options(your_target PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/EHa>)
 #
 set(GENERATED_SOURCES
+    ${CMAKE_CURRENT_LIST_DIR}/gta4_config.cpp
     ${CMAKE_CURRENT_LIST_DIR}/gta4_init.cpp
     ${CMAKE_CURRENT_LIST_DIR}/gta4_recomp.0.cpp
     ${CMAKE_CURRENT_LIST_DIR}/gta4_recomp.1.cpp
@@ -80,4 +81,7 @@ set(GENERATED_SOURCES
     ${CMAKE_CURRENT_LIST_DIR}/gta4_recomp.71.cpp
     ${CMAKE_CURRENT_LIST_DIR}/gta4_recomp.72.cpp
     ${CMAKE_CURRENT_LIST_DIR}/gta4_recomp.73.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/gta4_recomp.74.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/gta4_recomp.75.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/gta4_recomp.76.cpp
 )

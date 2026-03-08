@@ -196,6 +196,11 @@ CONFIG_DEFINE_HIDDEN("Codes", bool, UseOfficialTitleOnTitleBar, false, true);
 CONFIG_DEFINE("Update", time_t, LastChecked, 0, false);
 
 CONFIG_DEFINE_HIDDEN("Install", uint32_t, InstalledTitleUpdateVersion, 0, false);
+CONFIG_DEFINE_HIDDEN("Install", std::string, ContentSourceDir, "", false);
+// Directories containing DLC and title update source files (zips / STFS packages).
+// Set automatically when the installer wizard runs; can also be edited manually.
+CONFIG_DEFINE_HIDDEN("Install", std::string, DLCSourceDir, "", false);
+CONFIG_DEFINE_HIDDEN("Install", std::string, UpdateSourceDir, "", false);
 
 // Online Multiplayer
 CONFIG_DEFINE_ENUM("Multiplayer", EMultiplayerBackend, MultiplayerBackend, EMultiplayerBackend::Community, false);

@@ -14,6 +14,7 @@
 #include <bitset>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <set>
@@ -240,9 +241,6 @@ struct FunctionAnalysis {
 
   // CSR state needed
   CsrRequirement csrRequirement = CsrRequirement::None;
-
-  // Labels needed for internal branches (computed from instructions)
-  std::set<uint32_t> internalLabels;
 };
 
 //=============================================================================
@@ -332,7 +330,7 @@ class FunctionNode {
   /// For non-imports: blocks must not be empty
   void discover(std::vector<Block> blocks,
                 std::vector<rex::codegen::ppc::Instruction*> instructions,
-                std::set<uint32_t> internalLabels);
+                std::set<uint32_t> labels);
 
   /// Transition kRegistered -> kDiscovered for import functions (no blocks)
   void discoverAsImport();
@@ -368,9 +366,6 @@ class FunctionNode {
   /// Get owned instructions (pointers into DecodedBinary)
   std::span<rex::codegen::ppc::Instruction* const> instructions() const { return instructions_; }
 
-  /// Get internal labels (branch targets within function)
-  const std::set<uint32_t>& internalLabels() const { return internalLabels_; }
-
   // Blocks
   const std::vector<Block>& blocks() const { return blocks_; }
   bool containsAddress(uint32_t addr) const;
@@ -405,12 +400,12 @@ class FunctionNode {
   const std::optional<ExceptionInfo>& exceptionInfo() const { return exceptionInfo_; }
   bool hasExceptionInfo() const { return exceptionInfo_.has_value() && exceptionInfo_->hasInfo(); }
 
+  void setName(std::string name) { name_ = std::move(name); }
+
  private:
   //=========================================================================
   // Mutation methods - only FunctionGraph can call these
   //=========================================================================
-
-  void setName(std::string name) { name_ = std::move(name); }
   void setCode(const uint8_t* ptr) { code_ = ptr; }
   void setHasExceptionHandler(bool val) { hasExceptionHandler_ = val; }
   void setExceptionInfo(ExceptionInfo info) { exceptionInfo_ = std::move(info); }
@@ -451,10 +446,7 @@ class FunctionNode {
   // Populated at discover()
   std::vector<Block> blocks_;
   std::vector<rex::codegen::ppc::Instruction*> instructions_;  // Pointers into DecodedBinary
-  std::set<uint32_t> internalLabels_;  // Branch targets within this function
-
-  // Legacy labels (will merge with internalLabels_)
-  std::set<uint32_t> labels_;
+  std::set<uint32_t> labels_;  // Branch targets within this function
 
   std::vector<CallEdge> calls_;
   std::vector<CallEdge> tailCalls_;
@@ -527,7 +519,7 @@ class FunctionGraph {
   // Remove function from graph (for cleanup of absorbed GAP_FILLs)
   bool removeFunction(uint32_t entryPoint);
 
-  // Get function containing address (O(n) - could optimize with interval tree)
+  // Get function containing address (O(log f) via sorted base index)
   FunctionNode* getFunctionContaining(uint32_t addr);
   const FunctionNode* getFunctionContaining(uint32_t addr) const;
 
@@ -642,6 +634,8 @@ class FunctionGraph {
  private:
   std::vector<CodeBuffer> codeBuffers_;
   std::unordered_map<uint32_t, std::unique_ptr<FunctionNode>> functions_;
+  std::map<uint32_t, FunctionNode*>
+      functionsByBase_;  // sorted by base for O(log f) interval lookup
   std::unordered_map<uint32_t, bool> functionHasXrefs_;  // entry -> hasXrefs
   std::vector<std::pair<uint32_t, uint32_t>> chunks_;    // base, size pairs
   MemoryReader memoryReader_;

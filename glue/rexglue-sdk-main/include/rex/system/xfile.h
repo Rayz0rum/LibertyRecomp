@@ -85,6 +85,15 @@ class XFile : public XObject {
   X_STATUS QueryDirectory(X_FILE_DIRECTORY_INFORMATION* out_info, size_t length,
                           const std::string_view file_name, bool restart);
 
+  void SetFindPattern(std::string_view pattern) {
+    find_engine_.SetRule(pattern);
+    find_index_ = 0;
+  }
+
+  rex::filesystem::Entry* FindNext() {
+    return file_->entry()->IterateChildren(find_engine_, &find_index_);
+  }
+
   // Don't do within the global critical region because invalidation callbacks
   // may be triggered (as per the usual rule of not doing I/O within the global
   // critical region).

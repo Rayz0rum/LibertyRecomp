@@ -19,6 +19,7 @@
 #include <decompressor.h>
 #include <exports.h>
 #include <sdl_listener.h>
+#include <user/config.h>
 
 #include <res/images/common/libertyrecomp.dds.h>
 // Character and logo textures disabled for clean installer
@@ -1659,6 +1660,25 @@ static void InstallerThread()
 
         // Delete all files that were copied.
         Installer::rollback(g_installerJournal);
+    }
+
+    // On success, persist the source directories to config so AutoInstaller
+    // can find DLC / updates on future launches without user intervention.
+    if (!g_installerFailed)
+    {
+        if (!g_dlcSourcePaths[0].empty())
+            Config::DLCSourceDir = g_dlcSourcePaths[0].parent_path().string();
+        else if (!g_dlcSourcePaths[1].empty())
+            Config::DLCSourceDir = g_dlcSourcePaths[1].parent_path().string();
+
+        if (g_titleUpdateManager.HasSelectedUpdate())
+        {
+            auto sel = g_titleUpdateManager.GetSelectedUpdate();
+            if (sel.has_value())
+                Config::UpdateSourceDir = sel->path.parent_path().string();
+        }
+
+        Config::Save();
     }
 
     g_installerFinished = true;

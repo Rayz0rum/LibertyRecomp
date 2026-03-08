@@ -395,6 +395,9 @@ bool build_dcbst(BuilderContext& ctx);
 // Move register
 bool build_mr(BuilderContext& ctx);
 
+// Move register field
+bool build_mcrf(BuilderContext& ctx);
+
 // Move from special registers
 bool build_mfcr(BuilderContext& ctx);
 bool build_mfocrf(BuilderContext& ctx);
@@ -474,6 +477,7 @@ bool build_vminub(BuilderContext& ctx);
 // Vector average
 bool build_vavgsb(BuilderContext& ctx);
 bool build_vavgsh(BuilderContext& ctx);
+bool build_vavgsw(BuilderContext& ctx);
 bool build_vavgub(BuilderContext& ctx);
 bool build_vavguh(BuilderContext& ctx);
 

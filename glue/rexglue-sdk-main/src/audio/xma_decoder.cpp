@@ -25,7 +25,7 @@ extern "C" {
 #include "libavutil/log.h"
 }  // extern "C"
 
-REXCVAR_DEFINE_BOOL(ffmpeg_verbose, false, "Verbose FFmpeg output (debug and above)", "Audio");
+REXCVAR_DEFINE_BOOL(ffmpeg_verbose, false, "Audio", "Verbose FFmpeg output (debug and above)");
 
 // As with normal Microsoft, there are like twelve different ways to access
 // the audio APIs. Early games use XMA*() methods almost exclusively to touch
@@ -141,7 +141,7 @@ void XmaDecoder::WorkerThreadMain() {
   while (worker_running_) {
     // Okay, let's loop through XMA contexts to find ones we need to decode!
     bool did_work = false;
-    for (uint32_t n = 0; n < kContextCount; n++) {
+    for (uint32_t n = 0; n < kContextCount && worker_running_; n++) {
       XmaContext& context = contexts_[n];
       did_work = context.Work() || did_work;
 
@@ -172,6 +172,10 @@ void XmaDecoder::WorkerThreadMain() {
 }
 
 void XmaDecoder::Shutdown() {
+  if (!worker_thread_) {
+    return;
+  }
+
   worker_running_ = false;
 
   if (work_event_) {
@@ -182,11 +186,12 @@ void XmaDecoder::Shutdown() {
     Resume();
   }
 
-  if (worker_thread_) {
-    // Wait for work thread.
-    rex::thread::Wait(worker_thread_->thread(), false);
-    worker_thread_.reset();
+  // Wait up to 2 seconds for worker thread to exit gracefully.
+  auto result = rex::thread::Wait(worker_thread_->thread(), false, std::chrono::milliseconds(2000));
+  if (result == rex::thread::WaitResult::kTimeout) {
+    REXAPU_WARN("XMA: Worker thread did not exit within 2s, abandoning");
   }
+  worker_thread_.reset();
 
   if (context_data_first_ptr_) {
     memory()->SystemHeapFree(context_data_first_ptr_);

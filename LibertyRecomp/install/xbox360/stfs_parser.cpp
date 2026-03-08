@@ -129,7 +129,7 @@ bool StfsParser::ParseHeader()
 {
     // Read magic (first 4 bytes)
     uint32_t magic = ReadUInt32BE(0);
-    
+
     if (magic == static_cast<uint32_t>(StfsPackageType::kCon)) {
         m_packageType = StfsPackageType::kCon;
     } else if (magic == static_cast<uint32_t>(StfsPackageType::kPirs)) {
@@ -137,80 +137,90 @@ bool StfsParser::ParseHeader()
     } else if (magic == static_cast<uint32_t>(StfsPackageType::kLive)) {
         m_packageType = StfsPackageType::kLive;
     } else {
-        return false; // Invalid magic
-    }
-    
-    // Header size depends on package type
-    // CON: 0xB000 for female, 0xA000 for male
-    // LIVE/PIRS: 0xB000 for female, 0xA000 for male
-    // Read the header size from the metadata
-    
-    // Metadata starts at different offsets depending on signature type
-    uint64_t metadataOffset;
-    if (m_packageType == StfsPackageType::kCon) {
-        metadataOffset = 0x22C; // After CON signature
-    } else {
-        metadataOffset = 0x22C; // Same for LIVE/PIRS
-    }
-    
-    // Read content type at metadata + 0x00
-    m_contentType = static_cast<XContentType>(ReadUInt32BE(metadataOffset));
-    
-    // Read metadata version at metadata + 0x04
-    uint32_t metadataVersion = ReadUInt32BE(metadataOffset + 0x04);
-    
-    // Read execution info (title ID, version) at metadata + 0x10
-    // Execution info structure:
-    // +0x00: Media ID (4 bytes) - Used for DLC identification
-    // +0x04: Version (4 bytes)
-    // +0x08: Base Version (4 bytes)
-    // +0x0C: Title ID (4 bytes)
-    uint64_t execInfoOffset = metadataOffset + 0x10;
-    m_mediaId = ReadUInt32BE(execInfoOffset);          // Read Media ID for DLC detection
-    m_version = ReadUInt32BE(execInfoOffset + 0x04);
-    m_baseVersion = ReadUInt32BE(execInfoOffset + 0x08);
-    m_titleId = ReadUInt32BE(execInfoOffset + 0x0C);
-    
-    // Volume descriptor at metadata + 0x24
-    uint64_t volumeDescOffset = metadataOffset + 0x24;
-    
-    // Read volume descriptor
-    uint8_t descriptorLength;
-    ReadBytes(volumeDescOffset, &descriptorLength, 1);
-    
-    if (descriptorLength != 0x24) {
-        // Not a valid STFS volume descriptor
         return false;
     }
-    
-    // Read flags byte
+
+    // XContentHeader is always 0x344 bytes for ALL package types (CON/LIVE/PIRS).
+    // Layout (from Xenia stfs_xbox.h):
+    //   0x000: magic (4)
+    //   0x004: signature (0x228)
+    //   0x22C: licenses[16] (0x100)
+    //   0x32C: content_id (0x14)
+    //   0x340: header_size (4)
+    // Total: 0x344
+    //
+    // XContentMetadata starts immediately after at offset 0x344.
+    // Verified with Python against actual STFS files.
+    constexpr uint64_t kMetadataOffset = 0x344;
+
+    // content_type at metadata + 0x00
+    m_contentType = static_cast<XContentType>(ReadUInt32BE(kMetadataOffset));
+
+    // metadata_version at metadata + 0x04
+    uint32_t metadataVersion = ReadUInt32BE(kMetadataOffset + 0x04);
+
+    // execution_info at metadata + 0x10 (xex2_opt_execution_info, 0x18 bytes)
+    //   +0x00: media_id (4 BE)
+    //   +0x04: version (4 BE)
+    //   +0x08: base_version (4 BE)
+    //   +0x0C: title_id (4 BE)
+    constexpr uint64_t kExecInfoOffset = kMetadataOffset + 0x10;
+    m_mediaId     = ReadUInt32BE(kExecInfoOffset + 0x00);
+    m_version     = ReadUInt32BE(kExecInfoOffset + 0x04);
+    m_baseVersion = ReadUInt32BE(kExecInfoOffset + 0x08);
+    m_titleId     = ReadUInt32BE(kExecInfoOffset + 0x0C);
+
+    // StfsVolumeDescriptor at metadata + 0x35 (0x24 bytes)
+    // Layout within XContentMetadata:
+    //   +0x00: content_type (4)
+    //   +0x04: metadata_version (4)
+    //   +0x08: content_size (8)
+    //   +0x10: execution_info (0x18)
+    //   +0x28: console_id (5)
+    //   +0x2D: profile_id (8)
+    //   +0x35: volume_descriptor (0x24) ← here
+    // Verified: descriptor_length at file offset 0x379 reads 0x24 ✓
+    constexpr uint64_t kVolumeDescOffset = kMetadataOffset + 0x35;
+
+    uint8_t descriptorLength;
+    ReadBytes(kVolumeDescOffset, &descriptorLength, 1);
+    if (descriptorLength != 0x24) {
+        return false;
+    }
+
+    // flags at +2 within volume descriptor
     uint8_t flags;
-    ReadBytes(volumeDescOffset + 2, &flags, 1);
+    ReadBytes(kVolumeDescOffset + 2, &flags, 1);
     m_readOnlyFormat = (flags & 0x01) != 0;
-    
-    // File table block count (2 bytes, little endian at offset +3)
+
+    // file_table_block_count at +3 (2 bytes LE)
     uint8_t ftBlockCountBytes[2];
-    ReadBytes(volumeDescOffset + 3, ftBlockCountBytes, 2);
+    ReadBytes(kVolumeDescOffset + 3, ftBlockCountBytes, 2);
     m_fileTableBlockCount = ftBlockCountBytes[0] | (uint16_t(ftBlockCountBytes[1]) << 8);
-    
-    // File table block number (3 bytes, little endian at offset +5)
-    m_fileTableBlockNum = ReadUInt24LE(volumeDescOffset + 5);
-    
-    // Total block count (4 bytes BE at offset +0x1C)
-    m_totalBlockCount = ReadUInt32BE(volumeDescOffset + 0x1C);
-    
-    // Determine header size based on read-only format
-    m_headerSize = m_readOnlyFormat ? 0xA000 : 0xB000;
-    
-    // Read display name (at metadata + 0x1691 for first language, UTF-16BE)
-    uint64_t displayNameOffset = metadataOffset + 0x1691;
+
+    // file_table_block_number at +5 (3 bytes LE)
+    m_fileTableBlockNum = ReadUInt24LE(kVolumeDescOffset + 5);
+
+    // total_block_count at +0x1C (4 bytes BE)
+    m_totalBlockCount = ReadUInt32BE(kVolumeDescOffset + 0x1C);
+
+    // header_size from XContentHeader at offset 0x340
+    m_headerSize = ReadUInt32BE(0x340);
+    // Round up to 0x1000 boundary (Xenia does this)
+    m_headerSize = (m_headerSize + 0xFFF) & ~0xFFFu;
+    if (m_headerSize == 0) {
+        // Fallback based on read-only format
+        m_headerSize = m_readOnlyFormat ? 0xA000 : 0xB000;
+    }
+
+    // display_name at metadata + 0xCD (first language slot, UTF-16BE, 128 chars)
+    // Layout: after device_id (0x14) at metadata + 0xB9, display_name_raw starts at +0xCD
+    constexpr uint64_t kDisplayNameOffset = kMetadataOffset + 0xCD;
     char16_t nameBuffer[128];
-    ReadBytes(displayNameOffset, nameBuffer, 256);
-    
-    // Convert UTF-16BE to string
+    ReadBytes(kDisplayNameOffset, nameBuffer, 256);
+
     m_displayName.clear();
-    for (int i = 0; i < 128 && nameBuffer[i] != 0; i++) {
-        // Byte swap for BE
+    for (int i = 0; i < 128; i++) {
         uint16_t ch = (uint16_t(reinterpret_cast<uint8_t*>(&nameBuffer[i])[0]) << 8) |
                       uint16_t(reinterpret_cast<uint8_t*>(&nameBuffer[i])[1]);
         if (ch == 0) break;
@@ -218,7 +228,7 @@ bool StfsParser::ParseHeader()
             m_displayName += static_cast<char>(ch);
         }
     }
-    
+
     return true;
 }
 

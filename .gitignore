@@ -628,3 +628,7 @@ Claude_export_*.jsonl
 gemini-env/
 review/
 buttons_360.xtd
+
+# RexGlue SDK generated files and assets
+glue/rexglue-sdk-main/gta4-recomp/generated/
+glue/rexglue-sdk-main/gta4-recomp/assets/

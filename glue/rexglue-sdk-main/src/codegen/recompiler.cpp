@@ -13,6 +13,7 @@
 
 #include "builder_context.h"
 #include "builders.h"
+#include "codegen_flags.h"
 #include "ppc/disasm.h"
 
 #include <cstdint>
@@ -30,6 +31,9 @@
 #include <rex/codegen/recompiled_function.h>
 #include <rex/codegen/recompiler.h>
 #include <rex/logging.h>
+
+#include "codegen_logging.h"
+
 #include <rex/memory/utils.h>
 #include <rex/runtime.h>
 #include <rex/system/kernel_state.h>
@@ -80,8 +84,6 @@ namespace rex::codegen {
 
 // Output configuration constants
 constexpr size_t kOutputBufferReserveSize = 32 * 1024 * 1024;  // 32 MB
-constexpr size_t kFunctionsPerOutputFile = 500;
-constexpr size_t kProgressLogFrequency = 100;
 
 Recompiler::Recompiler() = default;
 Recompiler::~Recompiler() = default;
@@ -359,9 +361,10 @@ bool Recompiler::recompile(const FunctionNode& fn) {
       name = fmt::format("sub_{:08X}", fn.base());
     }
 
-    // Generate stub with weak/alias pattern
+    // Generate stub with trampoline pattern (alias not supported on Darwin/macOS)
     println("// STUB: Function at 0x{:08X} has no discovered code blocks", fn.base());
-    println("__attribute__((alias(\"__imp__{}\"))) PPC_WEAK_FUNC({});", name, name);
+    println("PPC_FUNC_IMPL(__imp__{});", name);
+    println("PPC_WEAK_FUNC({}) {{ __imp__{}(ctx, base); }}", name, name);
     println("PPC_FUNC_IMPL(__imp__{}) {{", name);
     println("\tPPC_FUNC_PROLOGUE();");
     println("}}\n");
@@ -478,9 +481,11 @@ bool Recompiler::recompile(const FunctionNode& fn) {
     name = fmt::format("sub_{:08X}", fn.base());
   }
 
-  // Use weak/alias pattern - allows functions to be overridden at link time
-  // The weak symbol 'name' aliases to '__imp__name', so overriding 'name' takes precedence
-  println("__attribute__((alias(\"__imp__{}\"))) PPC_WEAK_FUNC({});", name, name);
+  // Use trampoline pattern - alias not supported on Darwin/macOS
+  // PPC_WEAK_FUNC(name) is a weak trampoline that calls __imp__name,
+  // so overriding name at link time takes precedence over __imp__name.
+  println("PPC_FUNC_IMPL(__imp__{});", name);
+  println("PPC_WEAK_FUNC({}) {{ __imp__{}(ctx, base); }}", name, name);
   println("PPC_FUNC_IMPL(__imp__{}) {{", name);
   println("\tPPC_FUNC_PROLOGUE();");
 
@@ -703,6 +708,17 @@ bool Recompiler::recompile(bool force) {
   REXCODEGEN_TRACE("Recompile: starting");
   out.reserve(kOutputBufferReserveSize);
 
+  // Build rexcrt reverse map and rename graph nodes so all call sites
+  // emit the rexcrt_ name instead of sub_XXXXXXXX.
+  std::unordered_map<uint32_t, std::string> rexcrtByAddr;
+  for (const auto& [name, addr] : config().rexcrtFunctions) {
+    auto crtName = fmt::format("rexcrt_{}", name);
+    rexcrtByAddr[addr] = crtName;
+    if (auto* node = graph().getFunction(addr)) {
+      node->setName(std::move(crtName));
+    }
+  }
+
   // Build sorted function list from graph for code generation
   std::vector<const FunctionNode*> functions;
   functions.reserve(graph().functionCount());
@@ -767,7 +783,18 @@ bool Recompiler::recompile(bool force) {
     println("#define PPC_CODE_BASE 0x{:X}ull", codeMin);
     println("#define PPC_CODE_SIZE 0x{:X}ull", codeMax - codeMin);
 
+    // Emit rexcrt heap flag -- set to 1 when [rexcrt] contains heap functions,
+    // 0 otherwise. Consumed by PPCImageInfo to auto-init the heap after
+    // LoadXexImage (originals are stripped so init is required).
+    bool hasRexcrtHeap = config().rexcrtFunctions.contains("RtlAllocateHeap");
     println("");
+    println("#define REXCRT_HEAP {}", hasRexcrtHeap ? 1 : 0);
+
+    println("");
+
+    // Prebuilt PPCImageInfo (defined in {project}_init.cpp)
+    println("#include <rex/ppc/image_info.h>");
+    println("extern const rex::PPCImageInfo PPCImageConfig;");
 
     println("\n#endif");
 
@@ -784,6 +811,12 @@ bool Recompiler::recompile(bool force) {
     println("#include <rex/logging.h>  // For REX_FATAL on unresolved calls");
 
     for (const auto* fn : functions) {
+      auto crtIt = rexcrtByAddr.find(static_cast<uint32_t>(fn->base()));
+      if (crtIt != rexcrtByAddr.end()) {
+        println("PPC_EXTERN_FUNC({});", crtIt->second);
+        continue;
+      }
+
       std::string func_name;
       if (fn->base() == analysisState().entryPoint) {
         func_name = "xstart";
@@ -831,6 +864,12 @@ bool Recompiler::recompile(bool force) {
       if (fn->base() < funcMappingCodeMin)
         continue;
 
+      auto crtIt = rexcrtByAddr.find(static_cast<uint32_t>(fn->base()));
+      if (crtIt != rexcrtByAddr.end()) {
+        println("\t{{ 0x{:X}, {} }},", fn->base(), crtIt->second);
+        continue;
+      }
+
       std::string func_name;
       if (fn->base() == analysisState().entryPoint) {
         func_name = "xstart";
@@ -856,14 +895,39 @@ bool Recompiler::recompile(bool force) {
     SaveCurrentOutData(fmt::format("{}_init.cpp", projectName));
   }
 
+  REXCODEGEN_TRACE("Recompile: generating {}_config.cpp (PPCImageConfig)", projectName);
+  {
+    println("//=============================================================================");
+    println("// ReXGlue Generated - {} Image Configuration", projectName);
+    println("//=============================================================================\n");
+    println("#include \"{}_init.h\"\n", projectName);
+    println("#include <rex/ppc/image_info.h>");
+    println("");
+    println("const rex::PPCImageInfo PPCImageConfig = {{");
+    println("    PPC_CODE_BASE,      // code_base");
+    println("    PPC_CODE_SIZE,      // code_size");
+    println("    PPC_IMAGE_BASE,     // image_base");
+    println("    PPC_IMAGE_SIZE,     // image_size");
+    println("    PPCFuncMappings,    // func_mappings");
+    println("    REXCRT_HEAP,        // rexcrt_heap");
+    println("}};");
+
+    SaveCurrentOutData(fmt::format("{}_config.cpp", projectName));
+  }
+
   std::erase_if(functions, [](const FunctionNode* fn) {
     return fn->authority() == FunctionAuthority::IMPORT;
+  });
+
+  // Remove rexcrt functions -- SDK provides these, no need to recompile
+  std::erase_if(functions, [&rexcrtByAddr](const FunctionNode* fn) {
+    return rexcrtByAddr.contains(static_cast<uint32_t>(fn->base()));
   });
 
   // TODO: Add fancy single-line progress indicator
   REXCODEGEN_INFO("Recompiling {} functions...", functions.size());
   for (size_t i = 0; i < functions.size(); i++) {
-    if ((i % kFunctionsPerOutputFile) == 0) {
+    if ((i % REXCVAR_GET(functions_per_file)) == 0) {
       SaveCurrentOutData();
       println("#include \"{}_init.h\"\n", projectName);
     }
@@ -885,6 +949,7 @@ bool Recompiler::recompile(bool force) {
     println("#   target_compile_options(your_target PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/EHa>)");
     println("#");
     println("set(GENERATED_SOURCES");
+    println("    ${{CMAKE_CURRENT_LIST_DIR}}/{}_config.cpp", projectName);
     println("    ${{CMAKE_CURRENT_LIST_DIR}}/{}_init.cpp", projectName);
     for (size_t i = 0; i < cppFileIndex; ++i) {
       println("    ${{CMAKE_CURRENT_LIST_DIR}}/{}_recomp.{}.cpp", projectName, i);

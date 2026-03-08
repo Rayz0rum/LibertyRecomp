@@ -28,6 +28,7 @@
 #include <user/paths.h>
 #include <user/registry.h>
 #include <kernel/xdbf.h>
+#include <install/auto_installer.h>
 #include <install/installer.h>
 #include <install/update_checker.h>
 #include <os/logger.h>
@@ -391,6 +392,14 @@ int main(int argc, char *argv[])
     fprintf(stderr, "[Main] Content root: %s\n", rexContentRoot.string().c_str());
     fprintf(stderr, "[Main] Content root exists: %d\n", (int)std::filesystem::exists(rexContentRoot));
 
+    // Extract title update files BEFORE VFS init — HostPathDevice snapshots the
+    // directory at mount time, so default.xexp must exist before rex::Runtime::Setup().
+    {
+        AutoInstallResult aiResult = AutoInstaller::Run(gamePath);
+        if (!aiResult.errorMessage.empty())
+            fprintf(stderr, "[AutoInstall] Warning: %s\n", aiResult.errorMessage.c_str());
+    }
+
     // Bridge extracted audio.rpf content to where the RAGE relative device expects it.
     // The packfile device at audio:/ has an AES-encrypted TOC that fails to decrypt in
     // the recompiled env. The fallback relative device uses root game:/xbox360/audio/,
@@ -406,6 +415,33 @@ int main(int argc, char *argv[])
                 fprintf(stderr, "[Main] Created symlink: xbox360/audio/config -> ../../audio/config\n");
             } else {
                 fprintf(stderr, "[Main] WARN: Could not create audio config symlink: %s\n", ec.message().c_str());
+            }
+        }
+    }
+
+    // Bridge DLC directories to where RexGlue's ContentManager expects them.
+    // ContentManager::ListContent() scans: content_root / title_id / content_type / *
+    // GTA IV title_id = 545407F2, DLC content_type = 00000002 (kMarketplaceContent).
+    // Our DLC is at gamePath/dlc/TLAD and gamePath/dlc/TBOGT.
+    {
+        const auto dlcContentDir = rexContentRoot / "545407F2" / "00000002";
+        std::error_code ec;
+        std::filesystem::create_directories(dlcContentDir, ec);
+
+        const char* dlcNames[] = { "TLAD", "TBOGT" };
+        for (const char* name : dlcNames) {
+            auto actualDlc = gamePath / "dlc" / name;
+            auto linkPath  = dlcContentDir / name;
+            if (std::filesystem::is_directory(actualDlc, ec) &&
+                !std::filesystem::exists(linkPath, ec)) {
+                std::filesystem::create_directory_symlink(actualDlc, linkPath, ec);
+                if (!ec) {
+                    fprintf(stderr, "[Main] DLC bridge: %s -> %s\n",
+                            linkPath.string().c_str(), actualDlc.string().c_str());
+                } else {
+                    fprintf(stderr, "[Main] WARN: DLC bridge failed for %s: %s\n",
+                            name, ec.message().c_str());
+                }
             }
         }
     }
@@ -433,6 +469,27 @@ int main(int argc, char *argv[])
         if (rt_status != 0 /* X_STATUS_SUCCESS */) {
             fprintf(stderr, "[Main] FATAL: rex::Runtime::Setup() failed with 0x%08X\n", rt_status);
             std::_Exit(1);
+        }
+        // DIAG: verify xstart is registered after Setup()
+        {
+            auto* p = s_rexRuntime->processor();
+            PPCFunc* xsf = p->GetFunction(0x82A11290);
+            fprintf(stderr, "[DIAG] After Setup(): GetFunction(0x82A11290)=%p  HasFT=%d\n",
+                    (void*)xsf, (int)p->HasFunctionTable());
+            // Check PPCFuncMappings array for 0x82A11290
+            int total = 0, nullHost = 0;
+            bool foundEntry = false;
+            for (int i = 0; PPCFuncMappings[i].guest != 0; ++i) {
+                total++;
+                if (PPCFuncMappings[i].host == nullptr) nullHost++;
+                if (PPCFuncMappings[i].guest == 0x82A11290) {
+                    fprintf(stderr, "[DIAG] PPCFuncMappings[%d] = { 0x%zX, %p } (xstart)\n",
+                            i, PPCFuncMappings[i].guest, (void*)PPCFuncMappings[i].host);
+                    foundEntry = true;
+                }
+            }
+            fprintf(stderr, "[DIAG] PPCFuncMappings: %d total, %d null-host, found_82A11290=%d\n",
+                    total, nullHost, (int)foundEntry);
         }
         // SDK v0.2.1: set_instance() is automatic after Setup().
         // Get memory base from the Runtime's internally-managed Memory object.
@@ -473,7 +530,12 @@ int main(int argc, char *argv[])
                 printf("[Main] WARNING: Failed to initialize cache device\n");
             }
 
-            printf("[Main] Registered GTA IV VFS symlinks: common:, platform:, audio:, xbox360:, x:, cache:, cache1:\n");
+            // DLC path resolution is handled by the XAM content system at runtime.
+            // When the game calls XamContentCreateEx for DLC, XamRootCreate maps the
+            // content root name directly to GetGamePath()/dlc/ on the host filesystem.
+            // No VFS HostPathDevice mounts are needed.
+
+                        printf("[Main] Registered GTA IV VFS symlinks: common:, platform:, audio:, xbox360:, x:, cache:, cache1:\n");
             fflush(stdout);
         }
 
@@ -800,6 +862,14 @@ int main(int argc, char *argv[])
     LOGN_WARNING(modulePath.string());
 
     auto* rt = rex::Runtime::instance();
+    // DIAG: verify xstart is still registered right before LaunchModule
+    {
+        auto* p = rt->processor();
+        PPCFunc* xsf = p->GetFunction(0x82A11290);
+        fprintf(stderr, "[DIAG] Before LaunchModule(): GetFunction(0x82A11290)=%p  HasFT=%d  instance=%p\n",
+                (void*)xsf, (int)p->HasFunctionTable(), (void*)rt);
+        fflush(stderr);
+    }
     auto main_xthread = rt->LaunchModule();
     if (!main_xthread) {
         printf("[Main] FATAL: LaunchModule() returned null\n");

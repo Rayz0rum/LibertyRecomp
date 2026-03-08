@@ -1100,9 +1100,19 @@ GUEST_FUNCTION_WEAK_STUB(__imp__XamResetInactivity)
 GUEST_FUNCTION_WEAK_STUB(__imp__XamShowGamerCardUIForXUID)
 GUEST_FUNCTION_WEAK_STUB(__imp__XamShowPlayerReviewUI)
 GUEST_FUNCTION_WEAK_STUB(__imp__XamUserCreateStatsEnumerator)
+// v8 new imports - not yet implemented in kernel lib
+GUEST_FUNCTION_WEAK_STUB(__imp__XamShowMarketplaceUI)
+GUEST_FUNCTION_WEAK_STUB(__imp__XamShowMarketplaceDownloadItemsUI)
+GUEST_FUNCTION_WEAK_STUB(__imp__XNetLogonGetMachineID)
+GUEST_FUNCTION_WEAK_STUB(__imp__XNetLogonGetTitleID)
+GUEST_FUNCTION_WEAK_STUB(__imp__XamUserGetMembershipTierFromXUID)
+GUEST_FUNCTION_WEAK_STUB(__imp__XamUserGetOnlineCountryFromXUID)
 
-// sub_821966D0_hook — worker thread gate (suspend during init, pass-through at runtime)
-extern "C" void __imp__sub_821966D0(PPCContext &ctx, uint8_t *base);
+// sub_821966D0_hook — worker thread gate (suspend during init).
+// In v8 the guest function at 0x821966D0 is mid-body (not a discrete entry),
+// so InsertFunction() is a no-op and the pass-through is unreachable.
+// Provide an inline stub to satisfy the linker.
+extern "C" void __imp__sub_821966D0(PPCContext& /*ctx*/, uint8_t* /*base*/) { /* v8: mid-body addr, unreachable */ }
 extern "C" void sub_821966D0_hook(PPCContext &ctx, uint8_t *base) {
   if (ShouldFailOpenWait()) return;
   __imp__sub_821966D0(ctx, base);

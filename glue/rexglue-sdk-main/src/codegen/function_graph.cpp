@@ -17,6 +17,8 @@
 #include <rex/codegen/function_graph.h>
 #include <rex/logging.h>
 
+#include "codegen_logging.h"
+
 namespace rex::codegen {
 
 //=============================================================================
@@ -65,7 +67,7 @@ FunctionNode::FunctionNode(uint32_t base, uint32_t size, FunctionAuthority autho
 
 void FunctionNode::discover(std::vector<Block> blocks,
                             std::vector<rex::codegen::ppc::Instruction*> instructions,
-                            std::set<uint32_t> internalLabels) {
+                            std::set<uint32_t> labels) {
   assert(canDiscover() && "Invalid state transition: must be kRegistered");
 
   // Non-imports must have blocks
@@ -75,9 +77,7 @@ void FunctionNode::discover(std::vector<Block> blocks,
 
   blocks_ = std::move(blocks);
   instructions_ = std::move(instructions);
-  internalLabels_ = std::move(internalLabels);
-
-  labels_.insert(internalLabels_.begin(), internalLabels_.end());
+  labels_ = std::move(labels);
 
   // Update size based on blocks
   for (const auto& block : blocks_) {
@@ -89,8 +89,8 @@ void FunctionNode::discover(std::vector<Block> blocks,
 
   state_ = FunctionState::kDiscovered;
   REXCODEGEN_DEBUG(
-      "FunctionNode 0x{:08X} ({}): DISCOVERED with {} blocks, {} instructions, {} internal labels",
-      base_, name_, blocks_.size(), instructions_.size(), internalLabels_.size());
+      "FunctionNode 0x{:08X} ({}): DISCOVERED with {} blocks, {} instructions, {} labels", base_,
+      name_, blocks_.size(), instructions_.size(), labels_.size());
 }
 
 void FunctionNode::discoverAsImport() {
@@ -303,10 +303,6 @@ void FunctionNode::seal() {
 
   // Compute function analysis
   FunctionAnalysis analysis;
-
-  // Copy internal labels to analysis
-  analysis.internalLabels = internalLabels_;
-
   analysis_ = std::move(analysis);
   state_ = FunctionState::kSealed;
 
@@ -418,6 +414,7 @@ FunctionNode* FunctionGraph::addFunction(uint32_t base, uint32_t size, FunctionA
   auto node = std::make_unique<FunctionNode>(base, size, authority);
   FunctionNode* nodePtr = node.get();
   functions_[base] = std::move(node);
+  functionsByBase_[base] = nodePtr;
 
   // Track xrefs for merge eligibility
   functionHasXrefs_[base] = hasXrefs;
@@ -460,25 +457,30 @@ bool FunctionGraph::removeFunction(uint32_t entryPoint) {
     return false;
   }
   REXCODEGEN_TRACE("FunctionGraph: removing absorbed function 0x{:08X}", entryPoint);
+  functionsByBase_.erase(entryPoint);
   functions_.erase(it);
   functionHasXrefs_.erase(entryPoint);  // Clean up xref tracking
   return true;
 }
 
 FunctionNode* FunctionGraph::getFunctionContaining(uint32_t addr) {
-  // Linear search for now - can optimize with interval tree if needed
-  for (auto& [base, node] : functions_) {
-    if (node->containsAddress(addr)) {
-      return node.get();
+  // O(log f) lookup via sorted base index: find last function with base <= addr
+  auto it = functionsByBase_.upper_bound(addr);
+  if (it != functionsByBase_.begin()) {
+    --it;
+    if (it->second->containsAddress(addr)) {
+      return it->second;
     }
   }
   return nullptr;
 }
 
 const FunctionNode* FunctionGraph::getFunctionContaining(uint32_t addr) const {
-  for (const auto& [base, node] : functions_) {
-    if (node->containsAddress(addr)) {
-      return node.get();
+  auto it = functionsByBase_.upper_bound(addr);
+  if (it != functionsByBase_.begin()) {
+    --it;
+    if (it->second->containsAddress(addr)) {
+      return it->second;
     }
   }
   return nullptr;

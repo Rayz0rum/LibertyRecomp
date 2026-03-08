@@ -205,13 +205,36 @@ ppc_hresult_result_t XamUserGetDeviceContext_entry(ppc_u32_t user_index, ppc_u32
 }  // namespace kernel
 }  // namespace rex
 
-PPC_HOOK(__imp__XamResetInactivity, rex::kernel::xam::XamResetInactivity_entry)
-PPC_HOOK(__imp__XamEnableInactivityProcessing,
-         rex::kernel::xam::XamEnableInactivityProcessing_entry)
-PPC_HOOK(__imp__XamInputGetCapabilities, rex::kernel::xam::XamInputGetCapabilities_entry)
-PPC_HOOK(__imp__XamInputGetCapabilitiesEx, rex::kernel::xam::XamInputGetCapabilitiesEx_entry)
-PPC_HOOK(__imp__XamInputGetState, rex::kernel::xam::XamInputGetState_entry)
-PPC_HOOK(__imp__XamInputSetState, rex::kernel::xam::XamInputSetState_entry)
-PPC_HOOK(__imp__XamInputGetKeystroke, rex::kernel::xam::XamInputGetKeystroke_entry)
-PPC_HOOK(__imp__XamInputGetKeystrokeEx, rex::kernel::xam::XamInputGetKeystrokeEx_entry)
-PPC_HOOK(__imp__XamUserGetDeviceContext, rex::kernel::xam::XamUserGetDeviceContext_entry)
+XAM_EXPORT(__imp__XamResetInactivity, rex::kernel::xam::XamResetInactivity_entry)
+XAM_EXPORT(__imp__XamEnableInactivityProcessing,
+           rex::kernel::xam::XamEnableInactivityProcessing_entry)
+XAM_EXPORT(__imp__XamInputGetCapabilities, rex::kernel::xam::XamInputGetCapabilities_entry)
+XAM_EXPORT(__imp__XamInputGetCapabilitiesEx, rex::kernel::xam::XamInputGetCapabilitiesEx_entry)
+XAM_EXPORT(__imp__XamInputGetState, rex::kernel::xam::XamInputGetState_entry)
+XAM_EXPORT(__imp__XamInputSetState, rex::kernel::xam::XamInputSetState_entry)
+XAM_EXPORT(__imp__XamInputGetKeystroke, rex::kernel::xam::XamInputGetKeystroke_entry)
+XAM_EXPORT(__imp__XamInputGetKeystrokeEx, rex::kernel::xam::XamInputGetKeystrokeEx_entry)
+XAM_EXPORT(__imp__XamUserGetDeviceContext, rex::kernel::xam::XamUserGetDeviceContext_entry)
+
+XAM_EXPORT_STUB(__imp__XamInputControl);
+XAM_EXPORT_STUB(__imp__XamInputEnableAutobind);
+XAM_EXPORT_STUB(__imp__XamInputGetDeviceStats);
+XAM_EXPORT_STUB(__imp__XamInputGetFailedConnectionOrBind);
+XAM_EXPORT_STUB(__imp__XamInputGetKeyLocks);
+XAM_EXPORT_STUB(__imp__XamInputGetKeystrokeHud);
+XAM_EXPORT_STUB(__imp__XamInputGetKeystrokeHudEx);
+XAM_EXPORT_STUB(__imp__XamInputGetUserVibrationLevel);
+XAM_EXPORT_STUB(__imp__XamInputNonControllerGetRaw);
+XAM_EXPORT_STUB(__imp__XamInputNonControllerGetRawEx);
+XAM_EXPORT_STUB(__imp__XamInputNonControllerSetRaw);
+XAM_EXPORT_STUB(__imp__XamInputNonControllerSetRawEx);
+XAM_EXPORT_STUB(__imp__XamInputRawState);
+XAM_EXPORT_STUB(__imp__XamInputResetLayoutKeyboard);
+XAM_EXPORT_STUB(__imp__XamInputSendStayAliveRequest);
+XAM_EXPORT_STUB(__imp__XamInputSendXenonButtonPress);
+XAM_EXPORT_STUB(__imp__XamInputSetKeyLocks);
+XAM_EXPORT_STUB(__imp__XamInputSetKeyboardTranslationHud);
+XAM_EXPORT_STUB(__imp__XamInputSetLayoutKeyboard);
+XAM_EXPORT_STUB(__imp__XamInputSetMinMaxAuthDelay);
+XAM_EXPORT_STUB(__imp__XamInputSetTextMessengerIndicator);
+XAM_EXPORT_STUB(__imp__XamInputToggleKeyLocks);

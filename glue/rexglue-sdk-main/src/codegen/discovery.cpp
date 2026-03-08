@@ -8,6 +8,7 @@
  *              See LICENSE file in the project root for full license text.
  */
 
+#include "codegen_flags.h"
 #include "decoded_binary.h"
 #include "discovery.h"
 
@@ -15,6 +16,8 @@
 #include <queue>
 
 #include <rex/logging.h>
+
+#include "codegen_logging.h"
 #include <rex/types.h>
 
 namespace rex::codegen {
@@ -107,7 +110,7 @@ struct BoundsInfo {
 BoundsInfo scanForBounds(DecodedBinary& decoded, uint32_t bctrAddr, const CodeRegion& region,
                          uint8_t expectedReg, uint32_t funcStart) {
   BoundsInfo result;
-  constexpr int kMaxBackwardScan = 64;
+  const int backwardScanLimit = static_cast<int>(REXCVAR_GET(backward_scan_limit));
 
   // Use funcStart as lower bound to avoid scanning into other functions
   uint32_t scanLowerBound = std::max(region.start, funcStart);
@@ -117,10 +120,15 @@ BoundsInfo scanForBounds(DecodedBinary& decoded, uint32_t bctrAddr, const CodeRe
       bctrAddr, region.start, region.end, funcStart, expectedReg);
 
   uint32_t scanAddr = bctrAddr;
-  for (int i = 0; i < kMaxBackwardScan && scanAddr >= scanLowerBound + 4; i++) {
+  for (int i = 0; i < backwardScanLimit && scanAddr >= scanLowerBound + 4; i++) {
     scanAddr -= 4;
     auto* insn = decoded.get(scanAddr);
     if (!insn)
+      break;
+
+    // Stop at unconditional terminators - scanning past basic block boundaries
+    // risks finding unrelated comparisons on the index register
+    if (isTerminator(*insn) && !isConditional(*insn))
       break;
 
     using namespace rex::codegen::ppc;
@@ -184,8 +192,8 @@ std::optional<JumpTable> detectJumpTable(DecodedBinary& decoded, uint32_t bctrAd
                                          uint32_t funcEnd) {
   using namespace rex::codegen::ppc;
 
-  constexpr int kMaxBackwardScan = 64;
-  constexpr int kMaxTableEntries = 512;
+  const int kMaxBackwardScan = static_cast<int>(REXCVAR_GET(backward_scan_limit));
+  const uint32_t kMaxTableEntries = REXCVAR_GET(max_jump_table_entries);
 
   // State for backward scan
   uint8_t ctrSourceReg = 0xFF;
@@ -554,6 +562,18 @@ std::optional<JumpTable> detectJumpTable(DecodedBinary& decoded, uint32_t bctrAd
     // Validate target is within code region - jump table targets help DEFINE function extent
     // Don't constrain by funcEnd since that's just PDATA which may not include out-of-line code
     if (target == 0 || !containingRegion.contains(target)) {
+      // TODO(tomc): Figure out what this voodoo does on real hardware. Its a jump target that
+      // points to a null value..?
+      if (target != 0) {
+        auto outsideInsn = decoded.read<uint32_t>(target);
+        if (outsideInsn && (*outsideInsn == 0x00000000 || *outsideInsn == 0xFFFFFFFF)) {
+          REXCODEGEN_TRACE(
+              "detectJumpTable: bctr=0x{:08X} entry[{}] target=0x{:08X} null jump sentinel",
+              bctrAddr, i, target);
+          jt.targets.push_back(0);  // sentinel
+          continue;
+        }
+      }
       // End of valid entries
       REXCODEGEN_TRACE(
           "detectJumpTable: bctr=0x{:08X} entry[{}] target=0x{:08X} invalid (region "
@@ -572,6 +592,19 @@ std::optional<JumpTable> detectJumpTable(DecodedBinary& decoded, uint32_t bctrAd
       if (jt.targets.empty())
         return std::nullopt;
       break;
+    }
+
+    // Validate target points to valid code, not null padding
+    // TODO(tomc): look into this more. what is the expected behavior when the processor executes
+    // a null instruction.
+    auto targetInsn = decoded.read<uint32_t>(target);
+    if (targetInsn && (*targetInsn == 0x00000000 || *targetInsn == 0xFFFFFFFF)) {
+      REXCODEGEN_TRACE(
+          "detectJumpTable: bctr=0x{:08X} entry[{}] target=0x{:08X} points to null/padding "
+          "(0x{:08X})",
+          bctrAddr, i, target, *targetInsn);
+      jt.targets.push_back(0);  // sentinel, handled in codegen as __builtin_trap()
+      continue;
     }
 
     jt.targets.push_back(target);
@@ -599,8 +632,8 @@ BlockDiscoveryResult discoverBlocks(DecodedBinary& decoded, uint32_t entryPoint,
                                     const std::unordered_set<uint32_t>& knownFunctions,
                                     uint32_t pdataSize) {
   BlockDiscoveryResult result;
-  std::set<uint32_t> visited;
-  std::set<uint32_t> blockStarts;
+  std::unordered_set<uint32_t> visited;
+  std::unordered_set<uint32_t> blockStarts;
   std::queue<uint32_t> worklist;
 
   // Function extent - use pdataSize when available
@@ -695,10 +728,12 @@ BlockDiscoveryResult discoverBlocks(DecodedBinary& decoded, uint32_t entryPoint,
             // Extend funcEnd if any target exceeds it (within region bounds)
             // This handles out-of-line switch case code
             for (uint32_t t : jt->targets) {
+              if (t == 0)
+                continue;  // sentinel from null-padding detection
               if (t >= funcEnd && t < containingRegion.end) {
                 funcEnd = t + 4;  // Extend to include this target
               }
-              result.internalLabels.insert(t);
+              result.labels.insert(t);
               if (!visited.contains(t) && !blockStarts.contains(t)) {
                 blockStarts.insert(t);
                 worklist.push(t);
@@ -710,7 +745,7 @@ BlockDiscoveryResult discoverBlocks(DecodedBinary& decoded, uint32_t entryPoint,
         } else if (isConditional(*insn)) {
           // Conditional branch - follow both paths
           if (target && isInternalTarget(*target)) {
-            result.internalLabels.insert(*target);
+            result.labels.insert(*target);
             if (!visited.contains(*target) && !blockStarts.contains(*target)) {
               blockStarts.insert(*target);
               worklist.push(*target);
@@ -722,7 +757,7 @@ BlockDiscoveryResult discoverBlocks(DecodedBinary& decoded, uint32_t entryPoint,
           // CRITICAL: Fall-through also needs a label
           uint32_t fallthrough = addr + 4;
           if (isInternalTarget(fallthrough)) {
-            result.internalLabels.insert(fallthrough);
+            result.labels.insert(fallthrough);
             if (!visited.contains(fallthrough) && !blockStarts.contains(fallthrough)) {
               blockStarts.insert(fallthrough);
               worklist.push(fallthrough);
@@ -733,7 +768,7 @@ BlockDiscoveryResult discoverBlocks(DecodedBinary& decoded, uint32_t entryPoint,
           if (target) {
             if (isInternalTarget(*target)) {
               // Internal unconditional branch (includes backward branches)
-              result.internalLabels.insert(*target);
+              result.labels.insert(*target);
               if (!visited.contains(*target) && !blockStarts.contains(*target)) {
                 blockStarts.insert(*target);
                 worklist.push(*target);
@@ -786,7 +821,7 @@ BlockDiscoveryResult discoverBlocks(DecodedBinary& decoded, uint32_t entryPoint,
                             result.instructions.end());
 
   REXCODEGEN_TRACE("discoverBlocks: entry=0x{:08X} blocks={} instructions={} labels={}", entryPoint,
-                   result.blocks.size(), result.instructions.size(), result.internalLabels.size());
+                   result.blocks.size(), result.instructions.size(), result.labels.size());
 
   return result;
 }

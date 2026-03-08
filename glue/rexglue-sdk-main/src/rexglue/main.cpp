@@ -12,6 +12,7 @@
 #include "commands/migrate_command.h"
 #include "commands/test_recompiler.h"
 
+#include <chrono>
 #include <iostream>
 #include <map>
 
@@ -19,10 +20,9 @@
 #include <rex/logging.h>
 #include <rex/result.h>
 
-// Analyze/Codegen flags
-REXCVAR_DEFINE_BOOL(force, false, "Codegen", "Generate output even if validation errors occur");
-REXCVAR_DEFINE_BOOL(enable_exception_handlers, false, "Codegen",
-                    "Enable generation of SEH exception handler code");
+// Codegen flags (definitions in codegen_flags.cpp)
+REXCVAR_DECLARE(bool, force);
+REXCVAR_DECLARE(bool, enable_exception_handlers);
 
 // Recompile-tests flags
 REXCVAR_DEFINE_STRING(bin_dir, "", "RecompileTests",
@@ -95,6 +95,8 @@ int main(int argc, char** argv) {
   ctx.force = REXCVAR_GET(force);
   ctx.enableExceptionHandlers = REXCVAR_GET(enable_exception_handlers);
 
+  auto startTime = std::chrono::steady_clock::now();
+
   Result<void> result = Ok();
   if (command == "init") {
     rexglue::cli::InitOptions opts;
@@ -157,11 +159,15 @@ int main(int argc, char** argv) {
     return 1;
   }
 
+  auto endTime = std::chrono::steady_clock::now();
+  auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
+
   if (!result) {
-    REXLOG_ERROR("Operation failed: {}", result.error().what());
+    REXLOG_ERROR("Operation failed: {} (took {:.3f}s)", result.error().what(),
+                 elapsed.count() / 1000.0);
     return 1;
   }
 
-  REXLOG_INFO("Operation completed successfully");
+  REXLOG_INFO("Operation completed successfully in {:.3f}s", elapsed.count() / 1000.0);
   return 0;
 }

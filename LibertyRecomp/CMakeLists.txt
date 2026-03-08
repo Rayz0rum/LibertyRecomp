@@ -143,6 +143,9 @@ elseif (LIBERTY_RECOMP_TARGET_PLATFORM STREQUAL "ps4" OR CMAKE_SYSTEM_NAME STREQ
         "os/ps4/process_ps4.cpp"
         "os/ps4/user_ps4.cpp"
         "os/ps4/version_ps4.cpp"
+        "os/ps4/ps4_main.cpp"
+        "os/ps4/user_malloc_ps4.cpp"
+        "os/ps4/trophy_ps4.cpp"
     )
 elseif (LIBERTY_RECOMP_TARGET_PLATFORM STREQUAL "switch" OR CMAKE_SYSTEM_NAME STREQUAL "Switch")
     set(LIBERTY_RECOMP_OS_CXX_SOURCES
@@ -151,6 +154,7 @@ elseif (LIBERTY_RECOMP_TARGET_PLATFORM STREQUAL "switch" OR CMAKE_SYSTEM_NAME ST
         "os/switch/process_switch.cpp"
         "os/switch/user_switch.cpp"
         "os/switch/version_switch.cpp"
+        "os/switch/switch_main.cpp"
     )
 elseif (CMAKE_SYSTEM_NAME MATCHES "Linux")
     set(LIBERTY_RECOMP_OS_CXX_SOURCES
@@ -173,7 +177,8 @@ endif()
 # ── Embedded assets compile definition ──────────────────────────────────────
 if (LIBERTY_RECOMP_EMBEDDED_ASSETS)
     add_compile_definitions(
-    LIBERTY_RECOMP_OVERRIDESLIBERTY_RECOMP_EMBEDDED_ASSETS)
+    LIBERTY_RECOMP_OVERRIDES
+    LIBERTY_RECOMP_EMBEDDED_ASSETS)
     message(STATUS "Building with embedded game assets (no installer wizard)")
 endif()
 
@@ -271,6 +276,7 @@ set(LIBERTY_RECOMP_UI_CXX_SOURCES
 )
 
 set(LIBERTY_RECOMP_INSTALL_CXX_SOURCES
+    "install/auto_installer.cpp"
     "install/installer.cpp"
     "install/iso_file_system.cpp"
     "install/iso_extractor.cpp"
@@ -388,6 +394,12 @@ endif()
 
 if (LIBERTY_RECOMP_METAL)
     set(XCRUN_TOOL "/usr/bin/xcrun")
+    # Select the correct Metal SDK: iphoneos for iOS, macosx for macOS
+    if (LIBERTY_RECOMP_TARGET_PLATFORM STREQUAL "ios" OR CMAKE_SYSTEM_NAME STREQUAL "iOS")
+        set(LIBERTY_RECOMP_METAL_SDK "iphoneos")
+    else()
+        set(LIBERTY_RECOMP_METAL_SDK "macosx")
+    endif()
 endif()
 
 GenerateVersionSources(
@@ -427,8 +439,40 @@ if (WIN32)
     if (${CMAKE_BUILD_TYPE} MATCHES "Release")
         target_link_options(LibertyRecomp PRIVATE "/SUBSYSTEM:WINDOWS" "/ENTRY:mainCRTStartup")
     endif()
+elseif (LIBERTY_RECOMP_TARGET_PLATFORM STREQUAL "ios" OR CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    # ── iOS App Bundle ─────────────────────────────────────────────────────────
+    CreateVersionString(
+            VERSION_TXT ${VERSION_TXT}
+            OUTPUT_VAR IOS_BUNDLE_VERSION
+    )
+
+    add_executable(LibertyRecomp MACOSX_BUNDLE
+            ${LIBERTY_RECOMP_CXX_SOURCES}
+    )
+    set_target_properties(LibertyRecomp PROPERTIES
+            OUTPUT_NAME "Liberty Recompiled"
+            MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/res/ios/iOSBundleInfo.plist.in"
+            MACOSX_BUNDLE_GUI_IDENTIFIER "OZORDI.LibertyRecomp.iOS"
+            MACOSX_BUNDLE_BUNDLE_NAME "Liberty Recompiled"
+            MACOSX_BUNDLE_BUNDLE_VERSION ${IOS_BUNDLE_VERSION}
+            MACOSX_BUNDLE_SHORT_VERSION_STRING ${IOS_BUNDLE_VERSION}
+            XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2"
+            XCODE_ATTRIBUTE_IPHONEOS_DEPLOYMENT_TARGET "16.0"
+            XCODE_ATTRIBUTE_ENABLE_BITCODE "NO"
+    )
+
+    # Post-build: copy game payload into the app bundle at <Bundle>/game/
+    if (LIBERTY_RECOMP_EMBEDDED_GAME_PATH)
+        add_custom_command(TARGET LibertyRecomp POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${LIBERTY_RECOMP_EMBEDDED_GAME_PATH}"
+                "$<TARGET_BUNDLE_CONTENT_DIR:LibertyRecomp>/game"
+            COMMENT "Staging game payload into iOS bundle..."
+        )
+    endif()
+
 elseif (APPLE)
-    # Create version number for app bundle.
+    # ── macOS App Bundle ───────────────────────────────────────────────────────
     CreateVersionString(
             VERSION_TXT ${VERSION_TXT}
             OUTPUT_VAR MACOS_BUNDLE_VERSION
@@ -478,6 +522,181 @@ elseif (APPLE)
     add_dependencies(LibertyRecomp CopyMoltenVK)
 else()
     add_executable(LibertyRecomp ${LIBERTY_RECOMP_CXX_SOURCES})
+
+    # ── Switch: NRO packaging (post-build) ─────────────────────────────────────
+    if (LIBERTY_RECOMP_TARGET_PLATFORM STREQUAL "switch" OR CMAKE_SYSTEM_NAME STREQUAL "Switch")
+        # NACP metadata — shown in homebrew menu and Switch system UI
+        set(LIBERTY_SWITCH_APP_TITLE   "Liberty Recompiled")
+        set(LIBERTY_SWITCH_APP_AUTHOR  "LibertyRecomp Contributors")
+        set(LIBERTY_SWITCH_APP_VERSION "1.0.0")
+        if (LIBERTY_RECOMP_EMBEDDED_GAME_PATH)
+            set(SWITCH_ROMFS_ARG "--romfsdir=${LIBERTY_RECOMP_EMBEDDED_GAME_PATH}")
+        else()
+            set(SWITCH_ROMFS_ARG "")
+        endif()
+        find_program(NACPTOOL_EXE nacptool HINTS "${DEVKITPRO}/tools/bin")
+        find_program(ELF2NRO_EXE elf2nro   HINTS "${DEVKITPRO}/tools/bin")
+        if (NACPTOOL_EXE AND ELF2NRO_EXE)
+            add_custom_command(TARGET LibertyRecomp POST_BUILD
+                COMMAND ${NACPTOOL_EXE} --create
+                    "${LIBERTY_SWITCH_APP_TITLE}"
+                    "${LIBERTY_SWITCH_APP_AUTHOR}"
+                    "${LIBERTY_SWITCH_APP_VERSION}"
+                    "$<TARGET_FILE_DIR:LibertyRecomp>/LibertyRecomp.nacp"
+                COMMAND ${ELF2NRO_EXE}
+                    "$<TARGET_FILE:LibertyRecomp>"
+                    "$<TARGET_FILE_DIR:LibertyRecomp>/LibertyRecomp.nro"
+                    "--nacp=$<TARGET_FILE_DIR:LibertyRecomp>/LibertyRecomp.nacp"
+                    "--icon=${CMAKE_CURRENT_SOURCE_DIR}/res/switch/icon.jpg"
+                    ${SWITCH_ROMFS_ARG}
+                COMMENT "Packaging Switch NRO..."
+            )
+        else()
+            message(WARNING "nacptool or elf2nro not found – Switch NRO will not be packaged automatically.")
+        endif()
+    endif()
+
+    # ── PS4: FSELF + full PKG pipeline ─────────────────────────────────────────
+    if (LIBERTY_RECOMP_TARGET_PLATFORM STREQUAL "ps4" OR CMAKE_SYSTEM_NAME STREQUAL "PS4")
+        set(LIBERTY_PS4_TOOLCHAIN   "${CMAKE_SOURCE_DIR}/tools/OpenOrbis-PS4-Toolchain")
+        set(LIBERTY_PS4_FSELF_PY    "${LIBERTY_PS4_TOOLCHAIN}/scripts/make_fself.py")
+        set(LIBERTY_PS4_PKG_STAGING "${CMAKE_BINARY_DIR}/pkg_staging")
+        set(LIBERTY_PS4_TITLE_ID    "LBTY00001")
+        set(LIBERTY_PS4_CONTENT_ID  "EP0000-LBTY00001_00-0000000000000000")
+        set(LIBERTY_PS4_VERSION     "01.00")
+        set(LIBERTY_PS4_TITLE_STR   "Liberty Recompiled")
+
+        # Detect host OS for toolchain bin subdir
+        if (CMAKE_HOST_SYSTEM_NAME STREQUAL "Darwin")
+            set(LIBERTY_PS4_BINDIR "${LIBERTY_PS4_TOOLCHAIN}/bin/macos")
+        elseif (CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux")
+            set(LIBERTY_PS4_BINDIR "${LIBERTY_PS4_TOOLCHAIN}/bin/linux")
+        else()
+            set(LIBERTY_PS4_BINDIR "${LIBERTY_PS4_TOOLCHAIN}/bin/windows")
+        endif()
+
+        find_program(LIBERTY_PS4_CREATE_TRP   create-trp   HINTS "${LIBERTY_PS4_BINDIR}")
+        find_program(LIBERTY_PS4_CREATE_GP4   create-gp4   HINTS "${LIBERTY_PS4_BINDIR}")
+        find_program(LIBERTY_PS4_PKGTOOL      PkgTool.Core HINTS "${LIBERTY_PS4_BINDIR}")
+
+        # Post-build step 1: ELF → fake-SELF eboot.bin (always runs)
+        add_custom_command(TARGET LibertyRecomp POST_BUILD
+            COMMAND python3 "${LIBERTY_PS4_FSELF_PY}"
+                "$<TARGET_FILE:LibertyRecomp>"
+                "$<TARGET_FILE_DIR:LibertyRecomp>/eboot.bin"
+            COMMENT "PS4: Creating fake-SELF eboot.bin..."
+        )
+
+        if (LIBERTY_PS4_CREATE_TRP AND LIBERTY_PS4_CREATE_GP4 AND LIBERTY_PS4_PKGTOOL)
+            # Full PKG pipeline target
+            add_custom_target(LibertyRecomp-pkg
+                DEPENDS LibertyRecomp
+                WORKING_DIRECTORY "${LIBERTY_PS4_PKG_STAGING}"
+
+                # 1. Create staging directory tree
+                COMMAND ${CMAKE_COMMAND} -E make_directory "${LIBERTY_PS4_PKG_STAGING}/sce_sys/trophy"
+                COMMAND ${CMAKE_COMMAND} -E make_directory "${LIBERTY_PS4_PKG_STAGING}/game"
+
+                # 2. Copy static sce_sys image assets
+                COMMAND ${CMAKE_COMMAND} -E copy
+                    "${CMAKE_CURRENT_SOURCE_DIR}/res/ps4/sce_sys/icon0.png"
+                    "${LIBERTY_PS4_PKG_STAGING}/sce_sys/icon0.png"
+                COMMAND ${CMAKE_COMMAND} -E copy
+                    "${CMAKE_CURRENT_SOURCE_DIR}/res/ps4/sce_sys/pic1.png"
+                    "${LIBERTY_PS4_PKG_STAGING}/sce_sys/pic1.png"
+
+                # 3. Generate param.sfo via PkgTool.Core
+                COMMAND "${LIBERTY_PS4_PKGTOOL}" sfo_new
+                    "${LIBERTY_PS4_PKG_STAGING}/sce_sys/param.sfo"
+                COMMAND "${LIBERTY_PS4_PKGTOOL}" sfo_setentry
+                    "${LIBERTY_PS4_PKG_STAGING}/sce_sys/param.sfo"
+                    APP_TYPE --type Integer --maxsize 4 --value 1
+                COMMAND "${LIBERTY_PS4_PKGTOOL}" sfo_setentry
+                    "${LIBERTY_PS4_PKG_STAGING}/sce_sys/param.sfo"
+                    APP_VER --type Utf8 --maxsize 8 --value "${LIBERTY_PS4_VERSION}"
+                COMMAND "${LIBERTY_PS4_PKGTOOL}" sfo_setentry
+                    "${LIBERTY_PS4_PKG_STAGING}/sce_sys/param.sfo"
+                    ATTRIBUTE --type Integer --maxsize 4 --value 0
+                COMMAND "${LIBERTY_PS4_PKGTOOL}" sfo_setentry
+                    "${LIBERTY_PS4_PKG_STAGING}/sce_sys/param.sfo"
+                    CATEGORY --type Utf8 --maxsize 4 --value "gd"
+                COMMAND "${LIBERTY_PS4_PKGTOOL}" sfo_setentry
+                    "${LIBERTY_PS4_PKG_STAGING}/sce_sys/param.sfo"
+                    CONTENT_ID --type Utf8 --maxsize 48 --value "${LIBERTY_PS4_CONTENT_ID}"
+                COMMAND "${LIBERTY_PS4_PKGTOOL}" sfo_setentry
+                    "${LIBERTY_PS4_PKG_STAGING}/sce_sys/param.sfo"
+                    DOWNLOAD_DATA_SIZE --type Integer --maxsize 4 --value 0
+                COMMAND "${LIBERTY_PS4_PKGTOOL}" sfo_setentry
+                    "${LIBERTY_PS4_PKG_STAGING}/sce_sys/param.sfo"
+                    SYSTEM_VER --type Integer --maxsize 4 --value 0
+                COMMAND "${LIBERTY_PS4_PKGTOOL}" sfo_setentry
+                    "${LIBERTY_PS4_PKG_STAGING}/sce_sys/param.sfo"
+                    TITLE --type Utf8 --maxsize 128 --value "${LIBERTY_PS4_TITLE_STR}"
+                COMMAND "${LIBERTY_PS4_PKGTOOL}" sfo_setentry
+                    "${LIBERTY_PS4_PKG_STAGING}/sce_sys/param.sfo"
+                    TITLE_ID --type Utf8 --maxsize 12 --value "${LIBERTY_PS4_TITLE_ID}"
+                COMMAND "${LIBERTY_PS4_PKGTOOL}" sfo_setentry
+                    "${LIBERTY_PS4_PKG_STAGING}/sce_sys/param.sfo"
+                    VERSION --type Utf8 --maxsize 8 --value "${LIBERTY_PS4_VERSION}"
+
+                # 4. Compile trophy source → trophy00.trp + npbind.dat + nptitle.dat
+                #    create-trp outputs npbind.dat and nptitle.dat in WORKING_DIRECTORY
+                COMMAND "${LIBERTY_PS4_CREATE_TRP}" -CSYS "${LIBERTY_PS4_TITLE_ID}"
+                    -PTS "${CMAKE_CURRENT_SOURCE_DIR}/res/ps4/trophy00"
+                    "${LIBERTY_PS4_PKG_STAGING}/sce_sys/trophy/trophy00.trp"
+                COMMAND ${CMAKE_COMMAND} -E copy
+                    "${LIBERTY_PS4_PKG_STAGING}/npbind.dat"
+                    "${LIBERTY_PS4_PKG_STAGING}/sce_sys/npbind.dat"
+                COMMAND ${CMAKE_COMMAND} -E copy
+                    "${LIBERTY_PS4_PKG_STAGING}/nptitle.dat"
+                    "${LIBERTY_PS4_PKG_STAGING}/sce_sys/nptitle.dat"
+
+                # 5. Copy eboot.bin
+                COMMAND ${CMAKE_COMMAND} -E copy
+                    "$<TARGET_FILE_DIR:LibertyRecomp>/eboot.bin"
+                    "${LIBERTY_PS4_PKG_STAGING}/eboot.bin"
+
+                # 6. Copy game payload
+                COMMAND ${CMAKE_COMMAND} -E copy_directory
+                    "${LIBERTY_RECOMP_EMBEDDED_GAME_PATH}"
+                    "${LIBERTY_PS4_PKG_STAGING}/game"
+
+                # 7. Generate .gp4 manifest
+                COMMAND "${LIBERTY_PS4_CREATE_GP4}"
+                    -out "${LIBERTY_PS4_PKG_STAGING}/pkg.gp4"
+                    --content-id="${LIBERTY_PS4_CONTENT_ID}"
+                    --files "eboot.bin sce_sys/param.sfo sce_sys/icon0.png sce_sys/pic1.png sce_sys/npbind.dat sce_sys/nptitle.dat sce_sys/trophy/trophy00.trp"
+
+                # 8. Build .pkg
+                COMMAND "${LIBERTY_PS4_PKGTOOL}" pkg_build
+                    "${LIBERTY_PS4_PKG_STAGING}/pkg.gp4"
+                    "${LIBERTY_PS4_PKG_STAGING}"
+
+                COMMENT "PS4: Building ${LIBERTY_PS4_CONTENT_ID}.pkg..."
+            )
+        else()
+            message(WARNING
+                "PS4 packaging tools (create-trp, create-gp4, PkgTool.Core) not found in "
+                "${LIBERTY_PS4_BINDIR}. Place the OpenOrbis binaries there to enable "
+                "the LibertyRecomp-pkg build target.")
+            # Fallback: basic staging only (no .pkg produced)
+            add_custom_target(LibertyRecomp-pkg
+                DEPENDS LibertyRecomp
+                COMMAND ${CMAKE_COMMAND} -E make_directory "${LIBERTY_PS4_PKG_STAGING}/sce_sys/trophy"
+                COMMAND ${CMAKE_COMMAND} -E make_directory "${LIBERTY_PS4_PKG_STAGING}/game"
+                COMMAND ${CMAKE_COMMAND} -E copy
+                    "$<TARGET_FILE_DIR:LibertyRecomp>/eboot.bin"
+                    "${LIBERTY_PS4_PKG_STAGING}/eboot.bin"
+                COMMAND ${CMAKE_COMMAND} -E copy_directory
+                    "${CMAKE_CURRENT_SOURCE_DIR}/res/ps4/sce_sys"
+                    "${LIBERTY_PS4_PKG_STAGING}/sce_sys"
+                COMMAND ${CMAKE_COMMAND} -E copy_directory
+                    "${LIBERTY_RECOMP_EMBEDDED_GAME_PATH}"
+                    "${LIBERTY_PS4_PKG_STAGING}/game"
+                COMMENT "PS4: Basic file staging only (packaging tools not found)."
+            )
+        endif()
+    endif()
 endif()
 
 if (LIBERTY_RECOMP_FLATPAK)
@@ -623,12 +842,12 @@ function(compile_shader FILE_PATH TARGET_NAME)
     if (LIBERTY_RECOMP_METAL)
         add_custom_command(
                 OUTPUT ${MSL_FILE_PATH}.ir
-                COMMAND ${XCRUN_TOOL} -sdk macosx metal -o ${MSL_FILE_PATH}.ir -c ${MSL_FILE_PATH} -D__air__ -frecord-sources -gline-tables-only
+                COMMAND ${XCRUN_TOOL} -sdk ${LIBERTY_RECOMP_METAL_SDK} metal -o ${MSL_FILE_PATH}.ir -c ${MSL_FILE_PATH} -D__air__ -frecord-sources -gline-tables-only
                 DEPENDS ${MSL_FILE_PATH}
         )
         add_custom_command(
                 OUTPUT ${MSL_FILE_PATH}.metallib
-                COMMAND ${XCRUN_TOOL} -sdk macosx metallib -o ${MSL_FILE_PATH}.metallib ${MSL_FILE_PATH}.ir
+                COMMAND ${XCRUN_TOOL} -sdk ${LIBERTY_RECOMP_METAL_SDK} metallib -o ${MSL_FILE_PATH}.metallib ${MSL_FILE_PATH}.ir
                 DEPENDS ${MSL_FILE_PATH}.ir
         )
         BIN2C(TARGET_OBJ LibertyRecomp SOURCE_FILE "${MSL_FILE_PATH}.metallib" DEST_FILE "${MSL_FILE_PATH}.metallib" ARRAY_NAME "g_${MSL_NAME}_air")

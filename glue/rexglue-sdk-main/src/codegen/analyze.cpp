@@ -9,11 +9,14 @@
  *              See LICENSE file in the project root for full license text.
  */
 
+#include "codegen_flags.h"
 #include "decoded_binary.h"
 #include "discovery.h"
 #include "ppc/instruction.h"
 
 #include <algorithm>
+#include <array>
+#include <bitset>
 #include <map>
 #include <unordered_map>
 #include <unordered_set>
@@ -25,6 +28,8 @@
 #include <rex/codegen/config.h>
 #include <rex/codegen/vtable_scanner.h>
 #include <rex/logging.h>
+
+#include "codegen_logging.h"
 #include <rex/memory/utils.h>
 #include <rex/system/export_resolver.h>
 #include <rex/types.h>
@@ -38,6 +43,47 @@ using rex::memory::load_and_swap;
 namespace rex::codegen {
 
 namespace {
+
+//=============================================================================
+// Helpers
+//=============================================================================
+
+/// Build set of non-helper function entry points for boundary detection.
+/// @param graph The function graph to scan
+/// @param excludeGapFill If true, also exclude GAP_FILL authority functions
+std::unordered_set<uint32_t> buildKnownFunctions(const FunctionGraph& graph,
+                                                 bool excludeGapFill = false) {
+  std::unordered_set<uint32_t> result;
+  for (const auto& [addr, node] : graph.functions()) {
+    auto auth = node->authority();
+    if (auth == FunctionAuthority::HELPER)
+      continue;
+    if (excludeGapFill && auth == FunctionAuthority::GAP_FILL)
+      continue;
+    result.insert(addr);
+  }
+  return result;
+}
+
+// Forward declaration (defined later in the file)
+void discoverFunction(CodegenContext& ctx, uint32_t funcAddr,
+                      const std::unordered_set<uint32_t>& knownFunctions);
+
+/// Collect all functions awaiting discovery and discover their blocks.
+/// @return Number of functions discovered
+size_t discoverPendingFunctions(CodegenContext& ctx,
+                                const std::unordered_set<uint32_t>& knownFunctions) {
+  std::vector<uint32_t> pending;
+  for (const auto& [addr, node] : ctx.graph.functions()) {
+    if (node->canDiscover()) {
+      pending.push_back(addr);
+    }
+  }
+  for (uint32_t funcAddr : pending) {
+    discoverFunction(ctx, funcAddr, knownFunctions);
+  }
+  return pending.size();
+}
 
 //=============================================================================
 // PE Structures
@@ -216,7 +262,9 @@ std::optional<ParsedExceptionInfo> parseCxxFuncInfo(uint32_t handlerThunk, uint3
     return std::nullopt;
   }
 
-  if (cxxInfo.maxState > 100 || nTryBlocks > 50 || nIPMapEntries > 200) {
+  if (cxxInfo.maxState > REXCVAR_GET(max_eh_states) ||
+      nTryBlocks > REXCVAR_GET(max_eh_try_blocks) ||
+      nIPMapEntries > REXCVAR_GET(max_eh_ip_map_entries)) {
     return std::nullopt;
   }
 
@@ -343,7 +391,7 @@ std::optional<ParsedExceptionInfo> parseExceptionInfo(const BinaryView& binary,
                             functionBeginAddr, discoveredFuncs);
   } else {
     uint32_t count = firstWord;
-    if (count == 0 || count > 100) {
+    if (count == 0 || count > REXCVAR_GET(max_seh_scope_entries)) {
       return std::nullopt;
     }
     return parseSehScopeTable(handlerThunk, tableAddr, count, rdataBase, rdataStart, rdataSize,
@@ -898,7 +946,7 @@ void discoverFunction(CodegenContext& ctx, uint32_t funcAddr,
 
   // snooper the function with the discovered blocks and instructions
   node->discover(std::move(result.blocks), std::move(result.instructions),
-                 std::move(result.internalLabels));
+                 std::move(result.labels));
 
   // Add jump tables (targets become labels in the function)
   for (const auto& jt : result.jumpTables) {
@@ -992,9 +1040,9 @@ void discoverAllFunctions(CodegenContext& ctx) {
   // Iterative discovery
   size_t iteration = 0;
   size_t lastFunctionCount = 0;
-  constexpr size_t MAX_ITERATIONS = 1000;
+  const size_t maxIterations = REXCVAR_GET(max_discovery_iterations);
 
-  while (iteration < MAX_ITERATIONS) {
+  while (iteration < maxIterations) {
     iteration++;
 
     size_t currentFunctionCount = graph.functionCount();
@@ -1006,29 +1054,9 @@ void discoverAllFunctions(CodegenContext& ctx) {
 
     lastFunctionCount = currentFunctionCount;
 
-    // Find functions that need discovery (still in kRegistered state)
-    std::vector<uint32_t> needsDiscovery;
-    for (const auto& [addr, node] : graph.functions()) {
-      if (node->canDiscover()) {
-        needsDiscovery.push_back(addr);
-      }
-    }
-
-    if (needsDiscovery.empty()) {
+    auto knownFunctions = buildKnownFunctions(graph);
+    if (discoverPendingFunctions(ctx, knownFunctions) == 0) {
       break;
-    }
-
-    // Build set of known functions for boundary detection
-    // HELPER functions intentionally overlap - don't treat as hard boundaries
-    std::unordered_set<uint32_t> knownFunctions;
-    for (const auto& [addr, node] : graph.functions()) {
-      if (node->authority() != FunctionAuthority::HELPER) {
-        knownFunctions.insert(addr);
-      }
-    }
-
-    for (uint32_t funcAddr : needsDiscovery) {
-      discoverFunction(ctx, funcAddr, knownFunctions);
     }
   }
 
@@ -1061,31 +1089,14 @@ void discoverAllFunctions(CodegenContext& ctx) {
     // Continue discovery for vtable functions
     if (newFunctions > 0) {
       size_t vtableIteration = 0;
-      constexpr size_t MAX_VTABLE_ITERATIONS = 100;
+      const size_t maxVtableIterations = REXCVAR_GET(max_vtable_iterations);
 
-      while (vtableIteration < MAX_VTABLE_ITERATIONS) {
+      while (vtableIteration < maxVtableIterations) {
         vtableIteration++;
 
-        std::vector<uint32_t> needsDiscovery;
-        for (const auto& [addr, node] : graph.functions()) {
-          if (node->canDiscover()) {
-            needsDiscovery.push_back(addr);
-          }
-        }
-
-        if (needsDiscovery.empty())
+        auto knownFunctions = buildKnownFunctions(graph);
+        if (discoverPendingFunctions(ctx, knownFunctions) == 0)
           break;
-
-        std::unordered_set<uint32_t> knownFunctions;
-        for (const auto& [addr, node] : graph.functions()) {
-          if (node->authority() != FunctionAuthority::HELPER) {
-            knownFunctions.insert(addr);
-          }
-        }
-
-        for (uint32_t funcAddr : needsDiscovery) {
-          discoverFunction(ctx, funcAddr, knownFunctions);
-        }
 
         if (graph.functionCount() == lastFunctionCount)
           break;
@@ -1124,12 +1135,14 @@ void functionPointerScan(CodegenContext& ctx) {
 
   // Track lis values: register -> (high_value, lis_address)
   // We scan linearly and track the most recent lis for each register
-  std::unordered_map<uint8_t, std::pair<uint32_t, uint32_t>> lisValues;
+  // PPC has exactly 32 GPRs, so a fixed-size array is more efficient than a map
+  std::array<std::pair<uint32_t, uint32_t>, 32> lisValues{};
+  std::bitset<32> lisValid;
 
   size_t foundCount = 0;
 
   for (const auto& region : codeRegions) {
-    lisValues.clear();  // Reset tracking at region boundaries
+    lisValid.reset();  // Reset tracking at region boundaries
 
     for (uint32_t addr = region.start; addr < region.end; addr += 4) {
       auto* insn = decoded.get(addr);
@@ -1141,6 +1154,7 @@ void functionPointerScan(CodegenContext& ctx) {
         uint8_t rd = static_cast<uint8_t>(insn->D.RT);
         uint32_t hi = static_cast<uint32_t>(static_cast<int16_t>(insn->D.d)) << 16;
         lisValues[rd] = {hi, addr};
+        lisValid.set(rd);
         continue;
       }
 
@@ -1150,11 +1164,10 @@ void functionPointerScan(CodegenContext& ctx) {
         if (ra == 0)
           continue;  // li pseudo-op, not addi
 
-        auto it = lisValues.find(ra);
-        if (it == lisValues.end())
+        if (!lisValid.test(ra))
           continue;
 
-        uint32_t hi = it->second.first;
+        uint32_t hi = lisValues[ra].first;
         int16_t lo = static_cast<int16_t>(insn->D.d);
         uint32_t fullAddr = hi + lo;  // Sign-extended add
 
@@ -1191,11 +1204,10 @@ void functionPointerScan(CodegenContext& ctx) {
       // Also check ori rD, rA, IMM (alternative to addi for unsigned)
       if (insn->opcode == rex::codegen::ppc::Opcode::ori) {
         uint8_t ra = static_cast<uint8_t>(insn->D.RA);
-        auto it = lisValues.find(ra);
-        if (it == lisValues.end())
+        if (!lisValid.test(ra))
           continue;
 
-        uint32_t hi = it->second.first;
+        uint32_t hi = lisValues[ra].first;
         uint16_t lo = static_cast<uint16_t>(insn->D.d);
         uint32_t fullAddr = hi | lo;  // Unsigned OR
 
@@ -1435,9 +1447,9 @@ void mergeAndSeal(CodegenContext& ctx) {
 
   size_t iteration = 0;
   size_t totalResolved = 0;
-  constexpr size_t MAX_ITERATIONS = 100;
+  const size_t maxResolveIterations = REXCVAR_GET(max_resolve_iterations);
 
-  while (iteration < MAX_ITERATIONS) {
+  while (iteration < maxResolveIterations) {
     iteration++;
     size_t changesThisIteration = 0;
 
@@ -1626,33 +1638,10 @@ Result<void> Analyze(CodegenContext& ctx) {
   gapFillCodeRegions(ctx);
 
   // 5. Discover blocks for gap-filled functions
-  // (They need their blocks discovered too... don't be selfish)
   {
-    auto& graph = ctx.graph;
-
-    // Build set of known functions for boundary detection
-    // GAP_FILL can be absorbed, HELPER intentionally overlaps - don't treat as hard boundaries
-    std::unordered_set<uint32_t> knownFunctions;
-    for (const auto& [addr, node] : graph.functions()) {
-      auto auth = node->authority();
-      if (auth != FunctionAuthority::GAP_FILL && auth != FunctionAuthority::HELPER) {
-        knownFunctions.insert(addr);
-      }
-    }
-
-    std::vector<uint32_t> needsDiscovery;
-    for (const auto& [addr, node] : graph.functions()) {
-      if (node->canDiscover()) {
-        needsDiscovery.push_back(addr);
-      }
-    }
-
-    for (uint32_t funcAddr : needsDiscovery) {
-      discoverFunction(ctx, funcAddr, knownFunctions);
-    }
-
-    REXCODEGEN_INFO("Analyze: discovered blocks for {} gap-filled functions",
-                    needsDiscovery.size());
+    auto knownFunctions = buildKnownFunctions(ctx.graph, /*excludeGapFill=*/true);
+    size_t discovered = discoverPendingFunctions(ctx, knownFunctions);
+    REXCODEGEN_INFO("Analyze: discovered blocks for {} gap-filled functions", discovered);
   }
 
   // 5.5. Remove absorbed GAP_FILL functions
