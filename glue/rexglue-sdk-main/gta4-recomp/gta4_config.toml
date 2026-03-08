@@ -33,6 +33,8 @@ strncpy  = 0x82A00BA0   # 101 xrefs - copy with null-pad remainder
 strchr   = 0x82A00B60   #  34 xrefs - lbz + cmpwi null + cmpw char match + lbzu advance
 XMemCpy  = 0x82A18CD0   #   1 xref  - VMX 128-byte streaming copy with dcbz128 (called from single hot path)
 strtok   = 0x82A01DE8   # token parser with static state (TLS-based on 360)
+strrchr  = 0x82A02100   #  30 xrefs - forward scan saving last match position, returns ptr or NULL
+strstr   = 0x829FFAD0   #  25 xrefs - nested byte-compare loops for substring search
 
 # Heap CRT (verified via Hex-Rays: takes heap_handle, flags, size/ptr)
 RtlAllocateHeap  = 0x82A17180  # 6 callers - 2196 bytes, manages free-lists + NtAllocateVirtualMemory
@@ -58,6 +60,7 @@ FindFirstFileA     = 0x82A19F88
 FindNextFileA      = 0x82A1A100
 FlushFileBuffers   = 0x82A188E0   # thin wrapper calling NtFlushBuffersFile
 CreateDirectoryA   = 0x82A14E98   # NtCreateFile + FILE_DIRECTORY_FILE, returns 1/0
+RemoveDirectoryA   = 0x82A1A160
 
 [functions]
 # v8 new unresolved branch targets (verified via capstone/IDA)
@@ -75,6 +78,8 @@ CreateDirectoryA   = 0x82A14E98   # NtCreateFile + FILE_DIRECTORY_FILE, returns 
 "0x82A00B60" = { name = "strchr" }
 "0x82A18CD0" = { name = "XMemCpy" }
 "0x82A01DE8" = { name = "strtok" }
+"0x82A02100" = { name = "strrchr" }
+"0x829FFAD0" = { name = "strstr" }
 
 # Heap CRT function boundaries
 "0x82A17180" = { name = "RtlAllocateHeap" }
@@ -100,3 +105,4 @@ CreateDirectoryA   = 0x82A14E98   # NtCreateFile + FILE_DIRECTORY_FILE, returns 
 "0x82A1A100" = { name = "FindNextFileA" }
 "0x82A188E0" = { name = "FlushFileBuffers" }
 "0x82A14E98" = { name = "CreateDirectoryA" }
+"0x82A1A160" = { name = "RemoveDirectoryA" }
