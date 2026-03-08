@@ -38,6 +38,7 @@ NOTES.md
 # Documentation - Ignore all except build/dump/install/multiplayer guides
 docs/*.md
 !docs/BUILDING.md
+!docs/MOD_SUPPORT.md
 !docs/DUMPING-en.md
 !docs/INSTALLATION_ARCHITECTURE.md
 !docs/ONLINE_MULTIPLAYER.md
@@ -639,15 +640,15 @@ tools/rage_fxc_extractor/build/
 *.so
 *.jar
 
-# Ignore all .md files except specific ones
-*.md
-!README.md
-!docs/DUMPING-en.md
-!docs/RPF_EXTRACTION_DESIGN.md
-!docs/SHADER_PIPELINE.md
-!docs/ONLINE_MULTIPLAYER.md
-!docs/FIREBASE_SETUP.md
-!README.md
+
+# Ignore all .md files in docs/ except specific ones
+docs/*.md
 !docs/BUILDING.md
+!docs/MOD_SUPPORT.md
+!docs/DUMPING-en.md
+!docs/FIREBASE_SETUP.md
 !docs/INSTALLATION_ARCHITECTURE.md
+!docs/ONLINE_MULTIPLAYER.md
 !docs/PLATFORM_SETUP.md
+!docs/SHADER_PIPELINE.md
+!docs/RPF_EXTRACTION_DESIGN.md
