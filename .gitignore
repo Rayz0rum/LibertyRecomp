@@ -632,3 +632,9 @@ buttons_360.xtd
 # RexGlue SDK generated files and assets
 glue/rexglue-sdk-main/gta4-recomp/generated/
 glue/rexglue-sdk-main/gta4-recomp/assets/
+
+tools/rage_fxc_extractor/build/
+*.exe
+*.dll
+*.so
+*.jar
