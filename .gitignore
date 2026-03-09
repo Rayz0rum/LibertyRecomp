@@ -528,3 +528,11 @@ watchdog_test*.txt
 # Claude and GitHub metadata - do not commit
 .claude/
 .github/
+
+# Recomp generated output - DO NOT COMMIT (contains recompiled Xbox 360 code)
+glue/rexglue-sdk-main/gta4-recomp/generated/
+glue/rexglue-sdk-main/out/build/
+glue/rexglue-sdk-main/build-codegen/
+glue/rexglue-sdk-main/out/macos-arm64/Release/
+glue/rexglue-sdk-main/out/macos-arm64/Debug/
+glue/rexglue-sdk-main/out/macos-arm64/RelWithDebInfo/
