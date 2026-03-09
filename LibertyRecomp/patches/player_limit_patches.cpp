@@ -4,6 +4,9 @@
 #include <kernel/memory.h>
 #include <cstring>
 
+PPC_EXTERN_IMPORT(sub_826A6CC8);
+PPC_EXTERN_IMPORT(sub_826AE738);
+
 // =============================================================================
 // GTA IV Player Limit Patches Implementation
 // =============================================================================

@@ -479,6 +479,9 @@ target_include_directories(LibertyRecomp PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     "${CMAKE_CURRENT_SOURCE_DIR}/api"
     ${LIBERTY_RECOMP_THIRDPARTY_INCLUDES}
+    "${CMAKE_SOURCE_DIR}/glue/rexglue-sdk-main/thirdparty/spdlog/include"
+    "${CMAKE_SOURCE_DIR}/glue/rexglue-sdk-main/thirdparty/fmt/include"
+    "${CMAKE_SOURCE_DIR}/glue/rexglue-sdk-main/thirdparty/simde"
 )
 
 if (CMAKE_SYSTEM_NAME MATCHES "Linux")

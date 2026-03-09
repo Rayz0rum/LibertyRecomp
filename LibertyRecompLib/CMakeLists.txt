@@ -10,90 +10,38 @@ else()
     add_compile_options(-ffp-model=strict)
 endif()
 
-target_compile_definitions(XenonRecomp PRIVATE 
-    XENON_RECOMP_CONFIG_FILE_PATH=\"${CMAKE_CURRENT_SOURCE_DIR}/config/GTA4.toml\"
-    XENON_RECOMP_HEADER_FILE_PATH=\"${LIBERTY_RECOMP_TOOLS_ROOT}/XenonRecomp/XenonUtils/ppc_context.h\")
+# Use pre-generated rexglue PPC recompiled sources
+set(REXGLUE_ROOT "${CMAKE_SOURCE_DIR}/glue/rexglue-sdk-main")
+set(REXGLUE_GENERATED "${REXGLUE_ROOT}/gta4-recomp/generated")
 
-set(LIBERTY_RECOMP_PPC_RECOMPILED_SOURCES
-    "${CMAKE_CURRENT_SOURCE_DIR}/ppc/ppc_config.h"
-    "${CMAKE_CURRENT_SOURCE_DIR}/ppc/ppc_context.h"
-    "${CMAKE_CURRENT_SOURCE_DIR}/ppc/ppc_func_mapping.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/ppc/ppc_recomp_shared.h"
-)
-
-foreach(i RANGE 0 86)
-    list(APPEND LIBERTY_RECOMP_PPC_RECOMPILED_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/ppc/ppc_recomp.${i}.cpp")
-endforeach()
-
-# XenonRecomp custom command disabled - PPC files already generated
-# To regenerate, run manually:
-#   cd LibertyRecompLib/config && /path/to/XenonRecomp ./GTA4.toml ../../LibertyRecomp/cpu/ppc_context.h
-#
-# add_custom_command(
-#     OUTPUT 
-#         ${LIBERTY_RECOMP_PPC_RECOMPILED_SOURCES}
-#     COMMAND 
-#         $<TARGET_FILE:XenonRecomp>
-#     DEPENDS 
-#         "${CMAKE_CURRENT_SOURCE_DIR}/private/default.xex"
-#         "${CMAKE_CURRENT_SOURCE_DIR}/config/GTA4.toml"
-#     USES_TERMINAL
-# )
-
-# NOTE: GTA IV shader handling is different from Sonic '06
-# The shader.arc/shader_lt.arc extraction is disabled for GTA IV
-# A stub shader_cache.cpp is used until GTA IV shader extraction is implemented
-#
-# Original Sonic '06 shader extraction (disabled):
-# add_custom_command(
-#     OUTPUT
-#         "${CMAKE_CURRENT_SOURCE_DIR}/private/shader"
-#     COMMAND
-#         $<TARGET_FILE:u8extract> "${CMAKE_CURRENT_SOURCE_DIR}/private/shader.arc" "${CMAKE_CURRENT_SOURCE_DIR}/private/shader"
-#     COMMAND
-#         $<TARGET_FILE:u8extract> "${CMAKE_CURRENT_SOURCE_DIR}/private/shader_lt.arc" "${CMAKE_CURRENT_SOURCE_DIR}/private/shader"
-#     DEPENDS
-#         "${CMAKE_CURRENT_SOURCE_DIR}/private/shader.arc"
-#         "${CMAKE_CURRENT_SOURCE_DIR}/private/shader_lt.arc"
-# )
-
-set(XENOS_RECOMP_ROOT "${LIBERTY_RECOMP_TOOLS_ROOT}/XenosRecomp/XenosRecomp")
-set(XENOS_RECOMP_INCLUDE "${XENOS_RECOMP_ROOT}/shader_common.h")
-
-target_compile_definitions(XenosRecomp PRIVATE 
-    XENOS_RECOMP_INPUT=\"${CMAKE_CURRENT_SOURCE_DIR}/private/shader\" 
-    XENOS_RECOMP_OUTPUT=\"${CMAKE_CURRENT_SOURCE_DIR}/shader/shader_cache.cpp\"
-    XENOS_RECOMP_INCLUDE_INPUT=\"${XENOS_RECOMP_INCLUDE}\"
-    LIBERTY_RECOMP
-)
-
-file(GLOB XENOS_RECOMP_SOURCES 
-    "${XENOS_RECOMP_ROOT}/*.h"
-    "${XENOS_RECOMP_ROOT}/*.cpp"
-)
-
-# NOTE: Shader recompilation disabled for GTA IV
-# Using stub shader_cache.cpp until GTA IV shader extraction is implemented
-#
-# add_custom_command(
-#     OUTPUT 
-#         "${CMAKE_CURRENT_SOURCE_DIR}/shader/shader_cache.cpp"
-#     COMMAND
-#         $<TARGET_FILE:XenosRecomp>
-#     DEPENDS 
-#         "${CMAKE_CURRENT_SOURCE_DIR}/private/shader"
-#         ${XENOS_RECOMP_SOURCES}
-#         ${XENOS_RECOMP_INCLUDE}
-#     USES_TERMINAL
-# )
+# Include the auto-generated sources list (sets GENERATED_SOURCES)
+include("${REXGLUE_GENERATED}/sources.cmake")
 
 add_library(LibertyRecompLib
-    ${LIBERTY_RECOMP_PPC_RECOMPILED_SOURCES}
-    "ppc/ppc_indirect.cpp"
+    ${GENERATED_SOURCES}
     "shader/shader_cache.h"
     "shader/shader_cache.cpp"
+    "crt_stubs.cpp"
 )
 
 target_include_directories(LibertyRecompLib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(LibertyRecompLib PUBLIC "${REXGLUE_GENERATED}")
+target_include_directories(LibertyRecompLib PUBLIC "${REXGLUE_ROOT}/include")
+target_include_directories(LibertyRecompLib PRIVATE "${REXGLUE_ROOT}/thirdparty/spdlog/include")
+target_include_directories(LibertyRecompLib PRIVATE "${REXGLUE_ROOT}/thirdparty/fmt/include")
+target_include_directories(LibertyRecompLib PRIVATE "${REXGLUE_ROOT}/thirdparty/simde")
 target_include_directories(LibertyRecompLib PRIVATE "${LIBERTY_RECOMP_TOOLS_ROOT}/XenonRecomp/thirdparty/simde")
-target_precompile_headers(LibertyRecompLib PUBLIC "ppc/ppc_recomp_shared.h")
+target_include_directories(LibertyRecompLib PRIVATE "${CMAKE_SOURCE_DIR}/thirdparty/o1heap/.")
+
+# Link pre-built rexglue libs so the generated PPC code can resolve
+# all __imp__* kernel/XAM/Vd symbols at compile time.
+if (APPLE)
+    set(_rexglue_libs rexkernel rexsystem rexcore rexgraphics rexinput rexaudio rexfilesystem rexui rexcodegen)
+    foreach(_lib IN LISTS _rexglue_libs)
+        if (TARGET ${_lib}_prebuilt)
+            target_link_libraries(LibertyRecompLib PUBLIC ${_lib}_prebuilt)
+        endif()
+    endforeach()
+    unset(_lib)
+    unset(_rexglue_libs)
+endif()

@@ -48,6 +48,41 @@ endif()
 add_subdirectory(${LIBERTY_RECOMP_THIRDPARTY_ROOT})
 add_subdirectory(${LIBERTY_RECOMP_TOOLS_ROOT})
 
+
+# ---------------------------------------------------------------------------
+# ReXGlue SDK — pre-built static libraries
+# glue/rexglue-sdk-main/out/macos-arm64/<config>/lib*.a
+# These provide all __imp__Ke*, __imp__Nt*, __imp__Xam*, __imp__Vd*, etc.
+# symbols that the generated PPC recompiled code references at link time.
+# ---------------------------------------------------------------------------
+if (APPLE)
+    set(REXGLUE_LIB_DIR "${CMAKE_SOURCE_DIR}/glue/rexglue-sdk-main/out/macos-arm64")
+
+    if (CMAKE_BUILD_TYPE STREQUAL "Release")
+        set(REXGLUE_CONFIG_DIR "${REXGLUE_LIB_DIR}/Release")
+    elseif (CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
+        set(REXGLUE_CONFIG_DIR "${REXGLUE_LIB_DIR}/RelWithDebInfo")
+    else()
+        set(REXGLUE_CONFIG_DIR "${REXGLUE_LIB_DIR}/Debug")
+    endif()
+
+    # Fallback to flat dir if config subdir missing
+    if (NOT EXISTS "${REXGLUE_CONFIG_DIR}/librexkernel.a")
+        set(REXGLUE_CONFIG_DIR "${REXGLUE_LIB_DIR}")
+    endif()
+
+    set(REXGLUE_LIBS rexkernel rexsystem rexcore rexgraphics rexinput rexaudio rexfilesystem rexui rexcodegen)
+    foreach(_rexlib IN LISTS REXGLUE_LIBS)
+        set(_lib "${REXGLUE_CONFIG_DIR}/lib${_rexlib}.a")
+        if (EXISTS "${_lib}")
+            add_library(${_rexlib}_prebuilt STATIC IMPORTED GLOBAL)
+            set_target_properties(${_rexlib}_prebuilt PROPERTIES IMPORTED_LOCATION "${_lib}")
+        endif()
+    endforeach()
+    unset(_rexlib)
+    unset(_lib)
+endif()
+
 # Include sub-projects.
 add_subdirectory("LibertyRecompLib")
 add_subdirectory("LibertyRecomp")

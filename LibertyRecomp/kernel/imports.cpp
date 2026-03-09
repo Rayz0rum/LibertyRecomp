@@ -31,6 +31,14 @@
 #include "io/net_socket.h"
 #include "io/net_session.h"
 
+PPC_EXTERN_IMPORT(sub_8266A778);
+PPC_EXTERN_IMPORT(sub_82854448);
+PPC_EXTERN_IMPORT(sub_8218BE28);
+PPC_EXTERN_IMPORT(sub_8286C8F0);
+PPC_EXTERN_IMPORT(sub_82126498);
+PPC_EXTERN_IMPORT(sub_827DF490);
+PPC_EXTERN_IMPORT(__savegprlr_29);
+PPC_EXTERN_IMPORT(__restgprlr_29);
 
 // =============================================================================
 // KERNEL PHASE SYSTEM - Fail-open waits during Boot/Init (Xenia-style)
@@ -92,19 +100,8 @@ inline void KernelPhase_EnterRuntime() {
 // =============================================================================
 
 // Forward declarations of our hook functions - use _hook suffix to avoid weak symbol collision
-extern "C" void sub_829A9738_hook(PPCContext& ctx, uint8_t* base);  // Wait helper (NtWaitForSingleObjectEx)
-extern "C" void sub_829A3560_hook(PPCContext& ctx, uint8_t* base);
-extern "C" void sub_829A39A0_hook(PPCContext& ctx, uint8_t* base);
-extern "C" void sub_829A3238_hook(PPCContext& ctx, uint8_t* base);  // Sync wait function (KeWaitForSingleObject)
-extern "C" void sub_829A39F0_hook(PPCContext& ctx, uint8_t* base);  // Intermediate sync function (calls sub_829A3238)
-extern "C" void sub_827DB338_hook(PPCContext& ctx, uint8_t* base);
-extern "C" void sub_827DB988_hook(PPCContext& ctx, uint8_t* base);
-extern "C" void sub_827DACD8_hook(PPCContext& ctx, uint8_t* base);  // Semaphore wait
 
-extern "C" void sub_829A2380_hook(PPCContext& ctx, uint8_t* base);  // Semaphore acquire (sync table)
-extern "C" void sub_829A21F8_hook(PPCContext& ctx, uint8_t* base);  // Semaphore create wrapper (sync table)
 
-extern "C" void sub_82300C78_hook(PPCContext& ctx, uint8_t* base);
 
 namespace {
 
@@ -131,18 +128,7 @@ void PatchSyncPrimitives() {
     
     // Patch sync primitives - these cause blocking in HUD init
     // Use _hook suffix functions to avoid weak symbol collision on macOS
-    PatchFuncMapping(0x829A9738, &sub_829A9738_hook);  // Wait helper (NtWaitForSingleObjectEx) - CRITICAL
-    PatchFuncMapping(0x829A3560, &sub_829A3560_hook);  // XamTask + mount integration (signals completion event)
-    PatchFuncMapping(0x829A39A0, &sub_829A39A0_hook);  // Root sync primitive
-    PatchFuncMapping(0x829A3238, &sub_829A3238_hook);  // Sync wait function (KeWaitForSingleObject) - CRITICAL
-    PatchFuncMapping(0x829A39F0, &sub_829A39F0_hook);  // Intermediate sync (calls sub_829A3238) - CRITICAL
-    PatchFuncMapping(0x827DB338, &sub_827DB338_hook);  // Sync wait wrapper  
-    PatchFuncMapping(0x827DB988, &sub_827DB988_hook);  // Sync init
-    PatchFuncMapping(0x827DACD8, &sub_827DACD8_hook);  // Semaphore wait - sync table routing
 
-    PatchFuncMapping(0x82300C78, &sub_82300C78_hook);  // String/resource lookup
-    PatchFuncMapping(0x829A2380, &sub_829A2380_hook);  // Semaphore acquire (sync table)
-    PatchFuncMapping(0x829A21F8, &sub_829A21F8_hook);  // Semaphore create wrapper (sync table)
 
     
     printf("[PATCH] Sync primitive patching complete.\n");
@@ -6107,7 +6093,7 @@ int32_t NetDll_WSAGetLastError()
 //   [0] = task function pointer
 //   [1] = REAL worker context (with semaphores at +36, +40)
 // Must pass ctxData[1] to task function, NOT the startup context!
-extern "C" void __imp__sub_827DAE40(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827DAE40(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_827DAE40)
 {
     static int s_count = 0;
@@ -6161,8 +6147,7 @@ PPC_FUNC(sub_827DAE40)
 
 // Hook sub_829A2380 - Semaphore acquire (routes through sync table)
 // This function acquires a semaphore - route through sync table for proper tracking
-extern "C" void __imp__sub_829A2380(PPCContext& ctx, uint8_t* base);
-extern "C" void sub_829A2380_hook(PPCContext& ctx, uint8_t* base)
+// REMOVED: extern "C" void sub_829A2380(PPCContext& ctx, uint8_t* base); // v1 addr
 {
     static int s_count = 0; ++s_count;
     uint32_t handle = ctx.r3.u32;
@@ -6187,14 +6172,13 @@ extern "C" void sub_829A2380_hook(PPCContext& ctx, uint8_t* base)
 }
 
 // Hook sub_829A21F8 - Semaphore create wrapper (routes through sync table)
-extern "C" void __imp__sub_829A21F8(PPCContext& ctx, uint8_t* base);
-extern "C" void sub_829A21F8_hook(PPCContext& ctx, uint8_t* base)
+// REMOVED: extern "C" void sub_829A21F8(PPCContext& ctx, uint8_t* base); // v1 addr
 {
     static int s_count = 0; ++s_count;
     uint32_t callerLR = (uint32_t)ctx.lr;
     
     // Call original to create the semaphore
-    __imp__sub_829A21F8(ctx, base);
+    /* sub_829A21F8(ctx, base); // REMOVED: v1 addr not in v8 generated code */
     
     uint32_t handle = ctx.r3.u32;
     
@@ -6213,8 +6197,7 @@ extern "C" void sub_829A21F8_hook(PPCContext& ctx, uint8_t* base)
 // Hook sub_829A9738 - Wait-with-retry helper (calls NtWaitForSingleObjectEx)
 // This is called by sub_829A2380 (semaphore acquire) during init
 // The semaphore isn't released during init, so we make this non-blocking
-extern "C" void __imp__sub_829A9738(PPCContext& ctx, uint8_t* base);
-extern "C" void sub_829A9738_hook(PPCContext& ctx, uint8_t* base)
+// REMOVED: extern "C" void sub_829A9738(PPCContext& ctx, uint8_t* base); // v1 addr
 {
     static int s_count = 0;
     ++s_count;
@@ -6261,12 +6244,12 @@ extern "C" void sub_829A9738_hook(PPCContext& ctx, uint8_t* base)
 
 // Extern declarations for boot sequence functions
 extern "C" void __imp___xstart(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_82994700(PPCContext& ctx, uint8_t* base);  // TLS/CRT init
-extern "C" void __imp__sub_829A7960(PPCContext& ctx, uint8_t* base);  // Runtime callbacks
-extern "C" void __imp__sub_829A7EA8(PPCContext& ctx, uint8_t* base);  // Init table executor
-extern "C" void __imp__sub_829A7DC8(PPCContext& ctx, uint8_t* base);  // C++ constructors
-extern "C" void __imp__sub_8218BEA8(PPCContext& ctx, uint8_t* base);  // Game main entry
-extern "C" void __imp__sub_828E0AB8(PPCContext& ctx, uint8_t* base);  // Frame tick
+extern "C" void sub_82994700(PPCContext& ctx, uint8_t* base);  // TLS/CRT init
+extern "C" void sub_829A7960(PPCContext& ctx, uint8_t* base);  // Runtime callbacks
+extern "C" void sub_829A7EA8(PPCContext& ctx, uint8_t* base);  // Init table executor
+extern "C" void sub_829A7DC8(PPCContext& ctx, uint8_t* base);  // C++ constructors
+extern "C" void sub_8218BEA8(PPCContext& ctx, uint8_t* base);  // Game main entry
+extern "C" void sub_828E0AB8(PPCContext& ctx, uint8_t* base);  // Frame tick
 
 // =============================================================================
 // Storage Device Constants (still needed for PC storage hooks)
@@ -6451,7 +6434,7 @@ static void InitializeModernCRT(PPCContext& ctx, uint8_t* base)
     
     // sub_828E0AB8(0) - Frame tick (KEEP - essential for game timing)
     ctx.r3.s64 = 0;
-    __imp__sub_828E0AB8(ctx, base);
+    sub_828E0AB8(ctx, base);
     
     // sub_82998DB8(0) - CRT finalize vtable
     PPC_STORE_U32(BootGlobals::CRT_FINALIZE_ADDR, BootGlobals::CRT_FINALIZE_VTABLE);
@@ -6796,7 +6779,7 @@ PPC_FUNC(_xstart_DISABLED)
         }
     }
     // Skip original call since we're doing it manually above
-    // __imp__sub_829A7EA8(ctx, base);
+    // sub_829A7EA8(ctx, base);
     LOG_WARNING("[BOOT]       Init table execution complete");
     
     // =========================================================================
@@ -6898,7 +6881,7 @@ PPC_FUNC(_xstart_DISABLED)
     ctx.r3.s64 = argc;
     ctx.r4.u64 = argv;
     ctx.r5.s64 = 0;  // envp = NULL
-    __imp__sub_8218BEA8(ctx, base);
+    sub_8218BEA8(ctx, base);
     
     LOG_WARNING("[BOOT] ============================================================");
     LOGF_WARNING("[BOOT] * Game main returned, r3={}", ctx.r3.u32);
@@ -6911,10 +6894,10 @@ PPC_FUNC(_xstart_DISABLED)
 // Call chain: sub_827D89B8 → sub_8218BEB0 → sub_82120000 → sub_8218C600
 // sub_8218C600 is ONE-TIME initialization - if it returns 0, game fails to init
 // =============================================================================
-extern "C" void __imp__sub_8218C600(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_82120000(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_8218BEB0(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_827D89B8(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8218C600(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82120000(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8218BEB0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827D89B8(PPCContext& ctx, uint8_t* base);
 
 // Hook sub_8218C600 - Core initialization function
 // After sub_82856C90, there's a vtable call at address 0x8218C7E8:
@@ -6933,7 +6916,7 @@ PPC_FUNC(sub_8218C600)
     LOGF_WARNING("[INIT] sub_8218C600 ENTER #{} thread=0x{:04X}", s_count, threadId);
     
     // Save r31 before call to trace the vtable call after sub_82856C90
-    __imp__sub_8218C600(ctx, base);
+    sub_8218C600(ctx, base);
     
     // CRITICAL FIX: Ensure success return value
     // sub_82120000 checks (r3 & 0xFF) == 0 for failure at lines 23-28
@@ -6951,7 +6934,7 @@ PPC_FUNC(sub_8218C600)
 
 // Hook sub_82856C90 to trace what happens after it returns
 // The vtable call happens AFTER this function returns
-extern "C" void __imp__sub_82856C90_trace(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82856C90_trace(PPCContext& ctx, uint8_t* base);
 static void trace_vtable_after_82856C90(PPCContext& ctx, uint8_t* base) {
     // After sub_82856C90 returns, the code does:
     // lwz r3,0(r31)   - load render_ctx from global
@@ -6997,7 +6980,7 @@ PPC_FUNC(sub_82120000)
     LOGF_WARNING("[INIT] sub_82120000 #{} thread=0x{:04X} (first call) - running full init", s_count, threadId);
     
     // Run the actual init - sub_82857240 is now stubbed to prevent blocking
-    __imp__sub_82120000(ctx, base);
+    sub_82120000(ctx, base);
     
     // Cache the result
     g_initResult.store(ctx.r3.s32);
@@ -7006,93 +6989,93 @@ PPC_FUNC(sub_82120000)
 }
 
 // Trace functions called after sub_8218C600 succeeds
-extern "C" void __imp__sub_82120EE8(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_821250B0(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_82318F60(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_82124080(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_82120FB8(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_82124540(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82120EE8(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_821250B0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82318F60(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82124080(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82120FB8(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82124540(PPCContext& ctx, uint8_t* base);
 // Final 5 subsystems in sub_82120FB8 - instrumentation to find blocker
-extern "C" void __imp__sub_8227AC28(PPCContext& ctx, uint8_t* base);  // World finalization
-extern "C" void __imp__sub_82272290(PPCContext& ctx, uint8_t* base);  // Entity finalize
-extern "C" void __imp__sub_82212450(PPCContext& ctx, uint8_t* base);  // Script finalize
-extern "C" void __imp__sub_822C5768(PPCContext& ctx, uint8_t* base);  // Streaming finalize
-extern "C" void __imp__sub_822D4C68(PPCContext& ctx, uint8_t* base);  // Final setup
+extern "C" void sub_8227AC28(PPCContext& ctx, uint8_t* base);  // World finalization
+extern "C" void sub_82272290(PPCContext& ctx, uint8_t* base);  // Entity finalize
+extern "C" void sub_82212450(PPCContext& ctx, uint8_t* base);  // Script finalize
+extern "C" void sub_822C5768(PPCContext& ctx, uint8_t* base);  // Streaming finalize
+extern "C" void sub_822D4C68(PPCContext& ctx, uint8_t* base);  // Final setup
 // Early subsystems in sub_82120FB8 - instrumentation to find blocking point
-extern "C" void __imp__sub_82270170(PPCContext& ctx, uint8_t* base);  // Entity system [8]
-extern "C" void __imp__sub_822FD328(PPCContext& ctx, uint8_t* base);  // Pool init [10]
-extern "C" void __imp__sub_822EFF40(PPCContext& ctx, uint8_t* base);  // Map loader [11]
-extern "C" void __imp__sub_82120C48(PPCContext& ctx, uint8_t* base);  // Game config [12]
-extern "C" void __imp__sub_82221410(PPCContext& ctx, uint8_t* base);  // UI system [13]
+extern "C" void sub_82270170(PPCContext& ctx, uint8_t* base);  // Entity system [8]
+extern "C" void sub_822FD328(PPCContext& ctx, uint8_t* base);  // Pool init [10]
+extern "C" void sub_822EFF40(PPCContext& ctx, uint8_t* base);  // Map loader [11]
+extern "C" void sub_82120C48(PPCContext& ctx, uint8_t* base);  // Game config [12]
+extern "C" void sub_82221410(PPCContext& ctx, uint8_t* base);  // UI system [13]
 // Internal functions in sub_82221410 (UI system) - find exact blocker
-extern "C" void __imp__sub_8260E310(PPCContext& ctx, uint8_t* base);  // Inside sub_82221410 [1] display setup
-extern "C" void __imp__sub_822B3C58(PPCContext& ctx, uint8_t* base);  // Inside sub_82221410 [2]
-extern "C" void __imp__sub_822B4D68(PPCContext& ctx, uint8_t* base);  // Inside sub_82221410 [3]
-extern "C" void __imp__sub_824A0898(PPCContext& ctx, uint8_t* base);  // Inside sub_82221410 [4]
-extern "C" void __imp__sub_8260CF30(PPCContext& ctx, uint8_t* base);  // Inside sub_82221410 [5]
-extern "C" void __imp__sub_8260BE08(PPCContext& ctx, uint8_t* base);  // Inside sub_82221410 [6]
-extern "C" void __imp__sub_824B65B0(PPCContext& ctx, uint8_t* base);  // Inside sub_82221410 [7]
-extern "C" void __imp__sub_822E3EC8(PPCContext& ctx, uint8_t* base);  // Inside sub_82221410 [8]
-extern "C" void __imp__sub_822E49A0(PPCContext& ctx, uint8_t* base);  // Inside sub_82221410 [9]
-extern "C" void __imp__sub_8222F7E8(PPCContext& ctx, uint8_t* base);  // Inside sub_82221410 [11] final
+extern "C" void sub_8260E310(PPCContext& ctx, uint8_t* base);  // Inside sub_82221410 [1] display setup
+extern "C" void sub_822B3C58(PPCContext& ctx, uint8_t* base);  // Inside sub_82221410 [2]
+extern "C" void sub_822B4D68(PPCContext& ctx, uint8_t* base);  // Inside sub_82221410 [3]
+extern "C" void sub_824A0898(PPCContext& ctx, uint8_t* base);  // Inside sub_82221410 [4]
+extern "C" void sub_8260CF30(PPCContext& ctx, uint8_t* base);  // Inside sub_82221410 [5]
+extern "C" void sub_8260BE08(PPCContext& ctx, uint8_t* base);  // Inside sub_82221410 [6]
+extern "C" void sub_824B65B0(PPCContext& ctx, uint8_t* base);  // Inside sub_82221410 [7]
+extern "C" void sub_822E3EC8(PPCContext& ctx, uint8_t* base);  // Inside sub_82221410 [8]
+extern "C" void sub_822E49A0(PPCContext& ctx, uint8_t* base);  // Inside sub_82221410 [9]
+extern "C" void sub_8222F7E8(PPCContext& ctx, uint8_t* base);  // Inside sub_82221410 [11] final
 
-extern "C" void __imp__sub_8226CB50(PPCContext& ctx, uint8_t* base);  // Camera system [14]
+extern "C" void sub_8226CB50(PPCContext& ctx, uint8_t* base);  // Camera system [14]
 // Subsystems after Camera system [15-30] - INSTRUMENTATION TO FIND BLOCKER
-extern "C" void __imp__sub_821A8868(PPCContext& ctx, uint8_t* base);  // HUD init [15]
-extern "C" void __imp__sub_821A8278(PPCContext& ctx, uint8_t* base);  // HUD component [16]
-extern "C" void __imp__sub_821BC9E0(PPCContext& ctx, uint8_t* base);  // Menu system [17]
-extern "C" void __imp__sub_822DB4B0(PPCContext& ctx, uint8_t* base);  // Cutscene system [18]
-extern "C" void __imp__sub_821B7218(PPCContext& ctx, uint8_t* base);  // Mission system [19]
-extern "C" void __imp__sub_822498F8(PPCContext& ctx, uint8_t* base);  // Checkpoint system [20]
-extern "C" void __imp__sub_8225DC40(PPCContext& ctx, uint8_t* base);  // Weather system [21]
-extern "C" void __imp__sub_821E24E0(PPCContext& ctx, uint8_t* base);  // Population system [22]
-extern "C" void __imp__sub_821DFD18(PPCContext& ctx, uint8_t* base);  // Traffic system [23]
-extern "C" void __imp__sub_8220E108(PPCContext& ctx, uint8_t* base);  // Wanted system [24]
-extern "C" void __imp__sub_821D8358(PPCContext& ctx, uint8_t* base);  // Map/GPS init [26]
-extern "C" void __imp__sub_821EA0B8(PPCContext& ctx, uint8_t* base);  // Blip system [27]
-extern "C" void __imp__sub_82200EB8(PPCContext& ctx, uint8_t* base);  // Stats system [30]
+extern "C" void sub_821A8868(PPCContext& ctx, uint8_t* base);  // HUD init [15]
+extern "C" void sub_821A8278(PPCContext& ctx, uint8_t* base);  // HUD component [16]
+extern "C" void sub_821BC9E0(PPCContext& ctx, uint8_t* base);  // Menu system [17]
+extern "C" void sub_822DB4B0(PPCContext& ctx, uint8_t* base);  // Cutscene system [18]
+extern "C" void sub_821B7218(PPCContext& ctx, uint8_t* base);  // Mission system [19]
+extern "C" void sub_822498F8(PPCContext& ctx, uint8_t* base);  // Checkpoint system [20]
+extern "C" void sub_8225DC40(PPCContext& ctx, uint8_t* base);  // Weather system [21]
+extern "C" void sub_821E24E0(PPCContext& ctx, uint8_t* base);  // Population system [22]
+extern "C" void sub_821DFD18(PPCContext& ctx, uint8_t* base);  // Traffic system [23]
+extern "C" void sub_8220E108(PPCContext& ctx, uint8_t* base);  // Wanted system [24]
+extern "C" void sub_821D8358(PPCContext& ctx, uint8_t* base);  // Map/GPS init [26]
+extern "C" void sub_821EA0B8(PPCContext& ctx, uint8_t* base);  // Blip system [27]
+extern "C" void sub_82200EB8(PPCContext& ctx, uint8_t* base);  // Stats system [30]
 
 // Internal functions in sub_82120C48 - find exact blocker
-extern "C" void __imp__sub_821E9658(PPCContext& ctx, uint8_t* base);  // Inside sub_82120C48
-extern "C" void __imp__sub_821FD460(PPCContext& ctx, uint8_t* base);  // Inside sub_82120C48
-extern "C" void __imp__sub_82126940(PPCContext& ctx, uint8_t* base);  // Inside sub_82120C48
-extern "C" void __imp__sub_822B6C58(PPCContext& ctx, uint8_t* base);  // Inside sub_82120C48
-extern "C" void __imp__sub_82308598(PPCContext& ctx, uint8_t* base);  // Inside sub_82120C48
-extern "C" void __imp__sub_82209280(PPCContext& ctx, uint8_t* base);  // Inside sub_82120C48
+extern "C" void sub_821E9658(PPCContext& ctx, uint8_t* base);  // Inside sub_82120C48
+extern "C" void sub_821FD460(PPCContext& ctx, uint8_t* base);  // Inside sub_82120C48
+extern "C" void sub_82126940(PPCContext& ctx, uint8_t* base);  // Inside sub_82120C48
+extern "C" void sub_822B6C58(PPCContext& ctx, uint8_t* base);  // Inside sub_82120C48
+extern "C" void sub_82308598(PPCContext& ctx, uint8_t* base);  // Inside sub_82120C48
+extern "C" void sub_82209280(PPCContext& ctx, uint8_t* base);  // Inside sub_82120C48
 
 // =============================================================================
 // Internal functions in sub_8249D6F0 (display mode setup) - DEEP INSTRUMENTATION
 // =============================================================================
-extern "C" void __imp__sub_82126498(PPCContext& ctx, uint8_t* base);  // Resource cleanup
-extern "C" void __imp__sub_828536B0(PPCContext& ctx, uint8_t* base);  // Buffer init
-extern "C" void __imp__sub_8260E3B8(PPCContext& ctx, uint8_t* base);  // Display mode setup
-extern "C" void __imp__sub_8260E3D8(PPCContext& ctx, uint8_t* base);  // Display finalize
-extern "C" void __imp__sub_8286A748(PPCContext& ctx, uint8_t* base);  // Unknown init
-extern "C" void __imp__sub_8286A890(PPCContext& ctx, uint8_t* base);  // Unknown setup
+extern "C" void sub_82126498(PPCContext& ctx, uint8_t* base);  // Resource cleanup
+extern "C" void sub_828536B0(PPCContext& ctx, uint8_t* base);  // Buffer init
+extern "C" void sub_8260E3B8(PPCContext& ctx, uint8_t* base);  // Display mode setup
+extern "C" void sub_8260E3D8(PPCContext& ctx, uint8_t* base);  // Display finalize
+extern "C" void sub_8286A748(PPCContext& ctx, uint8_t* base);  // Unknown init
+extern "C" void sub_8286A890(PPCContext& ctx, uint8_t* base);  // Unknown setup
 
 // Internal functions of sub_822B4D68 - find exact blocking point
-extern "C" void __imp__sub_821EC018(PPCContext& ctx, uint8_t* base);  // Called early in 822B4D68
-extern "C" void __imp__sub_82859B80(PPCContext& ctx, uint8_t* base);  // Called 10x in 822B4D68
-extern "C" void __imp__sub_827DFC60(PPCContext& ctx, uint8_t* base);  // Called near end of 822B4D68
-extern "C" void __imp__sub_8285DC80(PPCContext& ctx, uint8_t* base);  // vtable[2] dispatch target
+extern "C" void sub_821EC018(PPCContext& ctx, uint8_t* base);  // Called early in 822B4D68
+extern "C" void sub_82859B80(PPCContext& ctx, uint8_t* base);  // Called 10x in 822B4D68
+extern "C" void sub_827DFC60(PPCContext& ctx, uint8_t* base);  // Called near end of 822B4D68
+extern "C" void sub_8285DC80(PPCContext& ctx, uint8_t* base);  // vtable[2] dispatch target
 
 PPC_FUNC(sub_82120EE8)
 {
     static int s_count = 0;
     ++s_count;
     LOGF_WARNING("[INIT] sub_82120EE8 ENTER #{}", s_count);
-    __imp__sub_82120EE8(ctx, base);
+    sub_82120EE8(ctx, base);
     LOGF_WARNING("[INIT] sub_82120EE8 EXIT #{}", s_count);
 }
 
 // Trace functions inside sub_82120EE8 to find the blocker
 // Hook sub_821207B0 to ensure resource manager is properly initialized
-extern "C" void __imp__sub_821207B0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_821207B0(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_821207B0) {
     uint32_t structAddr = ctx.r3.u32;
     
     // Call original initialization
-    __imp__sub_821207B0(ctx, base);
+    sub_821207B0(ctx, base);
     
     // Verify critical fields are zeroed (defense against uninitialized memory)
     PPC_STORE_U32(structAddr + 0, 0);      // Base pointer = NULL
@@ -7111,7 +7094,7 @@ PPC_FUNC(sub_821207B0) {
 // If the file doesn't exist (common on PC), it should return 0 to signal failure.
 // Enhanced with comprehensive validation to prevent PAC crashes in sub_827E7FA8.
 // =============================================================================
-extern "C" void __imp__sub_82192840(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82192840(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_82192840) {
     static int s_callCount = 0;
     static int s_invalidHandles = 0;
@@ -7124,7 +7107,7 @@ PPC_FUNC(sub_82192840) {
     }
     
     // Call original implementation
-    __imp__sub_82192840(ctx, base);
+    sub_82192840(ctx, base);
     
     uint32_t handle = ctx.r3.u32;
     
@@ -7229,7 +7212,7 @@ PPC_FUNC(sub_82192840) {
 //   virtual_optimised = 0
 //   physical_optimised = 226832 (0x37610)
 // =============================================================================
-extern "C" void __imp__sub_822C1A30(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_822C1A30(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_822C1A30) {
     static int s_count = 0;
     static bool s_initialized = false;
@@ -7293,7 +7276,7 @@ PPC_FUNC(sub_822C1A30) {
 }
 
 // Hook sub_8221B7A0 to prevent infinite loops in string duplication
-extern "C" void __imp__sub_8221B7A0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8221B7A0(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_8221B7A0) {
     static int s_count = 0; ++s_count;
     
@@ -7306,7 +7289,7 @@ PPC_FUNC(sub_8221B7A0) {
         return;
     }
     
-    __imp__sub_8221B7A0(ctx, base);
+    sub_8221B7A0(ctx, base);
 }
 
 // ============================================================================
@@ -7316,12 +7299,12 @@ PPC_FUNC(sub_8221B7A0) {
 // breaking the game's state management.
 // ============================================================================
 
-extern "C" void __imp__sub_829CD350(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_829CD350(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_829CD350) {
     static int s_count = 0; ++s_count;
     
     // Call original to update game state
-    __imp__sub_829CD350(ctx, base);
+    sub_829CD350(ctx, base);
     
     if (s_count <= 5 || s_count % 1000 == 0) {
         LOGF_WARNING("[SHADER] SetVertexShader #{} device=0x{:08X} shader=0x{:08X}", 
@@ -7329,12 +7312,12 @@ PPC_FUNC(sub_829CD350) {
     }
 }
 
-extern "C" void __imp__sub_829D6690(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_829D6690(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_829D6690) {
     static int s_count = 0; ++s_count;
     
     // Call original to update game state
-    __imp__sub_829D6690(ctx, base);
+    sub_829D6690(ctx, base);
     
     if (s_count <= 5 || s_count % 1000 == 0) {
         LOGF_WARNING("[SHADER] SetPixelShader #{} device=0x{:08X} shader=0x{:08X}", 
@@ -7345,7 +7328,7 @@ PPC_FUNC(sub_829D6690) {
 // DrawPrimitive hook is implemented in gpu/video.cpp
 
 // Hook sub_8218BE78 to validate vtable pointers and prevent crashes
-extern "C" void __imp__sub_8218BE78(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8218BE78(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_8218BE78) {
     static int s_count = 0; ++s_count;
     
@@ -7394,11 +7377,11 @@ PPC_FUNC(sub_8218BE78) {
         LOGF_WARNING("[VTABLE] sub_8218BE78 #{} calling vtable[3]=0x{:08X}", s_count, funcPtr);
     }
     
-    __imp__sub_8218BE78(ctx, base);
+    sub_8218BE78(ctx, base);
 }
 
-extern "C" void __imp__sub_82673718(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_82269098(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82673718(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82269098(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_82269098) {
     static int s_count = 0; ++s_count;
     
@@ -7408,13 +7391,13 @@ PPC_FUNC(sub_82269098) {
     // This function initializes resource manager data structures and creates the worker thread
     // The worker thread will be created but immediately return (stubbed), preventing deadlock
     // This allows proper initialization of resource manager infrastructure
-    __imp__sub_82269098(ctx, base);
+    sub_82269098(ctx, base);
     
     LOGF_WARNING("[INIT] sub_82269098 #{} EXIT r3=0x{:08X}", s_count, ctx.r3.u32);
 }
-extern "C" void __imp__sub_822054F8(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_822054F8(PPCContext& ctx, uint8_t* base);
 // Hook sub_822736C8 to fix infinite loop when no resources exist
-extern "C" void __imp__sub_822736C8(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_822736C8(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_822736C8) {
     static int s_count = 0; ++s_count;
     
@@ -7448,14 +7431,14 @@ PPC_FUNC(sub_822736C8) {
     }
     
     // Call original implementation for normal resource processing
-    __imp__sub_822736C8(ctx, base);
+    sub_822736C8(ctx, base);
     
     LOGF_WARNING("[RESOURCE] sub_822736C8 #{} completed", s_count);
 }
 
-extern "C" void __imp__sub_821DE390(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_821DE390(PPCContext& ctx, uint8_t* base);
 // Hook sub_827EA150 to fix infinite loop in callback list iteration
-extern "C" void __imp__sub_827EA150(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827EA150(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_827EA150) {
     static int s_count = 0; ++s_count;
     
@@ -7480,13 +7463,13 @@ PPC_FUNC(sub_827EA150) {
     }
     
     // Call original implementation (will skip callback iteration since list is now NULL)
-    __imp__sub_827EA150(ctx, base);
+    sub_827EA150(ctx, base);
     
     LOGF_WARNING("[FS] sub_827EA150 #{} completed", s_count);
 }
 
-extern "C" void __imp__sub_8221F8A8(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_82273988(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8221F8A8(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82273988(PPCContext& ctx, uint8_t* base);
 
 // =============================================================================
 // sub_821DB1E0 - Config File Parser (causes PAC crash)
@@ -7496,7 +7479,7 @@ extern "C" void __imp__sub_82273988(PPCContext& ctx, uint8_t* base);
 // causes PAC authentication failures (crash at 0xd73f0b51f2e09f11).
 // SOLUTION: Bypass and return 0 (success/null result)
 // =============================================================================
-extern "C" void __imp__sub_821DB1E0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_821DB1E0(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_821DB1E0) {
     static int s_count = 0; ++s_count;
     
@@ -7511,24 +7494,24 @@ PPC_FUNC(sub_821DB1E0) {
 PPC_FUNC(sub_821DE390) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[INIT] sub_821DE390 ENTER #{}", s_count);
-    __imp__sub_821DE390(ctx, base);
+    sub_821DE390(ctx, base);
     LOGF_WARNING("[INIT] sub_821DE390 EXIT #{}", s_count);
 }
 
 // Trace internal calls of sub_821DE390
-extern "C" void __imp__sub_82204770(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82204770(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_82204770) {
     static int s_count = 0; ++s_count;
     if (s_count <= 5) LOG_WARNING("[sub_821DE390] sub_82204770 ENTER");
-    __imp__sub_82204770(ctx, base);
+    sub_82204770(ctx, base);
     if (s_count <= 5) LOG_WARNING("[sub_821DE390] sub_82204770 EXIT");
 }
 
-extern "C" void __imp__sub_82124EF0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82124EF0(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_82124EF0) {
     static int s_count = 0; ++s_count;
     if (s_count <= 5) LOG_WARNING("[sub_821DE390] sub_82124EF0 ENTER");
-    __imp__sub_82124EF0(ctx, base);
+    sub_82124EF0(ctx, base);
     if (s_count <= 5) LOG_WARNING("[sub_821DE390] sub_82124EF0 EXIT");
 }
 
@@ -7539,7 +7522,7 @@ PPC_FUNC(sub_82124EF0) {
 // It calls sub_8249BE88 which uses our vtable[27] implementation.
 // We trace but let it run - the vtable method handles file reading.
 // =============================================================================
-extern "C" void __imp__sub_82205438(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82205438(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_82205438) {
     static int s_count = 0; ++s_count;
     
@@ -7547,7 +7530,7 @@ PPC_FUNC(sub_82205438) {
         LOG_WARNING("[RESOURCE] sub_82205438 ENTER (string/resource lookup)");
     }
     
-    __imp__sub_82205438(ctx, base);
+    sub_82205438(ctx, base);
     
     if (s_count <= 10) {
         LOGF_WARNING("[RESOURCE] sub_82205438 EXIT r3={}", ctx.r3.u32);
@@ -7555,11 +7538,11 @@ PPC_FUNC(sub_82205438) {
 }
 
 // Trace internal calls of sub_82205438 (string/resource lookup)
-extern "C" void __imp__sub_827DB2A8(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827DB2A8(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_827DB2A8) {
     static int s_count = 0; ++s_count;
     if (s_count <= 5) LOG_WARNING("[sub_82205438] sub_827DB2A8 ENTER");
-    __imp__sub_827DB2A8(ctx, base);
+    sub_827DB2A8(ctx, base);
     if (s_count <= 5) LOG_WARNING("[sub_82205438] sub_827DB2A8 EXIT");
 }
 
@@ -7580,14 +7563,14 @@ PPC_FUNC(sub_827DB2A8) {
 // Our implementation:
 //   - Format path, resolve via VFS, return file info
 // =============================================================================
-extern "C" void __imp__sub_827EDED0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827EDED0(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_827EDED0) {
     static int s_count = 0; ++s_count;
     if (s_count <= 5) LOGF_WARNING("[PATH_FMT] sub_827EDED0 ENTER #{} r3=0x{:08X} r4={} r5=0x{:08X}", s_count, ctx.r3.u32, ctx.r4.u32, ctx.r5.u32);
-    __imp__sub_827EDED0(ctx, base);
+    sub_827EDED0(ctx, base);
     if (s_count <= 5) LOGF_WARNING("[PATH_FMT] sub_827EDED0 EXIT #{}", s_count);
 }
-extern "C" void __imp__sub_8249BDC8(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8249BDC8(PPCContext& ctx, uint8_t* base);
 
 
 // =============================================================================
@@ -7597,7 +7580,7 @@ extern "C" void __imp__sub_8249BDC8(PPCContext& ctx, uint8_t* base);
 // With vtable[27] properly implemented, this should work naturally.
 // We trace but let it run.
 // =============================================================================
-extern "C" void __imp__sub_82205390(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82205390(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_82205390) {
     static int s_count = 0; ++s_count;
     
@@ -7605,7 +7588,7 @@ PPC_FUNC(sub_82205390) {
         LOG_WARNING("[RESOURCE] sub_82205390 ENTER (string table load)");
     }
     
-    __imp__sub_82205390(ctx, base);
+    sub_82205390(ctx, base);
     
     if (s_count <= 10) {
         LOGF_WARNING("[RESOURCE] sub_82205390 EXIT r3={}", ctx.r3.u32);
@@ -7617,23 +7600,23 @@ PPC_FUNC(sub_82205390) {
 PPC_FUNC(sub_82673718) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[INIT] sub_82673718 ENTER #{}", s_count);
-    __imp__sub_82673718(ctx, base);
+    sub_82673718(ctx, base);
     LOGF_WARNING("[INIT] sub_82673718 EXIT #{}", s_count);
 }
 
 // Trace functions inside sub_82673718 to find exact blocker
-extern "C" void __imp__sub_8297B8C0(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_829735C8(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_82974F90(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_82670660(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_82976570(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_8297AD60(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_8297B260(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8297B8C0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_829735C8(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82974F90(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82670660(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82976570(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8297AD60(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8297B260(PPCContext& ctx, uint8_t* base);
 
 PPC_FUNC(sub_8297B8C0) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[INIT] sub_8297B8C0 ENTER #{}", s_count);
-    __imp__sub_8297B8C0(ctx, base);
+    sub_8297B8C0(ctx, base);
     LOGF_WARNING("[INIT] sub_8297B8C0 EXIT #{}", s_count);
 }
 
@@ -7643,7 +7626,7 @@ PPC_FUNC(sub_8297B8C0) {
 // FIXED: Let original run - no blocking detected in call tree.
 // This triggers XAudioRegisterRenderDriverClient via vtable call.
 // =============================================================================
-extern "C" void __imp__sub_829735C8(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_829735C8(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_829735C8) {
     static int s_count = 0; ++s_count;
     
@@ -7651,7 +7634,7 @@ PPC_FUNC(sub_829735C8) {
         LOG_WARNING("[AUDIO] sub_829735C8 ENTER - calling original (audio init)");
     }
     
-    __imp__sub_829735C8(ctx, base);  // Let it run!
+    sub_829735C8(ctx, base);  // Let it run!
     
     if (s_count <= 3) {
         LOG_WARNING("[AUDIO] sub_829735C8 EXIT - audio init complete");
@@ -7659,27 +7642,27 @@ PPC_FUNC(sub_829735C8) {
 }
 
 // Trace internal calls of sub_829735C8
-extern "C" void __imp__sub_829C52F0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_829C52F0(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_829C52F0) {
     static int s_count = 0; ++s_count;
     if (s_count <= 5) LOG_WARNING("[sub_829735C8] sub_829C52F0 ENTER");
-    __imp__sub_829C52F0(ctx, base);
+    sub_829C52F0(ctx, base);
     if (s_count <= 5) LOG_WARNING("[sub_829735C8] sub_829C52F0 EXIT");
 }
 
-extern "C" void __imp__sub_829A0EA8(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_829A0EA8(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_829A0EA8) {
     static int s_count = 0; ++s_count;
     if (s_count <= 5) LOG_WARNING("[sub_829735C8] sub_829A0EA8 ENTER");
-    __imp__sub_829A0EA8(ctx, base);
+    sub_829A0EA8(ctx, base);
     if (s_count <= 5) LOG_WARNING("[sub_829735C8] sub_829A0EA8 EXIT");
 }
 
-extern "C" void __imp__sub_8296D468(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8296D468(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_8296D468) {
     static int s_count = 0; ++s_count;
     if (s_count <= 5) LOG_WARNING("[sub_829735C8] sub_8296D468 ENTER");
-    __imp__sub_8296D468(ctx, base);
+    sub_8296D468(ctx, base);
     if (s_count <= 5) LOG_WARNING("[sub_829735C8] sub_8296D468 EXIT");
 }
 
@@ -7689,7 +7672,7 @@ PPC_FUNC(sub_8296D468) {
 // FIXED: Now that sub_829735C8 runs and initializes memory structures,
 // this function can also run safely.
 // =============================================================================
-extern "C" void __imp__sub_82974F90(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82974F90(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_82974F90) {
     static int s_count = 0; ++s_count;
     
@@ -7697,7 +7680,7 @@ PPC_FUNC(sub_82974F90) {
         LOG_WARNING("[AUDIO] sub_82974F90 ENTER - calling original (audio stream registration)");
     }
     
-    __imp__sub_82974F90(ctx, base);  // Now safe - memory initialized by sub_829735C8
+    sub_82974F90(ctx, base);  // Now safe - memory initialized by sub_829735C8
     
     if (s_count <= 3) {
         LOG_WARNING("[AUDIO] sub_82974F90 EXIT");
@@ -7707,21 +7690,21 @@ PPC_FUNC(sub_82974F90) {
 PPC_FUNC(sub_82670660) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[INIT] sub_82670660 ENTER #{}", s_count);
-    __imp__sub_82670660(ctx, base);
+    sub_82670660(ctx, base);
     LOGF_WARNING("[INIT] sub_82670660 EXIT #{}", s_count);
 }
 
 PPC_FUNC(sub_82976570) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[INIT] sub_82976570 ENTER #{}", s_count);
-    __imp__sub_82976570(ctx, base);
+    sub_82976570(ctx, base);
     LOGF_WARNING("[INIT] sub_82976570 EXIT #{}", s_count);
 }
 
 PPC_FUNC(sub_8297AD60) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[INIT] sub_8297AD60 ENTER #{}", s_count);
-    __imp__sub_8297AD60(ctx, base);
+    sub_8297AD60(ctx, base);
     LOGF_WARNING("[INIT] sub_8297AD60 EXIT #{}", s_count);
 }
 
@@ -7746,7 +7729,7 @@ PPC_FUNC(sub_8297B260) {
                      s_count, audioObjPtr, vt1);
     }
     
-    __imp__sub_8297B260(ctx, base);  // Let worker init run
+    sub_8297B260(ctx, base);  // Let worker init run
     
     if (s_count <= 3) {
         LOG_WARNING("[AUDIO] sub_8297B260 EXIT - worker thread model");
@@ -7754,38 +7737,38 @@ PPC_FUNC(sub_8297B260) {
 }
 
 // More functions after sub_8297B260 in sub_82673718
-extern "C" void __imp__sub_82975608(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_8296C060(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_82671E40(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_82672E50(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82975608(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8296C060(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82671E40(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82672E50(PPCContext& ctx, uint8_t* base);
 
 PPC_FUNC(sub_82975608) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[INIT] sub_82975608 ENTER #{}", s_count);
-    __imp__sub_82975608(ctx, base);
+    sub_82975608(ctx, base);
     LOGF_WARNING("[INIT] sub_82975608 EXIT #{}", s_count);
 }
 
 // Functions inside sub_82975608
-extern "C" void __imp__sub_829748D0(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_82974FF8(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_829748D0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82974FF8(PPCContext& ctx, uint8_t* base);
 
 PPC_FUNC(sub_829748D0) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[INIT] sub_829748D0 ENTER #{}", s_count);
-    __imp__sub_829748D0(ctx, base);
+    sub_829748D0(ctx, base);
     LOGF_WARNING("[INIT] sub_829748D0 EXIT #{} r3={}", s_count, ctx.r3.u32);
 }
 
 // Functions inside sub_829748D0
-extern "C" void __imp__sub_829A1950(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_8298E810(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_829A1958(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_829A1950(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8298E810(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_829A1958(PPCContext& ctx, uint8_t* base);
 
 PPC_FUNC(sub_829A1950) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[INIT] sub_829A1950 ENTER #{} r3={}", s_count, ctx.r3.u32);
-    __imp__sub_829A1950(ctx, base);
+    sub_829A1950(ctx, base);
     LOGF_WARNING("[INIT] sub_829A1950 EXIT #{} r3={}", s_count, ctx.r3.u32);
 }
 
@@ -7794,7 +7777,7 @@ PPC_FUNC(sub_829A1950) {
 // The semaphore wait blocks forever even with sync table because worker never runs properly.
 // SOLUTION: Stub and return success. Audio callback registration handled separately.
 // Option B: Un-stubbed - let worker thread model run with sync table
-extern "C" void __imp__sub_8298E810(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8298E810(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_8298E810) {
     static int s_count = 0; ++s_count;
     uint32_t contextAddr = ctx.r3.u32;
@@ -7807,16 +7790,16 @@ PPC_FUNC(sub_8298E810) {
     // 2. Create worker thread via sub_827DAF50
     // 3. Wait on sem2 (ctx+40) for worker to signal it's running
     // Sync table handles the semaphore wait/signal coordination
-    __imp__sub_8298E810(ctx, base);
+    sub_8298E810(ctx, base);
     
     LOGF_WARNING("[AUDIO_WORKER] sub_8298E810 #{} EXIT r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
 // Functions inside sub_8298E810 - trace to find blocker on 2nd call
-extern "C" void __imp__sub_827DAC78(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_827DAF50(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_827DACD8(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_827DADB0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827DAC78(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827DAF50(PPCContext& ctx, uint8_t* base);
+// REMOVED: extern "C" void sub_827DACD8(PPCContext& ctx, uint8_t* base); // v1 addr
+extern "C" void sub_827DADB0(PPCContext& ctx, uint8_t* base);
 
 PPC_FUNC(sub_827DAC78) {
     static int s_count = 0; ++s_count;
@@ -7827,7 +7810,7 @@ PPC_FUNC(sub_827DAC78) {
     if (s_count <= 30)
         LOGF_WARNING("[SEM_CREATE] sub_827DAC78 #{} ENTER count={} LR=0x{:08X}", s_count, originalCount, callerLR);
     
-    __imp__sub_827DAC78(ctx, base);
+    sub_827DAC78(ctx, base);
     
     uint32_t resultHandle = ctx.r3.u32;
     
@@ -7864,11 +7847,10 @@ PPC_FUNC(sub_827DAF50) {
     uint32_t suspendFlag = ctx.r8.u32;
     LOGF_WARNING("[THREAD_CREATE] sub_827DAF50 #{} ENTER class=0x{:08X} ctx=0x{:08X} taskFunc=0x{:08X} suspend={}", 
                  s_count, classAddr, contextAddr, taskFunc, suspendFlag);
-    __imp__sub_827DAF50(ctx, base);
+    sub_827DAF50(ctx, base);
     LOGF_WARNING("[THREAD_CREATE] sub_827DAF50 #{} EXIT threadHandle=0x{:08X}", s_count, ctx.r3.u32);
 }
 
-extern "C" void sub_827DACD8_hook(PPCContext& ctx, uint8_t* base) {
     static int s_count = 0; ++s_count;
     uint32_t semHandle = ctx.r3.u32;
     uint32_t callerLR = (uint32_t)ctx.lr;
@@ -7905,7 +7887,7 @@ extern "C" void sub_827DACD8_hook(PPCContext& ctx, uint8_t* base) {
         
         ctx.r3.u32 = (result == 0) ? 1 : 0;
     } else {
-        __imp__sub_827DACD8(ctx, base);
+        /* sub_827DACD8(ctx, base); // REMOVED: v1 addr not in v8 generated code */
         
         if (s_count <= 50) {
             printf("[sub_827DACD8] [SEM_WAIT] sub_827DACD8 #%d PASSED (original) r3=%u\n",
@@ -7920,12 +7902,12 @@ extern "C" void sub_827DACD8_hook(PPCContext& ctx, uint8_t* base) {
 // Analysis: This worker loops forever waiting on semaphore at context+24940
 // The semaphore is never signaled because task dispatcher is not initialized
 // Stubbing allows init to complete while preventing worker deadlock
-extern "C" void __imp__sub_827DE858(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827DE858(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_827DE858) {
     static int s_count = 0; ++s_count;
     uint32_t workerId = ctx.r3.u32;
     LOGF_WARNING("[RENDER WORKER] sub_827DE858 #{} STUBBED (workerId={})", s_count, workerId);
-    // Don't call __imp__sub_827DE858 - it would block forever
+    // Don't call sub_827DE858 - it would block forever
     ctx.r3.u32 = 0;  // Return success
     return;
 }
@@ -7935,24 +7917,24 @@ PPC_FUNC(sub_827DE858) {
 PPC_FUNC(sub_827DADB0) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[INIT] sub_827DADB0 ENTER #{}", s_count);
-    __imp__sub_827DADB0(ctx, base);
+    sub_827DADB0(ctx, base);
     LOGF_WARNING("[INIT] sub_827DADB0 EXIT #{}", s_count);
 }
 
 // Trace functions called by sub_8218C600 to find blocking point
-extern "C" void __imp__sub_829A0A48(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_829A0A48(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_829A0A48) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[sub_8218C600] sub_829A0A48 ENTER #{}", s_count);
-    __imp__sub_829A0A48(ctx, base);
+    sub_829A0A48(ctx, base);
     LOGF_WARNING("[sub_8218C600] sub_829A0A48 EXIT #{}", s_count);
 }
 
-extern "C" void __imp__sub_827DF248(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827DF248(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_827DF248) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[sub_8218C600] sub_827DF248 ENTER #{}", s_count);
-    __imp__sub_827DF248(ctx, base);
+    sub_827DF248(ctx, base);
     LOGF_WARNING("[sub_8218C600] sub_827DF248 EXIT #{}", s_count);
 }
 
@@ -7985,7 +7967,7 @@ PPC_FUNC(sub_82192578) {
 //   [ctx+3076] = pathCount (number of paths parsed, 1-4)
 //   [ctx+3080] = specialCount (count of '*' prefixed paths)
 // =============================================================================
-extern "C" void __imp__sub_827DFFF0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827DFFF0(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_827DFFF0) {
     static int s_count = 0; ++s_count;
     
@@ -8142,20 +8124,20 @@ PPC_FUNC(sub_827DFFF0) {
 }
 
 
-extern "C" void __imp__sub_82192140(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82192140(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_82192140) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[TRACE] sub_82192140 ENTER #{}", s_count);
-    __imp__sub_82192140(ctx, base);
+    sub_82192140(ctx, base);
     LOGF_WARNING("[TRACE] sub_82192140 EXIT #{}", s_count);
 }
 
 // sub_827E0C30 - Path setup (runs naturally now that race condition is fixed)
-extern "C" void __imp__sub_827E0C30(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827E0C30(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_827E0C30) {
     static int s_count = 0; ++s_count;
     if (s_count <= 5) LOGF_WARNING("[PATH] sub_827E0C30 ENTER #{} r3=0x{:08X}", s_count, ctx.r3.u32);
-    __imp__sub_827E0C30(ctx, base);
+    sub_827E0C30(ctx, base);
     if (s_count <= 5) LOGF_WARNING("[PATH] sub_827E0C30 EXIT #{}", s_count);
 }
 
@@ -8167,7 +8149,7 @@ PPC_FUNC(sub_827E0C30) {
 //
 // PC replacement: Skip validation, just store path length and return success.
 // =============================================================================
-extern "C" void __imp__sub_827E0CF8(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827E0CF8(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_827E0CF8) {
     static int s_count = 0; ++s_count;
     
@@ -8209,7 +8191,7 @@ PPC_FUNC(sub_827E0CF8) {
 // PC replacement: Skip path validation - VFS handles all paths.
 // Just store the path length and return success.
 // =============================================================================
-extern "C" void __imp__sub_827EF938(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827EF938(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_827EF938) {
     static int s_count = 0; ++s_count;
     
@@ -8246,7 +8228,7 @@ PPC_FUNC(sub_827EF938) {
 //
 // PC replacement: Always return 1 - VFS handles all paths
 // =============================================================================
-extern "C" void __imp__sub_827EF208(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827EF208(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_827EF208) {
     static int s_count = 0; ++s_count;
     
@@ -8590,7 +8572,7 @@ static void InitializePCStorageDevice(uint8_t* base) {
 // Global flag to detect if PPC execution continues after sub_827E1EC0
 static std::atomic<bool> g_afterStorageInit{false};
 
-extern "C" void __imp__sub_827E1EC0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827E1EC0(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_827E1EC0) {
     static int s_count = 0; ++s_count;
     static int s_emptyPathCount = 0;
@@ -8660,7 +8642,7 @@ PPC_FUNC(sub_827E1EC0) {
 // PC replacement: Skip Xbox mount, initialize context for VFS-based access.
 // The game stores results in the context structure at r3 (r31 in function).
 // =============================================================================
-extern "C" void __imp__sub_827EF2F8(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827EF2F8(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_827EF2F8) {
     static int s_count = 0; ++s_count;
     
@@ -8716,94 +8698,94 @@ PPC_FUNC(sub_827EF2F8) {
 // =============================================================================
 
 // sub_827E0400 - Potential caller or caller's context
-extern "C" void __imp__sub_827E0400(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827E0400(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_827E0400) {
     static int s_count = 0; ++s_count;
     if (s_count <= 20) {
         LOGF_WARNING("[CALLER_TRACE] sub_827E0400 ENTER #{} r3=0x{:08X} r4=0x{:08X} r5=0x{:08X} LR=0x{:08X}",
                      s_count, ctx.r3.u32, ctx.r4.u32, ctx.r5.u32, ctx.lr);
     }
-    __imp__sub_827E0400(ctx, base);
+    sub_827E0400(ctx, base);
     if (s_count <= 20) {
         LOGF_WARNING("[CALLER_TRACE] sub_827E0400 EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
     }
 }
 
 // sub_827E0420 - Potential caller
-extern "C" void __imp__sub_827E0420(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827E0420(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_827E0420) {
     static int s_count = 0; ++s_count;
     if (s_count <= 20) {
         LOGF_WARNING("[CALLER_TRACE] sub_827E0420 ENTER #{} r3=0x{:08X} r4=0x{:08X} r5=0x{:08X} LR=0x{:08X}",
                      s_count, ctx.r3.u32, ctx.r4.u32, ctx.r5.u32, ctx.lr);
     }
-    __imp__sub_827E0420(ctx, base);
+    sub_827E0420(ctx, base);
     if (s_count <= 20) {
         LOGF_WARNING("[CALLER_TRACE] sub_827E0420 EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
     }
 }
 
 // sub_827E0440 - Potential caller (closest to LR=0x827E049C)
-extern "C" void __imp__sub_827E0440(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827E0440(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_827E0440) {
     static int s_count = 0; ++s_count;
     if (s_count <= 20) {
         LOGF_WARNING("[CALLER_TRACE] sub_827E0440 ENTER #{} r3=0x{:08X} r4=0x{:08X} r5=0x{:08X} LR=0x{:08X}",
                      s_count, ctx.r3.u32, ctx.r4.u32, ctx.r5.u32, ctx.lr);
     }
-    __imp__sub_827E0440(ctx, base);
+    sub_827E0440(ctx, base);
     if (s_count <= 20) {
         LOGF_WARNING("[CALLER_TRACE] sub_827E0440 EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
     }
 }
 
 // sub_827E0460 - Potential caller (LR=0x827E049C is in this function's range)
-extern "C" void __imp__sub_827E0460(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827E0460(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_827E0460) {
     static int s_count = 0; ++s_count;
     if (s_count <= 20) {
         LOGF_WARNING("[CALLER_TRACE] sub_827E0460 ENTER #{} r3=0x{:08X} r4=0x{:08X} r5=0x{:08X} LR=0x{:08X}",
                      s_count, ctx.r3.u32, ctx.r4.u32, ctx.r5.u32, ctx.lr);
     }
-    __imp__sub_827E0460(ctx, base);
+    sub_827E0460(ctx, base);
     if (s_count <= 20) {
         LOGF_WARNING("[CALLER_TRACE] sub_827E0460 EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
     }
 }
 
 // sub_827E0480 - Most likely caller (LR=0x827E049C is ~0x1C bytes into this function)
-extern "C" void __imp__sub_827E0480(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827E0480(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_827E0480) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[CALLER_TRACE] sub_827E0480 ENTER #{} r3=0x{:08X} r4=0x{:08X} r5=0x{:08X} LR=0x{:08X}",
                  s_count, ctx.r3.u32, ctx.r4.u32, ctx.r5.u32, ctx.lr);
-    __imp__sub_827E0480(ctx, base);
+    sub_827E0480(ctx, base);
     LOGF_WARNING("[CALLER_TRACE] sub_827E0480 EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
 // sub_827E04A0 - Just after likely caller
-extern "C" void __imp__sub_827E04A0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827E04A0(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_827E04A0) {
     static int s_count = 0; ++s_count;
     if (s_count <= 20) {
         LOGF_WARNING("[CALLER_TRACE] sub_827E04A0 ENTER #{} r3=0x{:08X} r4=0x{:08X} r5=0x{:08X} LR=0x{:08X}",
                      s_count, ctx.r3.u32, ctx.r4.u32, ctx.r5.u32, ctx.lr);
     }
-    __imp__sub_827E04A0(ctx, base);
+    sub_827E04A0(ctx, base);
     if (s_count <= 20) {
         LOGF_WARNING("[CALLER_TRACE] sub_827E04A0 EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
     }
 }
 
 // sub_827E04C0 - Upper range
-extern "C" void __imp__sub_827E04C0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827E04C0(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_827E04C0) {
     static int s_count = 0; ++s_count;
     if (s_count <= 20) {
         LOGF_WARNING("[CALLER_TRACE] sub_827E04C0 ENTER #{} r3=0x{:08X} r4=0x{:08X} r5=0x{:08X} LR=0x{:08X}",
                      s_count, ctx.r3.u32, ctx.r4.u32, ctx.r5.u32, ctx.lr);
     }
-    __imp__sub_827E04C0(ctx, base);
+    sub_827E04C0(ctx, base);
     if (s_count <= 20) {
         LOGF_WARNING("[CALLER_TRACE] sub_827E04C0 EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
     }
@@ -8817,56 +8799,56 @@ PPC_FUNC(sub_827E04C0) {
 // =============================================================================
 
 // sub_827E0500 - Storage-related function after our caller range
-extern "C" void __imp__sub_827E0500(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827E0500(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_827E0500) {
     static int s_count = 0; ++s_count;
     if (s_count <= 20) {
         LOGF_WARNING("[SUBSYS] sub_827E0500 ENTER #{} r3=0x{:08X} r4=0x{:08X} LR=0x{:08X}",
                      s_count, ctx.r3.u32, ctx.r4.u32, ctx.lr);
     }
-    __imp__sub_827E0500(ctx, base);
+    sub_827E0500(ctx, base);
     if (s_count <= 20) {
         LOGF_WARNING("[SUBSYS] sub_827E0500 EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
     }
 }
 
 // sub_827E0600 - Storage path operations
-extern "C" void __imp__sub_827E0600(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827E0600(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_827E0600) {
     static int s_count = 0; ++s_count;
     if (s_count <= 20) {
         LOGF_WARNING("[SUBSYS] sub_827E0600 ENTER #{} r3=0x{:08X} r4=0x{:08X} LR=0x{:08X}",
                      s_count, ctx.r3.u32, ctx.r4.u32, ctx.lr);
     }
-    __imp__sub_827E0600(ctx, base);
+    sub_827E0600(ctx, base);
     if (s_count <= 20) {
         LOGF_WARNING("[SUBSYS] sub_827E0600 EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
     }
 }
 
 // sub_827E0700 - Storage context operations
-extern "C" void __imp__sub_827E0700(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827E0700(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_827E0700) {
     static int s_count = 0; ++s_count;
     if (s_count <= 20) {
         LOGF_WARNING("[SUBSYS] sub_827E0700 ENTER #{} r3=0x{:08X} r4=0x{:08X} LR=0x{:08X}",
                      s_count, ctx.r3.u32, ctx.r4.u32, ctx.lr);
     }
-    __imp__sub_827E0700(ctx, base);
+    sub_827E0700(ctx, base);
     if (s_count <= 20) {
         LOGF_WARNING("[SUBSYS] sub_827E0700 EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
     }
 }
 
 // sub_827E0800 - File operations
-extern "C" void __imp__sub_827E0800(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827E0800(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_827E0800) {
     static int s_count = 0; ++s_count;
     if (s_count <= 20) {
         LOGF_WARNING("[SUBSYS] sub_827E0800 ENTER #{} r3=0x{:08X} r4=0x{:08X} LR=0x{:08X}",
                      s_count, ctx.r3.u32, ctx.r4.u32, ctx.lr);
     }
-    __imp__sub_827E0800(ctx, base);
+    sub_827E0800(ctx, base);
     if (s_count <= 20) {
         LOGF_WARNING("[SUBSYS] sub_827E0800 EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
     }
@@ -8879,64 +8861,64 @@ PPC_FUNC(sub_827E0800) {
 // =============================================================================
 
 // Subsystem #2 after streaming init
-extern "C" void __imp__sub_82120100(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82120100(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_82120100) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[SUBSYS_INIT] sub_82120100 ENTER #{} r3=0x{:08X} r4=0x{:08X} LR=0x{:08X}",
                  s_count, ctx.r3.u32, ctx.r4.u32, ctx.lr);
-    __imp__sub_82120100(ctx, base);
+    sub_82120100(ctx, base);
     LOGF_WARNING("[SUBSYS_INIT] sub_82120100 EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
 // Subsystem loader/iterator
-extern "C" void __imp__sub_82120200(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82120200(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_82120200) {
     static int s_count = 0; ++s_count;
     if (s_count <= 30) {
         LOGF_WARNING("[SUBSYS_INIT] sub_82120200 ENTER #{} r3=0x{:08X} r4=0x{:08X} LR=0x{:08X}",
                      s_count, ctx.r3.u32, ctx.r4.u32, ctx.lr);
     }
-    __imp__sub_82120200(ctx, base);
+    sub_82120200(ctx, base);
     if (s_count <= 30) {
         LOGF_WARNING("[SUBSYS_INIT] sub_82120200 EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
     }
 }
 
 // More sub_8218C600 call chain - find the blocking function
-extern "C" void __imp__sub_82851548(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82851548(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_82851548) {
     static int s_count = 0; ++s_count;
     if (s_count <= 10) LOGF_WARNING("[sub_8218C600] sub_82851548 ENTER #{}", s_count);
-    __imp__sub_82851548(ctx, base);
+    sub_82851548(ctx, base);
     if (s_count <= 10) LOGF_WARNING("[sub_8218C600] sub_82851548 EXIT #{}", s_count);
 }
 
-extern "C" void __imp__sub_82856C38(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82856C38(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_82856C38) {
     static int s_count = 0; ++s_count;
     if (s_count <= 10) LOGF_WARNING("[sub_8218C600] sub_82856C38 ENTER #{}", s_count);
-    __imp__sub_82856C38(ctx, base);
+    sub_82856C38(ctx, base);
     if (s_count <= 10) LOGF_WARNING("[sub_8218C600] sub_82856C38 EXIT #{}", s_count);
 }
 
 // Functions called AFTER sub_82851548 EXIT #2 in sub_8218C600 - find blocking point
-extern "C" void __imp__sub_8285A0E0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8285A0E0(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_8285A0E0) {
     static int s_count = 0; ++s_count;
     if (s_count <= 10) LOGF_WARNING("[sub_8218C600] sub_8285A0E0 ENTER #{}", s_count);
-    __imp__sub_8285A0E0(ctx, base);
+    sub_8285A0E0(ctx, base);
     if (s_count <= 10) LOGF_WARNING("[sub_8218C600] sub_8285A0E0 EXIT #{}", s_count);
 }
 
-extern "C" void __imp__sub_82850748(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82850748(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_82850748) {
     static int s_count = 0; ++s_count;
     if (s_count <= 10) LOGF_WARNING("[sub_8218C600] sub_82850748 ENTER #{}", s_count);
-    __imp__sub_82850748(ctx, base);
+    sub_82850748(ctx, base);
     if (s_count <= 10) LOGF_WARNING("[sub_8218C600] sub_82850748 EXIT #{}", s_count);
 }
 
-extern "C" void __imp__sub_82856C90(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82856C90(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_82856C90) {
     static int s_count = 0; ++s_count;
     if (s_count <= 10) LOGF_WARNING("[sub_8218C600] sub_82856C90 ENTER #{}", s_count);
@@ -8944,7 +8926,7 @@ PPC_FUNC(sub_82856C90) {
     // Before call, r3 contains render_ctx pointer (from sub_8218C600 line 2507)
     uint32_t renderCtxBefore = ctx.r3.u32;
     
-    __imp__sub_82856C90(ctx, base);
+    sub_82856C90(ctx, base);
     if (s_count <= 10) LOGF_WARNING("[sub_8218C600] sub_82856C90 EXIT #{}", s_count);
     
     // Trace the vtable that will be called after this returns
@@ -8971,7 +8953,7 @@ PPC_FUNC(sub_82856C90) {
 //   sub_8285E1F0 - Unknown  
 //   sub_82862088 - Unknown
 // =============================================================================
-extern "C" void __imp__sub_82857240(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82857240(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_82857240) {
     static int s_count = 0; ++s_count;
     
@@ -8988,7 +8970,7 @@ PPC_FUNC(sub_82857240) {
     
     // Call original - internal blocking functions are already hooked to be non-blocking
     // This ensures sub_8285E1F0 runs and initializes the global pointer at 0x83127984
-    __imp__sub_82857240(ctx, base);
+    sub_82857240(ctx, base);
     
     if (s_count <= 3) {
         LOG_WARNING("[RENDER_INIT] sub_82857240 - completed, render context globals initialized");
@@ -9012,7 +8994,7 @@ PPC_FUNC(sub_82857240) {
 // This collapse eliminates the "first call works, second call hangs" pattern
 // caused by mixing partial Xbox GPU state with partial modern GPU state.
 // =============================================================================
-extern "C" void __imp__sub_82856BA8(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82856BA8(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_82856BA8) {
     static int s_count = 0;
     ++s_count;
@@ -9039,7 +9021,7 @@ PPC_FUNC(sub_82856BA8) {
 // Solution: Bypass entirely - host GPU handles synchronization through
 // the modern graphics layer (Metal/Vulkan/OpenGL).
 // =============================================================================
-extern "C" void __imp__sub_8285AF80(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8285AF80(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_8285AF80) {
     static int s_count = 0;
     ++s_count;
@@ -9054,50 +9036,50 @@ PPC_FUNC(sub_8285AF80) {
 }
 
 // Trace internal calls of sub_82856BA8
-extern "C" void __imp__sub_828787C0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_828787C0(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_828787C0) {
     LOG_WARNING("[sub_82856BA8] sub_828787C0 ENTER");
-    __imp__sub_828787C0(ctx, base);
+    sub_828787C0(ctx, base);
     LOG_WARNING("[sub_82856BA8] sub_828787C0 EXIT");
 }
 
-extern "C" void __imp__sub_8286DA20(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8286DA20(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_8286DA20) {
     LOG_WARNING("[sub_82856BA8] sub_8286DA20 ENTER");
-    __imp__sub_8286DA20(ctx, base);
+    sub_8286DA20(ctx, base);
     LOG_WARNING("[sub_82856BA8] sub_8286DA20 EXIT");
 }
 
 // Trace sub_8286D668 - GPU resource init (called by sub_8286DA20)
-extern "C" void __imp__sub_8286D668(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8286D668(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_8286D668) {
     LOG_WARNING("[sub_8286DA20] sub_8286D668 ENTER (GPU resource init)");
-    __imp__sub_8286D668(ctx, base);
+    sub_8286D668(ctx, base);
     LOG_WARNING("[sub_8286DA20] sub_8286D668 EXIT");
 }
 
 // Trace internal calls of sub_8286D668
-extern "C" void __imp__sub_827E93F8(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827E93F8(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_827E93F8) {
     static int s_count = 0; ++s_count;
     if (s_count <= 5) LOG_WARNING("[sub_8286D668] sub_827E93F8 ENTER");
-    __imp__sub_827E93F8(ctx, base);
+    sub_827E93F8(ctx, base);
     if (s_count <= 5) LOG_WARNING("[sub_8286D668] sub_827E93F8 EXIT");
 }
 
-extern "C" void __imp__sub_8286BAE0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8286BAE0(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_8286BAE0) {
     LOG_WARNING("[sub_8286D668] sub_8286BAE0 ENTER");
-    __imp__sub_8286BAE0(ctx, base);
+    sub_8286BAE0(ctx, base);
     LOG_WARNING("[sub_8286D668] sub_8286BAE0 EXIT");
 }
 
 // sub_8221B7A0 is now hooked earlier with infinite loop protection - removed duplicate
 
-extern "C" void __imp__sub_829E5C38(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_829E5C38(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_829E5C38) {
     LOG_WARNING("[sub_8286BAE0] sub_829E5C38 ENTER (GPU format query)");
-    __imp__sub_829E5C38(ctx, base);
+    sub_829E5C38(ctx, base);
     LOG_WARNING("[sub_8286BAE0] sub_829E5C38 EXIT");
 }
 
@@ -9114,7 +9096,7 @@ PPC_FUNC(sub_829E5C38) {
 // Solution: Bypass vtable call, return success. Game's own structures
 // will be initialized by the allocation code that runs before the vtable call.
 // =============================================================================
-extern "C" void __imp__sub_82850028(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82850028(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_82850028) {
     static int s_count = 0;
     ++s_count;
@@ -9128,32 +9110,32 @@ PPC_FUNC(sub_82850028) {
     ctx.r3.s64 = 0;
 }
 
-extern "C" void __imp__sub_829D92C0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_829D92C0(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_829D92C0) {
     static int s_count = 0; ++s_count;
     if (s_count <= 10) LOG_WARNING("[sub_8286D668] sub_829D92C0 ENTER");
-    __imp__sub_829D92C0(ctx, base);
+    sub_829D92C0(ctx, base);
     if (s_count <= 10) LOG_WARNING("[sub_8286D668] sub_829D92C0 EXIT");
 }
 
 // Additional calls in sub_8286D668
-extern "C" void __imp__sub_8286BA28(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8286BA28(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_8286BA28) {
     LOG_WARNING("[sub_8286D668] sub_8286BA28 ENTER");
-    __imp__sub_8286BA28(ctx, base);
+    sub_8286BA28(ctx, base);
     LOG_WARNING("[sub_8286D668] sub_8286BA28 EXIT");
 }
 
-extern "C" void __imp__sub_8286CE40(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8286CE40(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_8286CE40) {
     static int s_count = 0; ++s_count;
     if (s_count <= 5) LOG_WARNING("[sub_8286D668] sub_8286CE40 ENTER");
-    __imp__sub_8286CE40(ctx, base);
+    sub_8286CE40(ctx, base);
     if (s_count <= 5) LOG_WARNING("[sub_8286D668] sub_8286CE40 EXIT");
 }
 
 // Trace sub_8286CCA0 internal calls (called via vtable[3] from sub_82853CB0)
-extern "C" void __imp__sub_8286CCA0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8286CCA0(PPCContext& ctx, uint8_t* base);
 // =============================================================================
 // sub_8286CCA0 - Safe C++ reimplementation
 // =============================================================================
@@ -9245,101 +9227,101 @@ PPC_FUNC(sub_8286CCA0) {
     LOG_WARNING("[sub_8286CCA0] EXIT (safe impl)");
 }
 
-extern "C" void __imp__sub_8266A778(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8266A778(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_8266A778) {
     LOG_WARNING("[sub_8286CCA0] sub_8266A778 ENTER");
-    __imp__sub_8266A778(ctx, base);
+    sub_8266A778(ctx, base);
     LOG_WARNING("[sub_8286CCA0] sub_8266A778 EXIT");
 }
 
-extern "C" void __imp__sub_82854448(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82854448(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_82854448) {
     LOG_WARNING("[sub_8286CCA0] sub_82854448 ENTER");
-    __imp__sub_82854448(ctx, base);
+    sub_82854448(ctx, base);
     LOGF_WARNING("[sub_8286CCA0] sub_82854448 EXIT r3={}", ctx.r3.u32);
 }
 
-extern "C" void __imp__sub_8286C8F0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8286C8F0(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_8286C8F0) {
     LOG_WARNING("[sub_8286CCA0] sub_8286C8F0 ENTER");
-    __imp__sub_8286C8F0(ctx, base);
+    sub_8286C8F0(ctx, base);
     LOG_WARNING("[sub_8286CCA0] sub_8286C8F0 EXIT");
 }
 
 // Trace internal calls of sub_8286C8F0
-extern "C" void __imp__sub_8287E2C0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8287E2C0(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_8287E2C0) {
     LOG_WARNING("[sub_8286C8F0] sub_8287E2C0 ENTER");
-    __imp__sub_8287E2C0(ctx, base);
+    sub_8287E2C0(ctx, base);
     LOG_WARNING("[sub_8286C8F0] sub_8287E2C0 EXIT");
 }
 
-extern "C" void __imp__sub_827D85E0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827D85E0(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_827D85E0) {
     static int s_count = 0; ++s_count;
     if (s_count <= 5) LOG_WARNING("[sub_8286C8F0] sub_827D85E0 ENTER");
-    __imp__sub_827D85E0(ctx, base);
+    sub_827D85E0(ctx, base);
     if (s_count <= 5) LOG_WARNING("[sub_8286C8F0] sub_827D85E0 EXIT");
 }
 
-extern "C" void __imp__sub_8285F6C0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8285F6C0(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_8285F6C0) {
     LOG_WARNING("[sub_8286C8F0] sub_8285F6C0 ENTER (shader lookup)");
-    __imp__sub_8285F6C0(ctx, base);
+    sub_8285F6C0(ctx, base);
     LOGF_WARNING("[sub_8286C8F0] sub_8285F6C0 EXIT r3=0x{:08X}", ctx.r3.u32);
 }
 
-extern "C" void __imp__sub_827D8620(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827D8620(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_827D8620) {
     static int s_count = 0; ++s_count;
     if (s_count <= 5) LOG_WARNING("[sub_8286C8F0] sub_827D8620 ENTER");
-    __imp__sub_827D8620(ctx, base);
+    sub_827D8620(ctx, base);
     if (s_count <= 5) LOG_WARNING("[sub_8286C8F0] sub_827D8620 EXIT");
 }
 
 // More internal calls of sub_8286C8F0
-extern "C" void __imp__sub_8285E6E8(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8285E6E8(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_8285E6E8) {
     LOG_WARNING("[sub_8286C8F0] sub_8285E6E8 ENTER (texture create?)");
-    __imp__sub_8285E6E8(ctx, base);
+    sub_8285E6E8(ctx, base);
     LOGF_WARNING("[sub_8286C8F0] sub_8285E6E8 EXIT r3=0x{:08X}", ctx.r3.u32);
 }
 
-extern "C" void __imp__sub_8286BBE8(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8286BBE8(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_8286BBE8) {
     LOG_WARNING("[sub_8286C8F0] sub_8286BBE8 ENTER");
-    __imp__sub_8286BBE8(ctx, base);
+    sub_8286BBE8(ctx, base);
     LOG_WARNING("[sub_8286C8F0] sub_8286BBE8 EXIT");
 }
 
 // Trace internal calls of sub_8286BBE8
-extern "C" void __imp__sub_8286A970(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8286A970(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_8286A970) {
     LOG_WARNING("[sub_8286BBE8] sub_8286A970 ENTER");
-    __imp__sub_8286A970(ctx, base);
+    sub_8286A970(ctx, base);
     LOG_WARNING("[sub_8286BBE8] sub_8286A970 EXIT");
 }
 
-extern "C" void __imp__sub_8285E2C0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8285E2C0(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_8285E2C0) {
     static int s_count = 0; ++s_count;
     if (s_count <= 5) LOG_WARNING("[sub_8286BBE8] sub_8285E2C0 ENTER");
-    __imp__sub_8285E2C0(ctx, base);
+    sub_8285E2C0(ctx, base);
     if (s_count <= 5) LOG_WARNING("[sub_8286BBE8] sub_8285E2C0 EXIT");
 }
 
-extern "C" void __imp__sub_8285E6C0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8285E6C0(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_8285E6C0) {
     LOG_WARNING("[sub_8286BBE8] sub_8285E6C0 ENTER");
-    __imp__sub_8285E6C0(ctx, base);
+    sub_8285E6C0(ctx, base);
     LOG_WARNING("[sub_8286BBE8] sub_8285E6C0 EXIT");
 }
 
-extern "C" void __imp__sub_829D33B8(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_829D33B8(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_829D33B8) {
     static int s_count = 0; ++s_count;
     if (s_count <= 5) LOG_WARNING("[sub_8286BBE8] sub_829D33B8 ENTER");
-    __imp__sub_829D33B8(ctx, base);
+    sub_829D33B8(ctx, base);
     if (s_count <= 5) LOGF_WARNING("[sub_8286BBE8] sub_829D33B8 EXIT r3={}", ctx.r3.u32);
 }
 
@@ -9352,7 +9334,7 @@ PPC_FUNC(sub_829D33B8) {
 //
 // Solution: Bypass entirely - shader resources will be set up by host GPU layer.
 // =============================================================================
-extern "C" void __imp__sub_82853CB0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82853CB0(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_82853CB0) {
     static int s_count = 0;
     ++s_count;
@@ -9366,133 +9348,133 @@ PPC_FUNC(sub_82853CB0) {
     return;
 }
 
-extern "C" void __imp__sub_82871A18(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82871A18(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_82871A18) {
     LOG_WARNING("[sub_82856BA8] sub_82871A18 ENTER");
-    __imp__sub_82871A18(ctx, base);
+    sub_82871A18(ctx, base);
     LOG_WARNING("[sub_82856BA8] sub_82871A18 EXIT");
 }
 
-extern "C" void __imp__sub_82857E38(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82857E38(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_82857E38) {
     LOG_WARNING("[sub_82857240] sub_82857E38 ENTER");
-    __imp__sub_82857E38(ctx, base);
+    sub_82857E38(ctx, base);
     LOG_WARNING("[sub_82857240] sub_82857E38 EXIT");
 }
 
-extern "C" void __imp__sub_8285E1F0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8285E1F0(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_8285E1F0) {
     static int s_count = 0; ++s_count;
     if (s_count <= 5) LOGF_WARNING("[sub_82857240] sub_8285E1F0 ENTER #{} r3={}", s_count, ctx.r3.u32);
-    __imp__sub_8285E1F0(ctx, base);
+    sub_8285E1F0(ctx, base);
     if (s_count <= 5) LOG_WARNING("[sub_82857240] sub_8285E1F0 EXIT");
 }
 
-extern "C" void __imp__sub_82862088(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82862088(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_82862088) {
     static int s_count = 0; ++s_count;
     if (s_count <= 5) LOGF_WARNING("[sub_82857240] sub_82862088 ENTER #{} r3={}", s_count, ctx.r3.u32);
-    __imp__sub_82862088(ctx, base);
+    sub_82862088(ctx, base);
     if (s_count <= 5) LOG_WARNING("[sub_82857240] sub_82862088 EXIT");
 }
 
 // Sub-functions called by sub_82856C90 - find which one blocks
-extern "C" void __imp__sub_82851F30(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82851F30(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_82851F30) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[sub_82856C90] sub_82851F30 ENTER #{}", s_count);
-    __imp__sub_82851F30(ctx, base);
+    sub_82851F30(ctx, base);
     LOGF_WARNING("[sub_82856C90] sub_82851F30 EXIT #{}", s_count);
 }
 
 // Trace internal calls of sub_82851F30 to find blocker
-extern "C" void __imp__sub_827DAE20(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827DAE20(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_827DAE20) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[sub_82851F30] sub_827DAE20 ENTER #{}", s_count);
-    __imp__sub_827DAE20(ctx, base);
+    sub_827DAE20(ctx, base);
     LOGF_WARNING("[sub_82851F30] sub_827DAE20 EXIT #{}", s_count);
 }
 
-extern "C" void __imp__sub_827EEE40(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827EEE40(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_827EEE40) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[sub_82851F30] sub_827EEE40 ENTER #{}", s_count);
-    __imp__sub_827EEE40(ctx, base);
+    sub_827EEE40(ctx, base);
     LOGF_WARNING("[sub_82851F30] sub_827EEE40 EXIT #{}", s_count);
 }
 
-extern "C" void __imp__sub_828508B8(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_828508B8(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_828508B8) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[sub_82851F30] sub_828508B8 ENTER #{}", s_count);
-    __imp__sub_828508B8(ctx, base);
+    sub_828508B8(ctx, base);
     LOGF_WARNING("[sub_82851F30] sub_828508B8 EXIT #{}", s_count);
 }
 
-extern "C" void __imp__sub_829D0268(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_829D0268(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_829D0268) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[sub_82851F30] sub_829D0268 ENTER #{}", s_count);
-    __imp__sub_829D0268(ctx, base);
+    sub_829D0268(ctx, base);
     LOGF_WARNING("[sub_82851F30] sub_829D0268 EXIT #{} r3={}", s_count, ctx.r3.s32);
 }
 
-extern "C" void __imp__sub_82850630(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82850630(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_82850630) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[sub_82851F30] sub_82850630 ENTER #{}", s_count);
-    __imp__sub_82850630(ctx, base);
+    sub_82850630(ctx, base);
     LOGF_WARNING("[sub_82851F30] sub_82850630 EXIT #{}", s_count);
 }
 
-extern "C" void __imp__sub_829CB140(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_829CB140(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_829CB140) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[sub_82851F30] sub_829CB140 ENTER #{}", s_count);
-    __imp__sub_829CB140(ctx, base);
+    sub_829CB140(ctx, base);
     LOGF_WARNING("[sub_82851F30] sub_829CB140 EXIT #{}", s_count);
 }
 
 // More functions called later in sub_82851F30
-extern "C" void __imp__sub_829CAE68(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_829CAE68(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_829CAE68) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[sub_82851F30] sub_829CAE68 ENTER #{}", s_count);
-    __imp__sub_829CAE68(ctx, base);
+    sub_829CAE68(ctx, base);
     LOGF_WARNING("[sub_82851F30] sub_829CAE68 EXIT #{}", s_count);
 }
 
-extern "C" void __imp__sub_829D5948(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_829D5948(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_829D5948) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[sub_82851F30] sub_829D5948 ENTER #{}", s_count);
-    __imp__sub_829D5948(ctx, base);
+    sub_829D5948(ctx, base);
     LOGF_WARNING("[sub_82851F30] sub_829D5948 EXIT #{}", s_count);
 }
 
-extern "C" void __imp__sub_82851DD8(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82851DD8(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_82851DD8) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[sub_82851F30] sub_82851DD8 ENTER #{}", s_count);
-    __imp__sub_82851DD8(ctx, base);
+    sub_82851DD8(ctx, base);
     LOGF_WARNING("[sub_82851F30] sub_82851DD8 EXIT #{}", s_count);
 }
 
-extern "C" void __imp__sub_8285BDC8(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8285BDC8(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_8285BDC8) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[sub_82851F30] sub_8285BDC8 ENTER #{}", s_count);
-    __imp__sub_8285BDC8(ctx, base);
+    sub_8285BDC8(ctx, base);
     LOGF_WARNING("[sub_82851F30] sub_8285BDC8 EXIT #{}", s_count);
 }
 
 // Trace internal calls of sub_8285BDC8 (shader/resource loader)
-extern "C" void __imp__sub_8285BC60(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8285BC60(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_8285BC60) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[sub_8285BDC8] sub_8285BC60 ENTER #{}", s_count);
-    __imp__sub_8285BC60(ctx, base);
+    sub_8285BC60(ctx, base);
     LOGF_WARNING("[sub_8285BDC8] sub_8285BC60 EXIT #{}", s_count);
 }
 
@@ -9508,7 +9490,7 @@ PPC_FUNC(sub_8285BC60) {
 // path (due to uninitialized path config), construct a default path based on
 // the path index. This allows shader loading to proceed without Xbox path config.
 // =============================================================================
-extern "C" void __imp__sub_827E04F0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827E04F0(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_827E04F0) {
     static int s_count = 0; ++s_count;
     
@@ -9534,7 +9516,7 @@ PPC_FUNC(sub_827E04F0) {
     }
     
     // Call the original implementation first
-    __imp__sub_827E04F0(ctx, base);
+    sub_827E04F0(ctx, base);
     
     // Check what path was constructed (read from output buffer)
     char resultPath[260] = {0};
@@ -9571,11 +9553,11 @@ PPC_FUNC(sub_827E04F0) {
     }
 }
 
-extern "C" void __imp__sub_827DFE10(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827DFE10(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_827DFE10) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[sub_8285BDC8] sub_827DFE10 ENTER #{}", s_count);
-    __imp__sub_827DFE10(ctx, base);
+    sub_827DFE10(ctx, base);
     LOGF_WARNING("[sub_8285BDC8] sub_827DFE10 EXIT #{} r3={}", s_count, ctx.r3.u32);
 }
 
@@ -9588,7 +9570,7 @@ PPC_FUNC(sub_827DFE10) {
 // PC replacement: Extract path from context, use VFS to check if file exists,
 // return a valid file handle or 0 if not found.
 // =============================================================================
-extern "C" void __imp__sub_827E8180(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827E8180(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_827E8180) {
     static int s_count = 0; ++s_count;
     
@@ -9801,7 +9783,7 @@ PPC_FUNC(sub_827E8180) {
     ctx.r3.u32 = 0;  // Not found via storage device path
 }
 
-extern "C" void __imp__sub_827E8880(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827E8880(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_827E8880) {
     static int s_count = 0; ++s_count;
     
@@ -9817,20 +9799,20 @@ PPC_FUNC(sub_827E8880) {
                      field0, field4, field8);
     }
     
-    __imp__sub_827E8880(ctx, base);
+    sub_827E8880(ctx, base);
     
     LOGF_WARNING("[sub_827E8880] EXIT #{} r3={}", s_count, ctx.r3.s32);
 }
 
-extern "C" void __imp__sub_8285B680(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8285B680(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_8285B680) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[sub_8285BDC8] sub_8285B680 ENTER #{} (shader load)", s_count);
-    __imp__sub_8285B680(ctx, base);
+    sub_8285B680(ctx, base);
     LOGF_WARNING("[sub_8285BDC8] sub_8285B680 EXIT #{}", s_count);
 }
 
-extern "C" void __imp__sub_8285AA90(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8285AA90(PPCContext& ctx, uint8_t* base);
 // =============================================================================
 // sub_8285AA90 - Safe C++ reimplementation
 // =============================================================================
@@ -9916,46 +9898,46 @@ PPC_FUNC(sub_8285AA90) {
     LOGF_WARNING("[sub_82851F30] sub_8285AA90 EXIT #{} (BYPASS: hash mismatch, returning 1)", s_count);
 }
 
-extern "C" void __imp__sub_8284FAD8(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8284FAD8(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_8284FAD8) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[sub_82856C90] sub_8284FAD8 ENTER #{}", s_count);
-    __imp__sub_8284FAD8(ctx, base);
+    sub_8284FAD8(ctx, base);
     LOGF_WARNING("[sub_82856C90] sub_8284FAD8 EXIT #{}", s_count);
 }
 
-extern "C" void __imp__sub_8219FC80(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8219FC80(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_8219FC80) {
     static int s_count = 0; ++s_count;
     if (s_count <= 10) LOGF_WARNING("[sub_8218C600] sub_8219FC80 ENTER #{}", s_count);
-    __imp__sub_8219FC80(ctx, base);
+    sub_8219FC80(ctx, base);
     if (s_count <= 10) LOGF_WARNING("[sub_8218C600] sub_8219FC80 EXIT #{}", s_count);
 }
 
-extern "C" void __imp__sub_82285F90(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82285F90(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_82285F90) {
     static int s_count = 0; ++s_count;
     if (s_count <= 10) LOGF_WARNING("[sub_8218C600] sub_82285F90 ENTER #{}", s_count);
-    __imp__sub_82285F90(ctx, base);
+    sub_82285F90(ctx, base);
     if (s_count <= 10) LOGF_WARNING("[sub_8218C600] sub_82285F90 EXIT #{}", s_count);
 }
 
-extern "C" void __imp__sub_822214E0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_822214E0(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_822214E0) {
     static int s_count = 0; ++s_count;
     if (s_count <= 10) LOGF_WARNING("[sub_8218C600] sub_822214E0 ENTER #{}", s_count);
-    __imp__sub_822214E0(ctx, base);
+    sub_822214E0(ctx, base);
     if (s_count <= 10) LOGF_WARNING("[sub_8218C600] sub_822214E0 EXIT #{}", s_count);
 }
 
 // sub_82193BC0 - Job system init - STUBBED to prevent blocking
 // Analysis: Creates a worker thread that waits on semaphore 0xA82402B0
 // With workers stubbed, this semaphore is never signaled, causing infinite block
-extern "C" void __imp__sub_82193BC0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82193BC0(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_82193BC0) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[JOB_SYSTEM] sub_82193BC0 #{} STUBBED - job system bypassed", s_count);
-    // Don't call __imp__sub_82193BC0 - it creates worker that blocks forever
+    // Don't call sub_82193BC0 - it creates worker that blocks forever
     ctx.r3.u32 = 0;  // Return success
     return;
 }
@@ -9968,7 +9950,7 @@ PPC_FUNC(sub_82193BC0) {
 //
 // SOLUTION: Bypass entirely. GPU setup handled by host rendering layer.
 // =============================================================================
-extern "C" void __imp__sub_823193A8(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_823193A8(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_823193A8) {
     static int s_count = 0; ++s_count;
     
@@ -9990,7 +9972,7 @@ PPC_FUNC(sub_823193A8) {
 //
 // SOLUTION: Bypass - shader effects handled by host shader cache
 // =============================================================================
-extern "C" void __imp__sub_821EC3E8(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_821EC3E8(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_821EC3E8) {
     static int s_count = 0; ++s_count;
     
@@ -10003,27 +9985,27 @@ PPC_FUNC(sub_821EC3E8) {
     return;
 }
 
-extern "C" void __imp__sub_827EED88(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827EED88(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_827EED88) {
     static int s_count = 0; ++s_count;
     if (s_count <= 10) LOGF_WARNING("[sub_8218C600] sub_827EED88 ENTER #{}", s_count);
-    __imp__sub_827EED88(ctx, base);
+    sub_827EED88(ctx, base);
     if (s_count <= 10) LOGF_WARNING("[sub_8218C600] sub_827EED88 EXIT #{}", s_count);
 }
 
-extern "C" void __imp__sub_827EB6E0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827EB6E0(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_827EB6E0) {
     static int s_count = 0; ++s_count;
     if (s_count <= 10) LOGF_WARNING("[sub_8218C600] sub_827EB6E0 ENTER #{}", s_count);
-    __imp__sub_827EB6E0(ctx, base);
+    sub_827EB6E0(ctx, base);
     if (s_count <= 10) LOGF_WARNING("[sub_8218C600] sub_827EB6E0 EXIT #{}", s_count);
 }
 
-extern "C" void __imp__sub_827EB748(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827EB748(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_827EB748) {
     static int s_count = 0; ++s_count;
     if (s_count <= 10) LOGF_WARNING("[sub_8218C600] sub_827EB748 ENTER #{}", s_count);
-    __imp__sub_827EB748(ctx, base);
+    sub_827EB748(ctx, base);
     if (s_count <= 10) LOGF_WARNING("[sub_8218C600] sub_827EB748 EXIT #{}", s_count);
 }
 
@@ -10039,7 +10021,7 @@ PPC_FUNC(sub_827EB748) {
 //
 // SOLUTION: Bypass - file streaming handled by VFS layer.
 // =============================================================================
-extern "C" void __imp__sub_827E7B38(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827E7B38(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_827E7B38) {
     static int s_count = 0; ++s_count;
     
@@ -10051,86 +10033,86 @@ PPC_FUNC(sub_827E7B38) {
     return;
 }
 
-extern "C" void __imp__sub_827DF490(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827DF490(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_827DF490) {
     static int s_count = 0; ++s_count;
     if (s_count <= 10) LOGF_WARNING("[sub_827E7B38] sub_827DF490 ENTER #{} r3=0x{:08X}", s_count, ctx.r3.u32);
-    __imp__sub_827DF490(ctx, base);
+    sub_827DF490(ctx, base);
     if (s_count <= 10) LOGF_WARNING("[sub_827E7B38] sub_827DF490 EXIT #{}", s_count);
 }
 
-extern "C" void __imp__sub_827827C8(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827827C8(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_827827C8) {
     static int s_count = 0; ++s_count;
     if (s_count <= 10) LOG_WARNING("[sub_827E7B38] sub_827827C8 ENTER (queue op)");
-    __imp__sub_827827C8(ctx, base);
+    sub_827827C8(ctx, base);
     if (s_count <= 10) LOG_WARNING("[sub_827E7B38] sub_827827C8 EXIT");
 }
 
-extern "C" void __imp__sub_82990EC0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82990EC0(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_82990EC0) {
     static int s_count = 0; ++s_count;
     if (s_count <= 5) LOG_WARNING("[sub_827E7B38] sub_82990EC0 ENTER");
-    __imp__sub_82990EC0(ctx, base);
+    sub_82990EC0(ctx, base);
     if (s_count <= 5) LOG_WARNING("[sub_827E7B38] sub_82990EC0 EXIT");
 }
 
-extern "C" void __imp__sub_827EAE38(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827EAE38(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_827EAE38) {
     static int s_count = 0; ++s_count;
     if (s_count <= 5) LOG_WARNING("[sub_827EB748] sub_827EAE38 ENTER");
-    __imp__sub_827EAE38(ctx, base);
+    sub_827EAE38(ctx, base);
     if (s_count <= 5) LOG_WARNING("[sub_827EB748] sub_827EAE38 EXIT");
 }
 
 
 
-extern "C" void __imp__sub_827EEB48(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827EEB48(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_827EEB48) {
     static int s_count = 0; ++s_count;
     if (s_count <= 10) LOGF_WARNING("[sub_8218C600] sub_827EEB48 ENTER #{}", s_count);
-    __imp__sub_827EEB48(ctx, base);
+    sub_827EEB48(ctx, base);
     if (s_count <= 10) LOGF_WARNING("[sub_8218C600] sub_827EEB48 EXIT #{}", s_count);
 }
 
 // sub_82197338 - last call in sub_8218C600 before return
-extern "C" void __imp__sub_82197338(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82197338(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_82197338) {
     static int s_count = 0; ++s_count;
     if (s_count <= 10) LOGF_WARNING("[sub_8218C600] sub_82197338 ENTER #{}", s_count);
-    __imp__sub_82197338(ctx, base);
+    sub_82197338(ctx, base);
     if (s_count <= 10) LOGF_WARNING("[sub_8218C600] sub_82197338 EXIT #{}", s_count);
 }
 
 // sub_821915F8 - first call in sub_82197338
-extern "C" void __imp__sub_821915F8(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_821915F8(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_821915F8) {
     static int s_count = 0; ++s_count;
     if (s_count <= 10) LOGF_WARNING("[sub_82197338] sub_821915F8 ENTER #{}", s_count);
-    __imp__sub_821915F8(ctx, base);
+    sub_821915F8(ctx, base);
     if (s_count <= 10) LOGF_WARNING("[sub_82197338] sub_821915F8 EXIT #{}", s_count);
 }
 
 // sub_82897760 - called by sub_821915F8
-extern "C" void __imp__sub_82897760(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82897760(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_82897760) {
     static int s_count = 0; ++s_count;
     if (s_count <= 50) LOGF_WARNING("[sub_821915F8] sub_82897760 ENTER #{}", s_count);
-    __imp__sub_82897760(ctx, base);
+    sub_82897760(ctx, base);
     if (s_count <= 50) LOGF_WARNING("[sub_821915F8] sub_82897760 EXIT #{}", s_count);
 }
 
 // sub_822DE5F0 - called by sub_821915F8 (potential blocker)
-extern "C" void __imp__sub_822DE5F0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_822DE5F0(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_822DE5F0) {
     static int s_count = 0; ++s_count;
     if (s_count <= 50) LOGF_WARNING("[sub_821915F8] sub_822DE5F0 ENTER #{}", s_count);
-    __imp__sub_822DE5F0(ctx, base);
+    sub_822DE5F0(ctx, base);
     if (s_count <= 50) LOGF_WARNING("[sub_821915F8] sub_822DE5F0 EXIT #{}", s_count);
 }
 
 // sub_827D9C50 - called for large memory allocations, potential blocker
-extern "C" void __imp__sub_827D9C50(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827D9C50(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_827D9C50) {
     static int s_count = 0; ++s_count;
     uint32_t allocSize = ctx.r4.u32;
@@ -10139,14 +10121,14 @@ PPC_FUNC(sub_827D9C50) {
     if (s_count <= 10 || isLarge) {
         LOGF_WARNING("[ALLOC] sub_827D9C50 #{} ENTER size={}", s_count, allocSize);
     }
-    __imp__sub_827D9C50(ctx, base);
+    sub_827D9C50(ctx, base);
     if (s_count <= 10 || isLarge) {
         LOGF_WARNING("[ALLOC] sub_827D9C50 #{} EXIT r3=0x{:08X}", s_count, ctx.r3.u32);
     }
 }
 
 // sub_827DA8E0 - allocator function called via vtable for large allocs
-extern "C" void __imp__sub_827DA8E0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827DA8E0(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_827DA8E0) {
     static int s_count = 0; ++s_count;
     uint32_t allocSize = ctx.r4.u32;
@@ -10155,14 +10137,14 @@ PPC_FUNC(sub_827DA8E0) {
     if (s_count <= 10 || isLarge) {
         LOGF_WARNING("[ALLOC] sub_827DA8E0 #{} ENTER size={}", s_count, allocSize);
     }
-    __imp__sub_827DA8E0(ctx, base);
+    sub_827DA8E0(ctx, base);
     if (s_count <= 10 || isLarge) {
         LOGF_WARNING("[ALLOC] sub_827DA8E0 #{} EXIT r3=0x{:08X}", s_count, ctx.r3.u32);
     }
 }
 
 // sub_827D8AF8 - indirect call target for large allocations, trace what IT calls
-extern "C" void __imp__sub_827D8AF8(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827D8AF8(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_827D8AF8) {
     static int s_count = 0; ++s_count;
     
@@ -10182,14 +10164,14 @@ PPC_FUNC(sub_827D8AF8) {
         LOGF_WARNING("[ALLOC] sub_827D8AF8 #{} ENTER size={} r6={} -> indirect_target=0x{:08X}", 
                      s_count, allocSize, r6, funcPtr);
     }
-    __imp__sub_827D8AF8(ctx, base);
+    sub_827D8AF8(ctx, base);
     if (s_count <= 10 || isLarge) {
         LOGF_WARNING("[ALLOC] sub_827D8AF8 #{} EXIT r3=0x{:08X}", s_count, ctx.r3.u32);
     }
 }
 
 // sub_827DAD60 - called by worker thread 0x8298E700 at start - might signal "ready"
-extern "C" void __imp__sub_827DAD60(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827DAD60(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_827DAD60) {
     static int s_count = 0; ++s_count;
     uint32_t handle = ctx.r3.u32;
@@ -10208,7 +10190,7 @@ PPC_FUNC(sub_827DAD60) {
     }
     
     // Call original
-    __imp__sub_827DAD60(ctx, base);
+    sub_827DAD60(ctx, base);
     
     if (s_count <= 30 || s_count % 100 == 0) {
         printf("[sub_827DAD60] [SEM_SIGNAL] sub_827DAD60 #%d EXIT handle=0x%08X\n",
@@ -10227,7 +10209,7 @@ PPC_FUNC(sub_827DAD60) {
 //   4. Loop back to step 2
 //
 // FIX: Signal sem2, call vtable[3] once for audio, then return (no blocking)
-extern "C" void __imp__sub_8298E700(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8298E700(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_8298E700) {
     static int s_count = 0; ++s_count;
     uint32_t ctx_ptr = ctx.r3.u32;
@@ -10272,7 +10254,7 @@ PPC_FUNC(sub_8298E700) {
 PPC_FUNC(sub_829A1958) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[INIT] sub_829A1958 ENTER #{}", s_count);
-    __imp__sub_829A1958(ctx, base);
+    sub_829A1958(ctx, base);
     LOGF_WARNING("[INIT] sub_829A1958 EXIT #{}", s_count);
 }
 
@@ -10280,7 +10262,7 @@ PPC_FUNC(sub_82974FF8) {
     static int s_count = 0; ++s_count;
     if (s_count <= 10 || s_count % 50 == 0)
         LOGF_WARNING("[INIT] sub_82974FF8 ENTER #{}", s_count);
-    __imp__sub_82974FF8(ctx, base);
+    sub_82974FF8(ctx, base);
     if (s_count <= 10 || s_count % 50 == 0)
         LOGF_WARNING("[INIT] sub_82974FF8 EXIT #{}", s_count);
 }
@@ -10290,14 +10272,14 @@ PPC_FUNC(sub_8296C060) {
     // Reduce noise - only log first 3 and every 100th
     if (s_count <= 3 || s_count % 100 == 0)
         LOGF_WARNING("[INIT] sub_8296C060 #{}", s_count);
-    __imp__sub_8296C060(ctx, base);
+    sub_8296C060(ctx, base);
 }
 
 PPC_FUNC(sub_82671E40) {
     static int s_count = 0; ++s_count;
     if (s_count <= 20 || s_count % 100 == 0)
         LOGF_WARNING("[INIT] sub_82671E40 ENTER #{}", s_count);
-    __imp__sub_82671E40(ctx, base);
+    sub_82671E40(ctx, base);
     if (s_count <= 20 || s_count % 100 == 0)
         LOGF_WARNING("[INIT] sub_82671E40 EXIT #{}", s_count);
 }
@@ -10309,7 +10291,7 @@ PPC_FUNC(sub_82671E40) {
 PPC_FUNC(sub_82672E50) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[INIT] sub_82672E50 #{} STUBBED - bypassing busy-wait loops", s_count);
-    // Don't call __imp__sub_82672E50 - contains infinite busy-wait loops
+    // Don't call sub_82672E50 - contains infinite busy-wait loops
     ctx.r3.u32 = 0;  // Return success
     return;
 }
@@ -10317,11 +10299,11 @@ PPC_FUNC(sub_82672E50) {
 // sub_82679950 - Graphics/GPU initialization - STUBBED
 // Analysis: Xbox 360 GPU hardware initialization that blocks waiting for hardware responses
 // Host rendering layer in gpu/video.cpp handles GPU setup, so Xbox init can be bypassed
-extern "C" void __imp__sub_82679950(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82679950(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_82679950) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[GRAPHICS] sub_82679950 #{} STUBBED - Xbox GPU init bypassed (host handles rendering)", s_count);
-    // Don't call __imp__sub_82679950 - contains Xbox GPU hardware initialization
+    // Don't call sub_82679950 - contains Xbox GPU hardware initialization
     ctx.r3.u32 = 0;  // Return success
     return;
 }
@@ -10329,11 +10311,11 @@ PPC_FUNC(sub_82679950) {
 // sub_8221D880 - World initialization - STUBBED
 // Analysis: Xbox 360 world/game state initialization that likely blocks on hardware
 // Host game engine handles world setup, so Xbox init can be bypassed
-extern "C" void __imp__sub_8221D880(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8221D880(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_8221D880) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[WORLD] sub_8221D880 #{} UN-STUBBED - sync table handles waits", s_count);
-    __imp__sub_8221D880(ctx, base);  // Let original run - sync table handles blocking
+    sub_8221D880(ctx, base);  // Let original run - sync table handles blocking
     LOGF_WARNING("[WORLD] sub_8221D880 #{} EXIT r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
@@ -10363,9 +10345,9 @@ PPC_FUNC(sub_828A1880) {
 
 
 // Functions in sub_82672E50's busy-wait loops
-extern "C" void __imp__sub_82672AA8(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_82973598(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_829736F8(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82672AA8(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82973598(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_829736F8(PPCContext& ctx, uint8_t* base);
 
 PPC_FUNC(sub_82672AA8) {
     static int s_count = 0; ++s_count;
@@ -10373,7 +10355,7 @@ PPC_FUNC(sub_82672AA8) {
         LOGF_WARNING("[BUSYWAIT] sub_82672AA8 #{} (loop1 - checking 0x832A5F20)", s_count);
     // Yield to let worker threads complete their tasks
     std::this_thread::yield();
-    __imp__sub_82672AA8(ctx, base);
+    sub_82672AA8(ctx, base);
 }
 
 // sub_82973598 - Loop 2 condition check in sub_82672E50
@@ -10383,7 +10365,7 @@ PPC_FUNC(sub_82973598) {
     static thread_local int s_loopIter = 0;
     
     // Call original to get actual status
-    __imp__sub_82973598(ctx, base);
+    sub_82973598(ctx, base);
     
     // Track iterations per loop entry
     if (ctx.r3.u32 != 0) {
@@ -10410,29 +10392,29 @@ PPC_FUNC(sub_829736F8) {
         LOGF_WARNING("[BUSYWAIT] sub_829736F8 #{} (loop2 iteration)", s_count);
     // Yield to let worker threads complete their tasks
     std::this_thread::yield();
-    __imp__sub_829736F8(ctx, base);
+    sub_829736F8(ctx, base);
 }
 
 // sub_829A97A0 - creates threads via ExCreateThread - suspected blocker
-extern "C" void __imp__sub_829A97A0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_829A97A0(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_829A97A0) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[THREAD] sub_829A97A0 ENTER #{} - calling ExCreateThread", s_count);
-    __imp__sub_829A97A0(ctx, base);
+    sub_829A97A0(ctx, base);
     LOGF_WARNING("[THREAD] sub_829A97A0 EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
 // sub_829B08E0 - Thread entry stub (called by GuestThread::Start)
 // This is called with r3=actual_worker_func, r4=context
 // It should call the worker function - trace to see if it's blocking
-extern "C" void __imp__sub_829B08E0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_829B08E0(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_829B08E0) {
     static int s_count = 0; ++s_count;
     uint32_t workerFunc = ctx.r3.u32;
     uint32_t workerCtx = ctx.r4.u32;
     LOGF_WARNING("[THREAD_STUB] sub_829B08E0 ENTER #{} workerFunc=0x{:08X} ctx=0x{:08X}", 
                  s_count, workerFunc, workerCtx);
-    __imp__sub_829B08E0(ctx, base);
+    sub_829B08E0(ctx, base);
     LOGF_WARNING("[THREAD_STUB] sub_829B08E0 EXIT #{}", s_count);
 }
 
@@ -10451,7 +10433,7 @@ PPC_FUNC(sub_829B08E0) {
 //
 // Solution: Replace with direct allocation using guest heap, bypassing vtable.
 // =============================================================================
-extern "C" void __imp__sub_8218BE28(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8218BE28(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_8218BE28) {
     static int s_count = 0; ++s_count;
     uint32_t allocSize = ctx.r3.u32;
@@ -10491,7 +10473,7 @@ PPC_FUNC(sub_8218BE28) {
         }
     } else {
         // Memory manager is properly initialized, use original PPC code
-        __imp__sub_8218BE28(ctx, base);
+        sub_8218BE28(ctx, base);
         if (s_count <= 20 || s_count % 500 == 0 || allocSize > 500000 || (s_count >= 960 && s_count <= 1000)) {
             LOGF_WARNING("[ALLOC] sub_8218BE28 #{} PPC alloc {} bytes -> 0x{:08X}", 
                          s_count, allocSize, ctx.r3.u32);
@@ -10500,7 +10482,7 @@ PPC_FUNC(sub_8218BE28) {
 }
 
 // sub_8296BE18 - called after sub_8218BE28
-extern "C" void __imp__sub_8296BE18(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8296BE18(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_8296BE18) {
     static int s_count = 0; ++s_count;
     // PHASE 3 FIX: Break audio init loop after 100 iterations
@@ -10508,30 +10490,30 @@ PPC_FUNC(sub_8296BE18) {
         ctx.r3.u64 = 1; // Return success
         return;
     }
-    __imp__sub_8296BE18(ctx, base);
+    sub_8296BE18(ctx, base);
 }
 
 // =============================================================================
 // Phase 1 Tracing: Functions called by sub_82974FF8 to identify blocking point
 // =============================================================================
 
-extern "C" void __imp__sub_8296C378(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8296C378(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_8296C378) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[TRACE_82974FF8] sub_8296C378 ENTER #{}", s_count);
-    __imp__sub_8296C378(ctx, base);
+    sub_8296C378(ctx, base);
     LOGF_WARNING("[TRACE_82974FF8] sub_8296C378 EXIT #{} r3={}", s_count, ctx.r3.u32);
 }
 
-extern "C" void __imp__sub_82763AB8(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82763AB8(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_82763AB8) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[TRACE_82974FF8] sub_82763AB8 ENTER #{}", s_count);
-    __imp__sub_82763AB8(ctx, base);
+    sub_82763AB8(ctx, base);
     LOGF_WARNING("[TRACE_82974FF8] sub_82763AB8 EXIT #{}", s_count);
 }
 
-extern "C" void __imp__sub_8296C2F0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8296C2F0(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_8296C2F0) {
     static int s_count = 0; ++s_count;
     // PHASE 3 FIX: Break infinite audio worker loop after 50 iterations
@@ -10539,51 +10521,51 @@ PPC_FUNC(sub_8296C2F0) {
         ctx.r3.u64 = 0;
         return;
     }
-    __imp__sub_8296C2F0(ctx, base);
+    sub_8296C2F0(ctx, base);
 }
 
-extern "C" void __imp__sub_82974500(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82974500(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_82974500) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[TRACE_82974FF8] sub_82974500 ENTER #{}", s_count);
-    __imp__sub_82974500(ctx, base);
+    sub_82974500(ctx, base);
     LOGF_WARNING("[TRACE_82974FF8] sub_82974500 EXIT #{} r3={}", s_count, ctx.r3.u32);
 }
 
 // Early functions called by sub_82974FF8 before the ones above
-extern "C" void __imp__sub_8296BF88(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8296BF88(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_8296BF88) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[TRACE_EARLY] sub_8296BF88 ENTER #{}", s_count);
-    __imp__sub_8296BF88(ctx, base);
+    sub_8296BF88(ctx, base);
     LOGF_WARNING("[TRACE_EARLY] sub_8296BF88 EXIT #{} r3={}", s_count, ctx.r3.u32);
 }
 
-extern "C" void __imp__sub_8296BFB8(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8296BFB8(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_8296BFB8) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[TRACE_EARLY] sub_8296BFB8 ENTER #{}", s_count);
-    __imp__sub_8296BFB8(ctx, base);
+    sub_8296BFB8(ctx, base);
     LOGF_WARNING("[TRACE_EARLY] sub_8296BFB8 EXIT #{} r3={}", s_count, ctx.r3.u32);
 }
 
-extern "C" void __imp__sub_82213C48(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82213C48(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_82213C48) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[TRACE_EARLY] sub_82213C48 ENTER #{}", s_count);
-    __imp__sub_82213C48(ctx, base);
+    sub_82213C48(ctx, base);
     LOGF_WARNING("[TRACE_EARLY] sub_82213C48 EXIT #{} r3={}", s_count, ctx.r3.u32);
 }
 
-extern "C" void __imp__sub_8296C228(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8296C228(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_8296C228) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[TRACE_EARLY] sub_8296C228 ENTER #{}", s_count);
-    __imp__sub_8296C228(ctx, base);
+    sub_8296C228(ctx, base);
     LOGF_WARNING("[TRACE_EARLY] sub_8296C228 EXIT #{} r3={}", s_count, ctx.r3.u32);
 }
 
-extern "C" void __imp__sub_829745B0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_829745B0(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_829745B0) {
     static int s_count = 0; ++s_count;
     // Check stack alignment - crash happens around call #237
@@ -10591,21 +10573,21 @@ PPC_FUNC(sub_829745B0) {
         LOGF_WARNING("[TRACE_EARLY] sub_829745B0 ENTER #{} r1=0x{:08X} r3=0x{:08X} align={}", 
                      s_count, ctx.r1.u32, ctx.r3.u32, ctx.r1.u32 & 0xF);
     }
-    __imp__sub_829745B0(ctx, base);
+    sub_829745B0(ctx, base);
     if (s_count >= 230) {
         LOGF_WARNING("[TRACE_EARLY] sub_829745B0 EXIT #{} r1=0x{:08X}", s_count, ctx.r1.u32);
     }
 }
 
-extern "C" void __imp__sub_82974530(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82974530(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_82974530) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[TRACE_EARLY] sub_82974530 ENTER #{}", s_count);
-    __imp__sub_82974530(ctx, base);
+    sub_82974530(ctx, base);
     LOGF_WARNING("[TRACE_EARLY] sub_82974530 EXIT #{} r3={}", s_count, ctx.r3.u32);
 }
 
-extern "C" void __imp__sub_829743A8(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_829743A8(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_829743A8) {
     static int s_count = 0; ++s_count;
     // Check stack alignment - crash happens around call #326
@@ -10613,42 +10595,42 @@ PPC_FUNC(sub_829743A8) {
         LOGF_WARNING("[TRACE_EARLY] sub_829743A8 ENTER #{} r1=0x{:08X} r3=0x{:08X} align={}", 
                      s_count, ctx.r1.u32, ctx.r3.u32, ctx.r1.u32 & 0xF);
     }
-    __imp__sub_829743A8(ctx, base);
+    sub_829743A8(ctx, base);
     if (s_count >= 320) {
         LOGF_WARNING("[TRACE_EARLY] sub_829743A8 EXIT #{} r1=0x{:08X}", s_count, ctx.r1.u32);
     }
 }
 
-extern "C" void __imp__sub_8296C238(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8296C238(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_8296C238) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[TRACE_EARLY] sub_8296C238 ENTER #{}", s_count);
-    __imp__sub_8296C238(ctx, base);
+    sub_8296C238(ctx, base);
     LOGF_WARNING("[TRACE_EARLY] sub_8296C238 EXIT #{} r3={}", s_count, ctx.r3.u32);
 }
 
 // =============================================================================
 // Post-allocation tracing hooks for sub_827DF248 call chain
 // =============================================================================
-extern "C" void __imp__sub_82801028(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82801028(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_82801028) {
     static int s_count = 0; ++s_count;
     if (s_count <= 10) {
         LOGF_WARNING("[TRACE] sub_82801028 ENTER #{} r3=0x{:08X}", s_count, ctx.r3.u32);
     }
-    __imp__sub_82801028(ctx, base);
+    sub_82801028(ctx, base);
     if (s_count <= 10) {
         LOGF_WARNING("[TRACE] sub_82801028 EXIT #{}", s_count);
     }
 }
 
-extern "C" void __imp__sub_829A4490(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_829A4490(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_829A4490) {
     static int s_count = 0; ++s_count;
     if (s_count <= 10) {
         LOGF_WARNING("[TRACE] sub_829A4490 ENTER #{} r3={} r4=0x{:08X}", s_count, ctx.r3.u32, ctx.r4.u32);
     }
-    __imp__sub_829A4490(ctx, base);
+    sub_829A4490(ctx, base);
     if (s_count <= 10) {
         LOGF_WARNING("[TRACE] sub_829A4490 EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
     }
@@ -10662,7 +10644,7 @@ PPC_FUNC(sub_829A4490) {
 // Problem: Same vtable chain issue - memory manager not initialized.
 // Solution: Direct allocation using guest heap.
 // =============================================================================
-extern "C" void __imp__sub_8218BF20(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8218BF20(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_8218BF20) {
     static int s_count = 0; ++s_count;
     uint32_t allocSize = ctx.r3.u32;
@@ -10704,7 +10686,7 @@ PPC_FUNC(sub_8218BF20) {
             LOGF_WARNING("[ALLOC] sub_8218BF20 #{} DIRECT alloc FAILED for {} bytes", s_count, allocSize);
         }
     } else {
-        __imp__sub_8218BF20(ctx, base);
+        sub_8218BF20(ctx, base);
         if (s_count <= 30 || s_count % 500 == 0 || allocSize > 100000) {
             LOGF_WARNING("[ALLOC] sub_8218BF20 #{} PPC alloc {} bytes -> 0x{:08X}", 
                          s_count, allocSize, ctx.r3.u32);
@@ -10712,13 +10694,13 @@ PPC_FUNC(sub_8218BF20) {
     }
 }
 
-extern "C" void __imp__sub_829B0178(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_829B0178(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_829B0178) {
     static int s_count = 0; ++s_count;
     if (s_count <= 10) {
         LOGF_WARNING("[TRACE] sub_829B0178 ENTER #{}", s_count);
     }
-    __imp__sub_829B0178(ctx, base);
+    sub_829B0178(ctx, base);
     if (s_count <= 10) {
         LOGF_WARNING("[TRACE] sub_829B0178 EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
     }
@@ -10726,13 +10708,13 @@ PPC_FUNC(sub_829B0178) {
 
 
 
-extern "C" void __imp__sub_824C1338(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_824C1338(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_824C1338) {
     static int s_count = 0; ++s_count;
     if (s_count <= 10) {
         LOGF_WARNING("[INIT] sub_824C1338 ENTER #{}", s_count);
     }
-    __imp__sub_824C1338(ctx, base);
+    sub_824C1338(ctx, base);
     if (s_count <= 10) {
         LOGF_WARNING("[INIT] sub_824C1338 EXIT #{} r3={}", s_count, ctx.r3.u32);
     }
@@ -10741,7 +10723,7 @@ PPC_FUNC(sub_824C1338) {
 PPC_FUNC(sub_822054F8) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[INIT] sub_822054F8 ENTER #{}", s_count);
-    __imp__sub_822054F8(ctx, base);
+    sub_822054F8(ctx, base);
     LOGF_WARNING("[INIT] sub_822054F8 EXIT #{}", s_count);
 }
 
@@ -10750,7 +10732,7 @@ PPC_FUNC(sub_822054F8) {
 PPC_FUNC(sub_8221F8A8) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[INIT] sub_8221F8A8 ENTER #{}", s_count);
-    __imp__sub_8221F8A8(ctx, base);
+    sub_8221F8A8(ctx, base);
     LOGF_WARNING("[INIT] sub_8221F8A8 EXIT #{}", s_count);
 }
 
@@ -10797,7 +10779,7 @@ PPC_FUNC(sub_82273988) {
     uint32_t completionFlag = PPC_LOAD_U8(contextAddr + 358);
     LOGF_WARNING("[INIT] sub_82273988 Completion flag before: context[358]={}", completionFlag);
     
-    __imp__sub_82273988(ctx, base);
+    sub_82273988(ctx, base);
     
     // Check completion flag after execution
     uint32_t completionFlagAfter = PPC_LOAD_U8(contextAddr + 358);
@@ -10818,7 +10800,7 @@ PPC_FUNC(sub_821250B0)
     static int s_count = 0;
     ++s_count;
     LOGF_WARNING("[INIT] sub_821250B0 ENTER #{}", s_count);
-    __imp__sub_821250B0(ctx, base);
+    sub_821250B0(ctx, base);
     LOGF_WARNING("[INIT] sub_821250B0 EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
@@ -10827,7 +10809,7 @@ PPC_FUNC(sub_82318F60)
     static int s_count = 0;
     ++s_count;
     LOGF_WARNING("[INIT] sub_82318F60 ENTER #{}", s_count);
-    __imp__sub_82318F60(ctx, base);
+    sub_82318F60(ctx, base);
     LOGF_WARNING("[INIT] sub_82318F60 EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
@@ -10835,11 +10817,11 @@ PPC_FUNC(sub_82318F60)
 // Analysis: This function waits for profile system to be ready
 // It's called by sub_82124080 and blocks indefinitely
 // Stubbing allows profile/save init to complete
-extern "C" void __imp__sub_82192E00(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82192E00(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_82192E00) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[PROFILE] sub_82192E00 #{} STUBBED - profile system ready", s_count);
-    // Don't call __imp__sub_82192E00 - it would block forever
+    // Don't call sub_82192E00 - it would block forever
     ctx.r3.u32 = 0;  // Return success
     return;
 }
@@ -10862,7 +10844,7 @@ PPC_FUNC(sub_82124540) {
                      s_count, bufferPtr);
         // Call original - the VFS/file hooks will handle the invalid pointer gracefully
         // The downstream sub_82192840 hook already validates and returns 0 for invalid handles
-        __imp__sub_82124540(ctx, base);
+        sub_82124540(ctx, base);
         return;
     }
     
@@ -10870,7 +10852,7 @@ PPC_FUNC(sub_82124540) {
         LOGF_WARNING("[STREAM] sub_82124540 #{} buffer=0x{:08X} r1=0x{:08X} - parsing stream.ini",
                      s_count, bufferPtr, ctx.r1.u32);
     }
-    __imp__sub_82124540(ctx, base);
+    sub_82124540(ctx, base);
 }
 
 
@@ -10884,7 +10866,7 @@ PPC_FUNC(sub_82124080)
     // This function initializes profile/save system and calls sub_82192E00 which would block
     // With sub_82192E00 stubbed, the function can complete initialization properly
     // This allows proper setup of profile/save data structures
-    __imp__sub_82124080(ctx, base);
+    sub_82124080(ctx, base);
     
     LOGF_WARNING("[INIT] sub_82124080 #{} EXIT r3=0x{:08X}", s_count, ctx.r3.u32);
 }
@@ -10892,30 +10874,30 @@ PPC_FUNC(sub_82124080)
 // =============================================================================
 // Instrumentation for sub_82124080 internals to find blocker
 // =============================================================================
-extern "C" void __imp__sub_82124268(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82124268(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_82124268) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[sub_82124080] sub_82124268 (profile data) ENTER #{}", s_count);
     // STUBBED - original blocks on profile data loading
-    // __imp__sub_82124268(ctx, base);
+    // sub_82124268(ctx, base);
     ctx.r3.u32 = 0;  // Return success
     return;
     LOGF_WARNING("[sub_82124080] sub_82124268 (profile data) EXIT #{}", s_count);
 }
 
-extern "C" void __imp__sub_82123E20(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82123E20(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_82123E20) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[sub_82124080] sub_82123E20 (init) ENTER #{}", s_count);
-    __imp__sub_82123E20(ctx, base);
+    sub_82123E20(ctx, base);
     LOGF_WARNING("[sub_82124080] sub_82123E20 (init) EXIT #{}", s_count);
 }
 
-extern "C" void __imp__sub_821244B8(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_821244B8(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_821244B8) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[sub_82124080] sub_821244B8 (cleanup) ENTER #{}", s_count);
-    __imp__sub_821244B8(ctx, base);
+    sub_821244B8(ctx, base);
     LOGF_WARNING("[sub_82124080] sub_821244B8 (cleanup) EXIT #{}", s_count);
 }
 
@@ -10925,35 +10907,35 @@ PPC_FUNC(sub_821244B8) {
 PPC_FUNC(sub_8227AC28) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[63-SUBSYS] sub_8227AC28 (World finalization) ENTER #{}", s_count);
-    __imp__sub_8227AC28(ctx, base);
+    sub_8227AC28(ctx, base);
     LOGF_WARNING("[63-SUBSYS] sub_8227AC28 (World finalization) EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
 PPC_FUNC(sub_82272290) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[63-SUBSYS] sub_82272290 (Entity finalize) ENTER #{}", s_count);
-    __imp__sub_82272290(ctx, base);
+    sub_82272290(ctx, base);
     LOGF_WARNING("[63-SUBSYS] sub_82272290 (Entity finalize) EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
 PPC_FUNC(sub_82212450) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[63-SUBSYS] sub_82212450 (Script finalize) ENTER #{}", s_count);
-    __imp__sub_82212450(ctx, base);
+    sub_82212450(ctx, base);
     LOGF_WARNING("[63-SUBSYS] sub_82212450 (Script finalize) EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
 PPC_FUNC(sub_822C5768) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[63-SUBSYS] sub_822C5768 (Streaming finalize) ENTER #{}", s_count);
-    __imp__sub_822C5768(ctx, base);
+    sub_822C5768(ctx, base);
     LOGF_WARNING("[63-SUBSYS] sub_822C5768 (Streaming finalize) EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
 PPC_FUNC(sub_822D4C68) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[63-SUBSYS] sub_822D4C68 (Final setup) ENTER #{}", s_count);
-    __imp__sub_822D4C68(ctx, base);
+    sub_822D4C68(ctx, base);
     LOGF_WARNING("[63-SUBSYS] sub_822D4C68 (Final setup) EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
@@ -10963,35 +10945,35 @@ PPC_FUNC(sub_822D4C68) {
 PPC_FUNC(sub_82270170) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[63-SUBSYS] sub_82270170 (Entity system) ENTER #{}", s_count);
-    __imp__sub_82270170(ctx, base);
+    sub_82270170(ctx, base);
     LOGF_WARNING("[63-SUBSYS] sub_82270170 (Entity system) EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
 PPC_FUNC(sub_822FD328) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[63-SUBSYS] sub_822FD328 (Pool init) ENTER #{}", s_count);
-    __imp__sub_822FD328(ctx, base);
+    sub_822FD328(ctx, base);
     LOGF_WARNING("[63-SUBSYS] sub_822FD328 (Pool init) EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
 PPC_FUNC(sub_822EFF40) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[63-SUBSYS] sub_822EFF40 (Map loader) ENTER #{}", s_count);
-    __imp__sub_822EFF40(ctx, base);
+    sub_822EFF40(ctx, base);
     LOGF_WARNING("[63-SUBSYS] sub_822EFF40 (Map loader) EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
 PPC_FUNC(sub_82120C48) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[63-SUBSYS] sub_82120C48 (Game config) ENTER #{}", s_count);
-    __imp__sub_82120C48(ctx, base);
+    sub_82120C48(ctx, base);
     LOGF_WARNING("[63-SUBSYS] sub_82120C48 (Game config) EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
 PPC_FUNC(sub_82221410) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[63-SUBSYS] sub_82221410 (UI system) ENTER #{}", s_count);
-    __imp__sub_82221410(ctx, base);
+    sub_82221410(ctx, base);
     LOGF_WARNING("[63-SUBSYS] sub_82221410 (UI system) EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
@@ -11002,14 +10984,14 @@ PPC_FUNC(sub_82221410) {
 PPC_FUNC(sub_8260E310) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[UI-INT] sub_8260E310 [1] ENTER #{} r3={} r4={} r5={}", s_count, ctx.r3.u32, ctx.r4.u32, ctx.r5.u32);
-    __imp__sub_8260E310(ctx, base);
+    sub_8260E310(ctx, base);
     LOGF_WARNING("[UI-INT] sub_8260E310 [1] EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
 PPC_FUNC(sub_822B3C58) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[UI-INT] sub_822B3C58 [2] ENTER #{}", s_count);
-    __imp__sub_822B3C58(ctx, base);
+    sub_822B3C58(ctx, base);
     LOGF_WARNING("[UI-INT] sub_822B3C58 [2] EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
@@ -11035,58 +11017,58 @@ PPC_FUNC(sub_822B4D68) {
         }
     }
     
-    __imp__sub_822B4D68(ctx, base);
+    sub_822B4D68(ctx, base);
     LOGF_WARNING("[822B4D68] EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
 // Internal functions of sub_824A0898 - find exact blocker
-extern "C" void __imp__sub_827E0740(PPCContext& ctx, uint8_t* base);  // Called early in sub_824A0898
-extern "C" void __imp__sub_8285F750(PPCContext& ctx, uint8_t* base);  // Called in sub_824A0898
-extern "C" void __imp__sub_82860928(PPCContext& ctx, uint8_t* base);  // Called many times in sub_824A0898
+extern "C" void sub_827E0740(PPCContext& ctx, uint8_t* base);  // Called early in sub_824A0898
+extern "C" void sub_8285F750(PPCContext& ctx, uint8_t* base);  // Called in sub_824A0898
+extern "C" void sub_82860928(PPCContext& ctx, uint8_t* base);  // Called many times in sub_824A0898
 
 PPC_FUNC(sub_827E0740) {
     static int s_count = 0; ++s_count;
     if (s_count <= 5) LOGF_WARNING("[824A0898-INT] sub_827E0740 ENTER #{} r3=0x{:08X} r4=0x{:08X}", s_count, ctx.r3.u32, ctx.r4.u32);
-    __imp__sub_827E0740(ctx, base);
+    sub_827E0740(ctx, base);
     if (s_count <= 5) LOGF_WARNING("[824A0898-INT] sub_827E0740 EXIT #{}", s_count);
 }
 
 PPC_FUNC(sub_8285F750) {
     static int s_count = 0; ++s_count;
     if (s_count <= 5) LOGF_WARNING("[824A0898-INT] sub_8285F750 ENTER #{} r3=0x{:08X} r4=0x{:08X}", s_count, ctx.r3.u32, ctx.r4.u32);
-    __imp__sub_8285F750(ctx, base);
+    sub_8285F750(ctx, base);
     if (s_count <= 5) LOGF_WARNING("[824A0898-INT] sub_8285F750 EXIT #{}", s_count);
 }
 
 PPC_FUNC(sub_82860928) {
     static int s_count = 0; ++s_count;
     if (s_count <= 20) LOGF_WARNING("[824A0898-INT] sub_82860928 ENTER #{} r3=0x{:08X} r4=0x{:08X} r5={}", s_count, ctx.r3.u32, ctx.r4.u32, ctx.r5.u32);
-    __imp__sub_82860928(ctx, base);
+    sub_82860928(ctx, base);
     if (s_count <= 20) LOGF_WARNING("[824A0898-INT] sub_82860928 EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
 PPC_FUNC(sub_824A0898) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[UI-INT] sub_824A0898 [4] ENTER #{}", s_count);
-    __imp__sub_824A0898(ctx, base);
+    sub_824A0898(ctx, base);
     LOGF_WARNING("[UI-INT] sub_824A0898 [4] EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 // Late-stage functions in sub_824A0898 - after sub_82860928 and sub_8285AA90 calls
-extern "C" void __imp__sub_82857C60(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_82850BF8(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_8249D6F0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82857C60(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82850BF8(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8249D6F0(PPCContext& ctx, uint8_t* base);
 
 PPC_FUNC(sub_82857C60) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[824A0898-LATE] sub_82857C60 ENTER #{}", s_count);
-    __imp__sub_82857C60(ctx, base);
+    sub_82857C60(ctx, base);
     LOGF_WARNING("[824A0898-LATE] sub_82857C60 EXIT #{}", s_count);
 }
 
 PPC_FUNC(sub_82850BF8) {
     static int s_count = 0; ++s_count;
     if (s_count <= 10) LOGF_WARNING("[824A0898-LATE] sub_82850BF8 ENTER #{}", s_count);
-    __imp__sub_82850BF8(ctx, base);
+    sub_82850BF8(ctx, base);
     if (s_count <= 10) LOGF_WARNING("[824A0898-LATE] sub_82850BF8 EXIT #{} r3=0x{:02X}", s_count, ctx.r3.u32 & 0xFF);
 }
 
@@ -11110,42 +11092,42 @@ PPC_FUNC(sub_8249D6F0) {
 PPC_FUNC(sub_82126498) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[8249D6F0-INT] sub_82126498 (cleanup) ENTER #{} r3=0x{:08X}", s_count, ctx.r3.u32);
-    __imp__sub_82126498(ctx, base);
+    sub_82126498(ctx, base);
     LOGF_WARNING("[8249D6F0-INT] sub_82126498 (cleanup) EXIT #{}", s_count);
 }
 
 PPC_FUNC(sub_828536B0) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[8249D6F0-INT] sub_828536B0 (buf init) ENTER #{} r3=0x{:08X} r4={}", s_count, ctx.r3.u32, ctx.r4.u32);
-    __imp__sub_828536B0(ctx, base);
+    sub_828536B0(ctx, base);
     LOGF_WARNING("[8249D6F0-INT] sub_828536B0 (buf init) EXIT #{}", s_count);
 }
 
 PPC_FUNC(sub_8260E3B8) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[8249D6F0-INT] sub_8260E3B8 (disp mode) ENTER #{} r3={} r4={} r5={}", s_count, ctx.r3.u32, ctx.r4.u32, ctx.r5.u32);
-    __imp__sub_8260E3B8(ctx, base);
+    sub_8260E3B8(ctx, base);
     LOGF_WARNING("[8249D6F0-INT] sub_8260E3B8 (disp mode) EXIT #{}", s_count);
 }
 
 PPC_FUNC(sub_8260E3D8) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[8249D6F0-INT] sub_8260E3D8 (disp final) ENTER #{} r3={}", s_count, ctx.r3.u32);
-    __imp__sub_8260E3D8(ctx, base);
+    sub_8260E3D8(ctx, base);
     LOGF_WARNING("[8249D6F0-INT] sub_8260E3D8 (disp final) EXIT #{}", s_count);
 }
 
 PPC_FUNC(sub_8286A748) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[8249D6F0-INT] sub_8286A748 (init) ENTER #{} r3=0x{:08X}", s_count, ctx.r3.u32);
-    __imp__sub_8286A748(ctx, base);
+    sub_8286A748(ctx, base);
     LOGF_WARNING("[8249D6F0-INT] sub_8286A748 (init) EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
 PPC_FUNC(sub_8286A890) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[8249D6F0-INT] sub_8286A890 (setup) ENTER #{} r3=0x{:08X} r4=0x{:08X}", s_count, ctx.r3.u32, ctx.r4.u32);
-    __imp__sub_8286A890(ctx, base);
+    sub_8286A890(ctx, base);
     LOGF_WARNING("[8249D6F0-INT] sub_8286A890 (setup) EXIT #{}", s_count);
 }
 
@@ -11156,28 +11138,28 @@ PPC_FUNC(sub_8286A890) {
 PPC_FUNC(sub_821EC018) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[822B4D68-INT] sub_821EC018 ENTER #{} r3=0x{:08X} r4={}", s_count, ctx.r3.u32, ctx.r4.u32);
-    __imp__sub_821EC018(ctx, base);
+    sub_821EC018(ctx, base);
     LOGF_WARNING("[822B4D68-INT] sub_821EC018 EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
 PPC_FUNC(sub_82859B80) {
     static int s_count = 0; ++s_count;
     if (s_count <= 15) LOGF_WARNING("[822B4D68-INT] sub_82859B80 ENTER #{} r3=0x{:08X} r4={}", s_count, ctx.r3.u32, ctx.r4.u32);
-    __imp__sub_82859B80(ctx, base);
+    sub_82859B80(ctx, base);
     if (s_count <= 15) LOGF_WARNING("[822B4D68-INT] sub_82859B80 EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
 PPC_FUNC(sub_827DFC60) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[822B4D68-INT] sub_827DFC60 ENTER #{} r3=0x{:08X}", s_count, ctx.r3.u32);
-    __imp__sub_827DFC60(ctx, base);
+    sub_827DFC60(ctx, base);
     LOGF_WARNING("[822B4D68-INT] sub_827DFC60 EXIT #{}", s_count);
 }
 
 PPC_FUNC(sub_8285DC80) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[822B4D68-INT] sub_8285DC80 (vtable[2]) ENTER #{} r3=0x{:08X}", s_count, ctx.r3.u32);
-    __imp__sub_8285DC80(ctx, base);
+    sub_8285DC80(ctx, base);
     LOGF_WARNING("[822B4D68-INT] sub_8285DC80 (vtable[2]) EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
@@ -11185,28 +11167,28 @@ PPC_FUNC(sub_8285DC80) {
 PPC_FUNC(sub_8260CF30) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[UI-INT] sub_8260CF30 [5] ENTER #{}", s_count);
-    __imp__sub_8260CF30(ctx, base);
+    sub_8260CF30(ctx, base);
     LOGF_WARNING("[UI-INT] sub_8260CF30 [5] EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
 PPC_FUNC(sub_8260BE08) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[UI-INT] sub_8260BE08 [6] ENTER #{}", s_count);
-    __imp__sub_8260BE08(ctx, base);
+    sub_8260BE08(ctx, base);
     LOGF_WARNING("[UI-INT] sub_8260BE08 [6] EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
 PPC_FUNC(sub_824B65B0) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[UI-INT] sub_824B65B0 [7] ENTER #{} r3=0x{:08X}", s_count, ctx.r3.u32);
-    __imp__sub_824B65B0(ctx, base);
+    sub_824B65B0(ctx, base);
     LOGF_WARNING("[UI-INT] sub_824B65B0 [7] EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
 PPC_FUNC(sub_822E3EC8) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[UI-INT] sub_822E3EC8 [8] ENTER #{}", s_count);
-    __imp__sub_822E3EC8(ctx, base);
+    sub_822E3EC8(ctx, base);
     LOGF_WARNING("[UI-INT] sub_822E3EC8 [8] EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
@@ -11223,62 +11205,60 @@ PPC_FUNC(sub_822E49A0) {
     // Our modern graphics system (plume/Vulkan/D3D12/Metal) handles UI resources independently.
     // Following Sonic Unleashed's approach: bypass Xbox-specific platform code.
     
-    // Don't call __imp__sub_822E49A0 - it would block forever in scheduler loop
+    // Don't call sub_822E49A0 - it would block forever in scheduler loop
     return;
 }
 
 PPC_FUNC(sub_8222F7E8) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[UI-INT] sub_8222F7E8 [11] ENTER #{} r3=0x{:08X}", s_count, ctx.r3.u32);
-    __imp__sub_8222F7E8(ctx, base);
+    sub_8222F7E8(ctx, base);
     LOGF_WARNING("[UI-INT] sub_8222F7E8 [11] EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
 PPC_FUNC(sub_8226CB50) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[63-SUBSYS] sub_8226CB50 (Camera system) ENTER #{}", s_count);
-    __imp__sub_8226CB50(ctx, base);
+    sub_8226CB50(ctx, base);
     LOGF_WARNING("[63-SUBSYS] sub_8226CB50 (Camera system) EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 
 }
 
 // Internal functions called by sub_821A8868 - declarations only
-extern "C" void __imp__sub_82300C78(PPCContext& ctx, uint8_t* base);
+// REMOVED: extern "C" void sub_82300C78(PPCContext& ctx, uint8_t* base); // v1 addr
 
 // Hook sub_82300C78 - Call original to trace blocking point
-extern "C" void sub_82300C78_hook(PPCContext& ctx, uint8_t* base) {
     static int s_count = 0; ++s_count;
     printf("[sub_82300C78] #%d ENTER r3=0x%08X - calling original with tracing\n", s_count, ctx.r3.u32); fflush(stdout);
     
     // Call the original implementation - it will block at sub_827DB988
     // We need to trace into sub_827DB988 to find the actual semaphore
-    __imp__sub_82300C78(ctx, base);
+    /* sub_82300C78(ctx, base); // REMOVED: v1 addr not in v8 generated code */
     
     printf("[sub_82300C78] #%d EXIT r3=0x%08X\n", s_count, ctx.r3.u32); fflush(stdout);
 }
-extern "C" void __imp__sub_8218BE28(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_824E1DD0(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_8249BA90(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_821A8060(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_821A8868(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_821A8278(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_824E14B8(PPCContext& ctx, uint8_t* base);  // Init function called by sub_82300C78
+extern "C" void sub_8218BE28(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_824E1DD0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8249BA90(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_821A8060(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_821A8868(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_821A8278(PPCContext& ctx, uint8_t* base);
+// REMOVED: extern "C" void sub_824E14B8(PPCContext& ctx, uint8_t* base);  // Init function called by sub_82300C78 // v1 addr
 
 // =============================================================================
 // SYNC PRIMITIVE HOOKS - Make blocking sync functions non-blocking
 // These are the ROOT CAUSE of all the stubbed functions blocking
 // =============================================================================
-extern "C" void __imp__sub_829A39A0(PPCContext& ctx, uint8_t* base);  // Root sync primitive
-extern "C" void __imp__sub_827DB338(PPCContext& ctx, uint8_t* base);  // Sync wait wrapper
-extern "C" void __imp__sub_827DB988(PPCContext& ctx, uint8_t* base);  // Sync init
-extern "C" void __imp__sub_829A3560(PPCContext& ctx, uint8_t* base);  // XamTask + mount integration
-extern "C" void __imp__sub_829A3238(PPCContext& ctx, uint8_t* base);  // Sync wait (KeWaitForSingleObject)
+// REMOVED: extern "C" void sub_829A39A0(PPCContext& ctx, uint8_t* base);  // Root sync primitive // v1 addr
+// REMOVED: extern "C" void sub_827DB338(PPCContext& ctx, uint8_t* base);  // Sync wait wrapper // v1 addr
+// REMOVED: extern "C" void sub_827DB988(PPCContext& ctx, uint8_t* base);  // Sync init // v1 addr
+// REMOVED: extern "C" void sub_829A3560(PPCContext& ctx, uint8_t* base);  // XamTask + mount integration // v1 addr
+// REMOVED: extern "C" void sub_829A3238(PPCContext& ctx, uint8_t* base);  // Sync wait (KeWaitForSingleObject) // v1 addr
 
 // Hook sub_829A3238 - SYNC WAIT FUNCTION (KeWaitForSingleObject)
 // Blocking path: sub_82300C78 → sub_827DB988 → sub_829A39F0 → sub_829A3238 → KeWaitForSingleObject
 // This function enters critical section, sets event, WAITS on event at 0x82A97F5C, resets event, leaves critical section
 // Fix: Pre-signal the event so the wait returns immediately
-extern "C" void sub_829A3238_hook(PPCContext& ctx, uint8_t* base) {
     static int s_count = 0; ++s_count;
     
     printf("[SYNC] sub_829A3238 #%d ENTER - pre-signaling sync event\n", s_count);
@@ -11310,7 +11290,7 @@ extern "C" void sub_829A3238_hook(PPCContext& ctx, uint8_t* base) {
     
     // Call the original - it will enter critical section, set event, wait, reset, leave
     // But since we pre-signaled, the wait will return immediately
-    __imp__sub_829A3238(ctx, base);
+    /* sub_829A3238(ctx, base); // REMOVED: v1 addr not in v8 generated code */
     
     printf("[SYNC] sub_829A3238 #%d EXIT\n", s_count);
     fflush(stdout);
@@ -11320,8 +11300,7 @@ extern "C" void sub_829A3238_hook(PPCContext& ctx, uint8_t* base) {
 // Blocking path: sub_827DB988 → sub_829A39F0 → sub_829A3238 → KeWaitForSingleObject
 // This function is called by sub_827DB988 and calls sub_829A3238 directly
 // We pre-signal the event that sub_829A3238 will wait on
-extern "C" void __imp__sub_829A39F0(PPCContext& ctx, uint8_t* base);
-extern "C" void sub_829A39F0_hook(PPCContext& ctx, uint8_t* base) {
+// REMOVED: extern "C" void sub_829A39F0(PPCContext& ctx, uint8_t* base); // v1 addr
     static int s_count = 0; ++s_count;
     
     printf("[SYNC] sub_829A39F0 #%d ENTER - pre-signaling sync event for sub_829A3238\n", s_count);
@@ -11352,7 +11331,7 @@ extern "C" void sub_829A39F0_hook(PPCContext& ctx, uint8_t* base) {
     
     // Call the original - it will call sub_829A3238 which does the wait
     // But since we pre-signaled/initialized the event, the wait returns immediately
-    __imp__sub_829A39F0(ctx, base);
+    /* sub_829A39F0(ctx, base); // REMOVED: v1 addr not in v8 generated code */
     
     printf("[SYNC] sub_829A39F0 #%d EXIT\n", s_count);
     fflush(stdout);
@@ -11361,7 +11340,6 @@ extern "C" void sub_829A39F0_hook(PPCContext& ctx, uint8_t* base) {
 // Hook sub_829A3560 - TASK + MOUNT INTEGRATION
 // This function calls XamTaskSchedule, then computes event addr 0x82A97F5C, then KeWaitForSingleObject
 // The event must be signaled BEFORE the wait. We pre-signal it so the wait returns immediately.
-extern "C" void sub_829A3560_hook(PPCContext& ctx, uint8_t* base) {
     static int s_count = 0; ++s_count;
     
     printf("[SYNC] sub_829A3560 #%d ENTER - pre-signaling completion event\n", s_count);
@@ -11387,7 +11365,7 @@ extern "C" void sub_829A3560_hook(PPCContext& ctx, uint8_t* base) {
     
     // Call the original - it will do XamTaskSchedule, compute event addr, then wait
     // But since we pre-signaled, the wait will return immediately
-    __imp__sub_829A3560(ctx, base);
+    /* sub_829A3560(ctx, base); // REMOVED: v1 addr not in v8 generated code */
     
     printf("[SYNC] sub_829A3560 #%d EXIT r3=%d\n", s_count, ctx.r3.s32);
     fflush(stdout);
@@ -11397,7 +11375,6 @@ extern "C" void sub_829A3560_hook(PPCContext& ctx, uint8_t* base) {
 // This is called by sub_827DB338 and is the actual blocking point
 // Original: Calls sub_829A3560 (XamTaskSchedule) and waits on completion
 // Fix: Call the task scheduling but return success immediately without blocking
-extern "C" void sub_829A39A0_hook(PPCContext& ctx, uint8_t* base) {
     static int s_count = 0; ++s_count;
     
     // r3 = flags, r4 = size/type (8192), r5 = context (0)
@@ -11411,7 +11388,7 @@ extern "C" void sub_829A39A0_hook(PPCContext& ctx, uint8_t* base) {
     
     // Call the actual task scheduling to let file loading happen
     // but we've hooked sub_829A3560 to not block
-    __imp__sub_829A39A0(ctx, base);
+    /* sub_829A39A0(ctx, base); // REMOVED: v1 addr not in v8 generated code */
     
     // If it returned negative (error/blocking), force success
     if (ctx.r3.s32 < 0) {
@@ -11427,7 +11404,6 @@ extern "C" void sub_829A39A0_hook(PPCContext& ctx, uint8_t* base) {
 // This calls sub_829A39A0 and then does file lookup operations
 // Original: Blocks waiting for async completion
 // Fix: Execute the pre-wait setup, skip blocking, return success
-extern "C" void sub_827DB338_hook(PPCContext& ctx, uint8_t* base) {
     static int s_count = 0; ++s_count;
     
     // r3 = mode (0 or 1), r4 = output ptr 1, r5 = output ptr 2
@@ -11440,7 +11416,7 @@ extern "C" void sub_827DB338_hook(PPCContext& ctx, uint8_t* base) {
     fflush(stdout);
     
     // Call original but it will use our hooked sub_829A39A0
-    __imp__sub_827DB338(ctx, base);
+    /* sub_827DB338(ctx, base); // REMOVED: v1 addr not in v8 generated code */
     
     // If returned 0 (failure/blocking), force success (1)
     if (ctx.r3.u32 == 0) {
@@ -11456,7 +11432,6 @@ extern "C" void sub_827DB338_hook(PPCContext& ctx, uint8_t* base) {
 // Blocking path: sub_827DB988 → sub_829A39F0 → sub_829A3238 → KeWaitForSingleObject
 // Direct PPC calls bypass PPCFuncMappings patches, so we pre-signal the event HERE
 // before calling the original, so the wait in sub_829A3238 returns immediately
-extern "C" void sub_827DB988_hook(PPCContext& ctx, uint8_t* base) {
     static int s_count = 0; ++s_count;
     
     printf("[SYNC] sub_827DB988 #%d ENTER - pre-signaling event for sub_829A3238\n", s_count);
@@ -11486,7 +11461,7 @@ extern "C" void sub_827DB988_hook(PPCContext& ctx, uint8_t* base) {
     fflush(stdout);
     
     // Call original - the wait in sub_829A3238 will return immediately due to pre-signaling
-    __imp__sub_827DB988(ctx, base);
+    /* sub_827DB988(ctx, base); // REMOVED: v1 addr not in v8 generated code */
     
     printf("[SYNC] sub_827DB988 #%d EXIT r3=%u\n", s_count, ctx.r3.u32);
     fflush(stdout);
@@ -11501,7 +11476,7 @@ extern "C" void sub_827DB988_hook(PPCContext& ctx, uint8_t* base) {
 // The original calls sub_82300C78 -> sub_827DB988 -> sub_827DB338 -> sub_829A39A0 -> sub_829A3560
 // sub_829A3560 does XamTaskSchedule then waits on event at 0x82A97F5C
 // Since we execute XamTaskSchedule synchronously, we pre-signal the event so the wait succeeds
-extern "C" void __imp__sub_821A8868(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_821A8868(PPCContext& ctx, uint8_t* base);
 
 
 PPC_FUNC(sub_821A8868) {
@@ -11540,11 +11515,11 @@ PPC_FUNC(sub_821A8868) {
     if (flag2) *flag2 = 0;
     
     // Step 3: Call sub_824E14B8 (non-blocking init)
-    __imp__sub_824E14B8(ctx, base);
+    /* sub_824E14B8(ctx, base); // REMOVED: v1 addr not in v8 generated code */
     
     // Step 4: Allocate 12616 bytes (the size sub_82300C78 allocates)
     ctx.r3.u32 = 12616;
-    __imp__sub_8218BE28(ctx, base);
+    sub_8218BE28(ctx, base);
     uint32_t objPtr = ctx.r3.u32;
     
     printf("[REIMPL] sub_821A8868 #%d Allocated HUD object: 0x%08X (12616 bytes)\n", s_count, objPtr);
@@ -11607,13 +11582,13 @@ PPC_FUNC(sub_821A8868) {
     
     // Continue with remaining non-blocking calls from original sub_821A8868
     // 2. Call sub_824E1DD0 (non-blocking allocation wrapper)
-    __imp__sub_824E1DD0(ctx, base);
+    sub_824E1DD0(ctx, base);
     
     // 3. Call sub_8249BA90 (non-blocking allocation)
-    __imp__sub_8249BA90(ctx, base);
+    sub_8249BA90(ctx, base);
     
     // 4. Call sub_821A8060 (non-blocking file/stream setup)
-    __imp__sub_821A8060(ctx, base);
+    sub_821A8060(ctx, base);
     
     printf("[REIMPL] sub_821A8868 #%d EXIT - HUD init complete\n", s_count);
     fflush(stdout);
@@ -11628,7 +11603,7 @@ PPC_FUNC(sub_821A8278) {
     printf("[REIMPL] sub_821A8278 #%d ENTER - HUD component\n", s_count);
     fflush(stdout);
     
-    __imp__sub_821A8278(ctx, base);
+    sub_821A8278(ctx, base);
     
     printf("[REIMPL] sub_821A8278 #%d EXIT r3=0x%08X\n", s_count, ctx.r3.u32);
     fflush(stdout);
@@ -11637,62 +11612,62 @@ PPC_FUNC(sub_821A8278) {
 PPC_FUNC(sub_821BC9E0) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[63-SUBSYS] sub_821BC9E0 (Menu system) ENTER #{}", s_count);
-    __imp__sub_821BC9E0(ctx, base);
+    sub_821BC9E0(ctx, base);
     LOGF_WARNING("[63-SUBSYS] sub_821BC9E0 (Menu system) EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
 PPC_FUNC(sub_822DB4B0) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[63-SUBSYS] sub_822DB4B0 (Cutscene system) ENTER #{}", s_count);
-    __imp__sub_822DB4B0(ctx, base);
+    sub_822DB4B0(ctx, base);
     LOGF_WARNING("[63-SUBSYS] sub_822DB4B0 (Cutscene system) EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
 PPC_FUNC(sub_821B7218) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[63-SUBSYS] sub_821B7218 (Mission system) ENTER #{}", s_count);
-    __imp__sub_821B7218(ctx, base);
+    sub_821B7218(ctx, base);
     LOGF_WARNING("[63-SUBSYS] sub_821B7218 (Mission system) EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
 PPC_FUNC(sub_822498F8) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[63-SUBSYS] sub_822498F8 (Checkpoint system) ENTER #{}", s_count);
-    __imp__sub_822498F8(ctx, base);
+    sub_822498F8(ctx, base);
     LOGF_WARNING("[63-SUBSYS] sub_822498F8 (Checkpoint system) EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
 PPC_FUNC(sub_8225DC40) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[63-SUBSYS] sub_8225DC40 (Weather system) ENTER #{}", s_count);
-    __imp__sub_8225DC40(ctx, base);
+    sub_8225DC40(ctx, base);
     LOGF_WARNING("[63-SUBSYS] sub_8225DC40 (Weather system) EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
 PPC_FUNC(sub_821E24E0) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[63-SUBSYS] sub_821E24E0 (Population system) ENTER #{}", s_count);
-    __imp__sub_821E24E0(ctx, base);
+    sub_821E24E0(ctx, base);
     LOGF_WARNING("[63-SUBSYS] sub_821E24E0 (Population system) EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
 PPC_FUNC(sub_821DFD18) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[63-SUBSYS] sub_821DFD18 (Traffic system) ENTER #{}", s_count);
-    __imp__sub_821DFD18(ctx, base);
+    sub_821DFD18(ctx, base);
     LOGF_WARNING("[63-SUBSYS] sub_821DFD18 (Traffic system) EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
 // REIMPLEMENTED: sub_8220E108 (Wanted system)
 // Was stubbed because: call 30 (sub_82430C60) blocks on sync primitives
 // Now: Sync hooks prevent blocking, so initialization will complete
-extern "C" void __imp__sub_8220E108(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8220E108(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_8220E108) {
     static int s_count = 0; ++s_count;
     printf("[REIMPL] sub_8220E108 #%d ENTER - Wanted system (now non-blocking)\n", s_count);
     fflush(stdout);
     
-    __imp__sub_8220E108(ctx, base);
+    sub_8220E108(ctx, base);
     
     printf("[REIMPL] sub_8220E108 #%d EXIT r3=0x%08X\n", s_count, ctx.r3.u32);
     fflush(stdout);
@@ -11701,14 +11676,14 @@ PPC_FUNC(sub_8220E108) {
 PPC_FUNC(sub_821D8358) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[63-SUBSYS] sub_821D8358 (Map/GPS init) ENTER #{}", s_count);
-    __imp__sub_821D8358(ctx, base);
+    sub_821D8358(ctx, base);
     LOGF_WARNING("[63-SUBSYS] sub_821D8358 (Map/GPS init) EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
 PPC_FUNC(sub_821EA0B8) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[63-SUBSYS] sub_821EA0B8 (Blip system) ENTER #{}", s_count);
-    __imp__sub_821EA0B8(ctx, base);
+    sub_821EA0B8(ctx, base);
     LOGF_WARNING("[63-SUBSYS] sub_821EA0B8 (Blip system) EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
@@ -11716,13 +11691,13 @@ PPC_FUNC(sub_821EA0B8) {
 // REIMPLEMENTED: sub_82200EB8 (Stats system)
 // Was stubbed because: blocks on sync primitives
 // Now: Sync hooks prevent blocking
-extern "C" void __imp__sub_82200EB8(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82200EB8(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_82200EB8) {
     static int s_count = 0; ++s_count;
     printf("[REIMPL] sub_82200EB8 #%d ENTER - Stats system (now non-blocking)\n", s_count);
     fflush(stdout);
     
-    __imp__sub_82200EB8(ctx, base);
+    sub_82200EB8(ctx, base);
     
     printf("[REIMPL] sub_82200EB8 #%d EXIT r3=0x%08X\n", s_count, ctx.r3.u32);
     fflush(stdout);
@@ -11733,112 +11708,112 @@ PPC_FUNC(sub_82200EB8) {
 // =============================================================================
 
 // sub_821E9658 calls these functions - instrument to find blocking point:
-extern "C" void __imp__sub_8214B508(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_8214B570(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_8214B640(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_8214B6A8(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_825B8380(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_823A70A8(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8214B508(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8214B570(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8214B640(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8214B6A8(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_825B8380(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_823A70A8(PPCContext& ctx, uint8_t* base);
 
 PPC_FUNC(sub_8214B508) {
     static int s_count = 0; ++s_count;
     printf("[821E9658-INT] sub_8214B508 ENTER #%d\n", s_count); fflush(stdout);
-    __imp__sub_8214B508(ctx, base);
+    sub_8214B508(ctx, base);
     printf("[821E9658-INT] sub_8214B508 EXIT #%d\n", s_count); fflush(stdout);
 }
 
 PPC_FUNC(sub_8214B570) {
     static int s_count = 0; ++s_count;
     printf("[821E9658-INT] sub_8214B570 ENTER #%d\n", s_count); fflush(stdout);
-    __imp__sub_8214B570(ctx, base);
+    sub_8214B570(ctx, base);
     printf("[821E9658-INT] sub_8214B570 EXIT #%d\n", s_count); fflush(stdout);
 }
 
 PPC_FUNC(sub_8214B640) {
     static int s_count = 0; ++s_count;
     printf("[821E9658-INT] sub_8214B640 ENTER #%d\n", s_count); fflush(stdout);
-    __imp__sub_8214B640(ctx, base);
+    sub_8214B640(ctx, base);
     printf("[821E9658-INT] sub_8214B640 EXIT #%d\n", s_count); fflush(stdout);
 }
 
 PPC_FUNC(sub_8214B6A8) {
     static int s_count = 0; ++s_count;
     printf("[821E9658-INT] sub_8214B6A8 ENTER #%d\n", s_count); fflush(stdout);
-    __imp__sub_8214B6A8(ctx, base);
+    sub_8214B6A8(ctx, base);
     printf("[821E9658-INT] sub_8214B6A8 EXIT #%d\n", s_count); fflush(stdout);
 }
 
 PPC_FUNC(sub_825B8380) {
     static int s_count = 0; ++s_count;
     printf("[821E9658-INT] sub_825B8380 ENTER #%d\n", s_count); fflush(stdout);
-    __imp__sub_825B8380(ctx, base);
+    sub_825B8380(ctx, base);
     printf("[821E9658-INT] sub_825B8380 EXIT #%d\n", s_count); fflush(stdout);
 }
 
 PPC_FUNC(sub_823A70A8) {
     static int s_count = 0; ++s_count;
     printf("[821E9658-INT] sub_823A70A8 ENTER #%d\n", s_count); fflush(stdout);
-    __imp__sub_823A70A8(ctx, base);
+    sub_823A70A8(ctx, base);
     printf("[821E9658-INT] sub_823A70A8 EXIT #%d\n", s_count); fflush(stdout);
 }
 
 // sub_82126940 calls these - instrument to find blocking point:
-extern "C" void __imp__sub_822E2510(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_8214C488(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_822E2510(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8214C488(PPCContext& ctx, uint8_t* base);
 
 PPC_FUNC(sub_822E2510) {
     static int s_count = 0; ++s_count;
     printf("[82126940-INT] sub_822E2510 ENTER #%d\n", s_count); fflush(stdout);
-    __imp__sub_822E2510(ctx, base);
+    sub_822E2510(ctx, base);
     printf("[82126940-INT] sub_822E2510 EXIT #%d\n", s_count); fflush(stdout);
 }
 
 PPC_FUNC(sub_8214C488) {
     static int s_count = 0; ++s_count;
     printf("[82126940-INT] sub_8214C488 ENTER #%d\n", s_count); fflush(stdout);
-    __imp__sub_8214C488(ctx, base);
+    sub_8214C488(ctx, base);
     printf("[82126940-INT] sub_8214C488 EXIT #%d\n", s_count); fflush(stdout);
 }
 
 PPC_FUNC(sub_821E9658) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[82120C48-INT] sub_821E9658 ENTER #{}", s_count);
-    __imp__sub_821E9658(ctx, base);
+    sub_821E9658(ctx, base);
     LOGF_WARNING("[82120C48-INT] sub_821E9658 EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
 PPC_FUNC(sub_821FD460) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[82120C48-INT] sub_821FD460 ENTER #{}", s_count);
-    __imp__sub_821FD460(ctx, base);
+    sub_821FD460(ctx, base);
     LOGF_WARNING("[82120C48-INT] sub_821FD460 EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
 PPC_FUNC(sub_82126940) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[82120C48-INT] sub_82126940 ENTER #{}", s_count);
-    __imp__sub_82126940(ctx, base);
+    sub_82126940(ctx, base);
     LOGF_WARNING("[82120C48-INT] sub_82126940 EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
 PPC_FUNC(sub_822B6C58) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[82120C48-INT] sub_822B6C58 ENTER #{}", s_count);
-    __imp__sub_822B6C58(ctx, base);
+    sub_822B6C58(ctx, base);
     LOGF_WARNING("[82120C48-INT] sub_822B6C58 EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
 PPC_FUNC(sub_82308598) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[82120C48-INT] sub_82308598 ENTER #{}", s_count);
-    __imp__sub_82308598(ctx, base);
+    sub_82308598(ctx, base);
     LOGF_WARNING("[82120C48-INT] sub_82308598 EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
 PPC_FUNC(sub_82209280) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[82120C48-INT] sub_82209280 ENTER #{}", s_count);
-    __imp__sub_82209280(ctx, base);
+    sub_82209280(ctx, base);
     LOGF_WARNING("[82120C48-INT] sub_82209280 EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
@@ -11853,7 +11828,7 @@ PPC_FUNC(sub_82120FB8)
     
     LOGF_WARNING("[INIT] sub_82120FB8 ENTER #{} thread=0x{:04X} - 63-subsystem init starting", s_count, threadId);
     
-    __imp__sub_82120FB8(ctx, base);
+    sub_82120FB8(ctx, base);
     
     LOGF_WARNING("[INIT] sub_82120FB8 EXIT #{} thread=0x{:04X} r3={} - 63-subsystem init complete", s_count, threadId, ctx.r3.u32);
 
@@ -11882,7 +11857,7 @@ PPC_FUNC(sub_8218BEB0)
     
     LOGF_WARNING("[INIT] sub_8218BEB0 ENTER #{} thread=0x{:04X}", s_count, threadId);
     
-    __imp__sub_8218BEB0(ctx, base);
+    sub_8218BEB0(ctx, base);
     
     // NOTE: SetInitComplete is now called at sub_821200D0 ENTRY (in save_hooks.cpp)
     // This is the right timing: after 63-subsystem init, before post-init loading
@@ -11902,17 +11877,17 @@ PPC_FUNC(sub_827D89B8)
         LOGF_WARNING("[FRAME] sub_827D89B8 #{} thread=0x{:04X}", s_count, threadId);
     }
     
-    __imp__sub_827D89B8(ctx, base);
+    sub_827D89B8(ctx, base);
 }
 
 // =============================================================================
 // INSTRUMENTATION: sub_827D89B8 internal functions
 // Call order: sub_827D8840 -> sub_827FFF80 -> sub_828E0AB8 -> sub_827EE620 -> sub_8218BEB0
 // =============================================================================
-extern "C" void __imp__sub_827D8840(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_827FFF80(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_827EE620(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_827EEDE0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827D8840(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827FFF80(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827EE620(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827EEDE0(PPCContext& ctx, uint8_t* base);
 
 // Hook sub_827D8840 - Pre-init setup (first call inside sub_827D89B8)
 PPC_FUNC(sub_827D8840)
@@ -11923,7 +11898,7 @@ PPC_FUNC(sub_827D8840)
     {
         LOGF_WARNING("[INIT-TRACE] sub_827D8840 ENTER #{} (pre-init setup)", s_count);
     }
-    __imp__sub_827D8840(ctx, base);
+    sub_827D8840(ctx, base);
     if (s_count <= 10)
     {
         LOGF_WARNING("[INIT-TRACE] sub_827D8840 EXIT #{}", s_count);
@@ -11939,7 +11914,7 @@ PPC_FUNC(sub_827FFF80)
     {
         LOGF_WARNING("[INIT-TRACE] sub_827FFF80 ENTER #{} (network init)", s_count);
     }
-    __imp__sub_827FFF80(ctx, base);
+    sub_827FFF80(ctx, base);
     if (s_count <= 10)
     {
         LOGF_WARNING("[INIT-TRACE] sub_827FFF80 EXIT #{}", s_count);
@@ -11955,7 +11930,7 @@ PPC_FUNC(sub_827EEDE0)
     {
         LOGF_WARNING("[INIT-TRACE] sub_827EEDE0 ENTER #{} (store argc/argv)", s_count);
     }
-    __imp__sub_827EEDE0(ctx, base);
+    sub_827EEDE0(ctx, base);
     if (s_count <= 10)
     {
         LOGF_WARNING("[INIT-TRACE] sub_827EEDE0 EXIT #{}", s_count);
@@ -11971,7 +11946,7 @@ PPC_FUNC(sub_827EE620)
     {
         LOGF_WARNING("[INIT-TRACE] sub_827EE620 ENTER #{} (system setup)", s_count);
     }
-    __imp__sub_827EE620(ctx, base);
+    sub_827EE620(ctx, base);
     if (s_count <= 10)
     {
         LOGF_WARNING("[INIT-TRACE] sub_827EE620 EXIT #{}", s_count);
@@ -11980,8 +11955,8 @@ PPC_FUNC(sub_827EE620)
 
 // Hook sub_8218BEA8 - Main entry point, implement game loop
 // Xbox 360 runtime called this repeatedly; recomp needs to emulate that
-extern "C" void __imp__sub_8218BEA8(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_82856F08(PPCContext& ctx, uint8_t* base);  // Main Loop Entry
+extern "C" void sub_8218BEA8(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82856F08(PPCContext& ctx, uint8_t* base);  // Main Loop Entry
 
 // =============================================================================
 // FRAME RATE COUNTER - tracks actual FPS and frame timing
@@ -12052,10 +12027,10 @@ PPC_FUNC(sub_8218BEA8)
     // The original implementation will eventually return after game init completes
     if (!s_initDone)
     {
-        LOG_WARNING("[MAIN] Calling __imp__sub_8218BEA8 for game initialization...");
-        __imp__sub_8218BEA8(ctx, base);
+        LOG_WARNING("[MAIN] Calling sub_8218BEA8 for game initialization...");
+        sub_8218BEA8(ctx, base);
         s_initDone = true;
-        LOG_WARNING("[MAIN] __imp__sub_8218BEA8 returned - initialization complete");
+        LOG_WARNING("[MAIN] sub_8218BEA8 returned - initialization complete");
         // Note: If the original never returns (has its own game loop), we won't reach here
         // In that case, the original handles everything and we don't need our render loop
         return;
@@ -12066,13 +12041,13 @@ PPC_FUNC(sub_8218BEA8)
     while (true)
     {
         g_fpsCounter.Update();
-        __imp__sub_82856F08(ctx, base);
+        sub_82856F08(ctx, base);
         std::this_thread::sleep_for(std::chrono::milliseconds(16));
     }
 }
 
 // Hook sub_828E0AB8 - Scheduler loop (just trace, don't force VdSwap)
-extern "C" void __imp__sub_828E0AB8(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_828E0AB8(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_828E0AB8)
 {
     static int s_count = 0;
@@ -12092,25 +12067,25 @@ PPC_FUNC(sub_828E0AB8)
         LOGF_WARNING("[Scheduler] sub_828E0AB8 #{} thread=0x{:04X}{}", s_count, threadId, marker);
     }
     
-    __imp__sub_828E0AB8(ctx, base);
+    sub_828E0AB8(ctx, base);
 }
 
 // Hook sub_829D4C48 - Frame swap/Present function called from VBlank
-extern "C" void __imp__sub_829D4C48(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_829D4C48(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_829D4C48)
 {
     // Let the game's native render loop handle VdSwap - don't force it
-    __imp__sub_829D4C48(ctx, base);
+    sub_829D4C48(ctx, base);
 }
 
 // Hook sub_829D7368 - VBlank interrupt callback
-extern "C" void __imp__sub_829D7368(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_829D7368(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_829D7368)
 {
     static int s_count = 0; ++s_count;
     if (s_count <= 5 || s_count % 1000 == 0)
         LOGF_WARNING("[VBLANK] sub_829D7368 #{}", s_count);
-    __imp__sub_829D7368(ctx, base);
+    sub_829D7368(ctx, base);
 }
 
 
@@ -12119,7 +12094,7 @@ PPC_FUNC(sub_829D7368)
 
 
 // Hook sub_829A3318 - Boot orchestrator (calls XamTaskShouldExit in loop)
-extern "C" void __imp__sub_829A3318(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_829A3318(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_829A3318)
 {
     static int s_count = 0;
@@ -12130,13 +12105,13 @@ PPC_FUNC(sub_829A3318)
         LOGF_IMPL(Utility, "BootOrchestrator", "sub_829A3318 #{}", s_count);
     }
     
-    __imp__sub_829A3318(ctx, base);
+    sub_829A3318(ctx, base);
 }
 
 // Hook sub_827E8420 - Stream buffer reader
 // Validates stream struct pointers before dereferencing to prevent crash at 0x400000000
 // Stream struct layout: [0]=object ptr, [4]=ctx, [8]=buffer, [12]=pos, [16]=cursor, [20]=end, [24]=capacity
-extern "C" void __imp__sub_827E8420(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827E8420(PPCContext& ctx, uint8_t* base);
 
 // Helper to repair corrupted stream at 0x82003890
 static void RepairCorruptedStream(uint32_t streamPtr)
@@ -12226,7 +12201,7 @@ PPC_FUNC(sub_827E8420)
     }
     
     // All pointers validated - call original implementation
-    __imp__sub_827E8420(ctx, base);
+    sub_827E8420(ctx, base);
 }
 
 // =============================================================================
@@ -12243,7 +12218,7 @@ PPC_FUNC(sub_827E8420)
 //   r11 = [r11+48] (load function pointer from vtable+48)
 //   call r11 (PAC CRASH HERE if pointer is invalid)
 // =============================================================================
-extern "C" void __imp__sub_827E7FA8(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827E7FA8(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_827E7FA8)
 {
     static int s_callCount = 0;
@@ -12345,7 +12320,7 @@ PPC_FUNC(sub_827E7FA8)
             s_callCount, objectPtr, vtablePtr, funcPtr);
     }
     
-    __imp__sub_827E7FA8(ctx, base);
+    sub_827E7FA8(ctx, base);
 }
 
 // =============================================================================
@@ -12355,7 +12330,7 @@ PPC_FUNC(sub_827E7FA8)
 // Add validation here to catch bad stream objects before they cause PAC crashes.
 // The stream object is passed in r3 and stored in r30.
 // =============================================================================
-extern "C" void __imp__sub_821928D0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_821928D0(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_821928D0)
 {
     static int s_callCount = 0;
@@ -12445,7 +12420,7 @@ PPC_FUNC(sub_821928D0)
             s_callCount, streamPtr, objectPtr);
     }
     
-    __imp__sub_821928D0(ctx, base);
+    sub_821928D0(ctx, base);
 }
 
 // =============================================================================
@@ -12454,7 +12429,7 @@ PPC_FUNC(sub_821928D0)
 // This function reads from stream and returns pointer to buffer or 0.
 // Adding wrapper to trace crash in file parsing path.
 // =============================================================================
-extern "C" void __imp__sub_82192980(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82192980(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_82192980) {
     static int s_count = 0; ++s_count;
     
@@ -12467,7 +12442,7 @@ PPC_FUNC(sub_82192980) {
                      s_count, streamHandle, skipWhitespace, r1_before);
     }
     
-    __imp__sub_82192980(ctx, base);
+    sub_82192980(ctx, base);
     
     uint32_t result = ctx.r3.u32;
     if (s_count <= 20) {
@@ -12495,7 +12470,7 @@ PPC_FUNC(sub_82192980) {
 // The crash occurs in sub_827E87A0 which dereferences the stream pointer.
 // Flow: sub_82192840 returns 0 → sub_821928D0 returns 0 → sub_82192A60(0) → CRASH
 // =============================================================================
-extern "C" void __imp__sub_82192A60(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82192A60(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_82192A60) {
     static int s_callCount = 0;
     static int s_invalidStreams = 0;
@@ -12543,7 +12518,7 @@ PPC_FUNC(sub_82192A60) {
         LOGF_WARNING("[sub_82192A60] Valid close for stream 0x{:08X} (call #{})", streamPtr, s_callCount);
     }
     
-    __imp__sub_82192A60(ctx, base);
+    sub_82192A60(ctx, base);
 }
 
 // =============================================================================
@@ -12554,7 +12529,7 @@ PPC_FUNC(sub_82192A60) {
 // When r31 (from r3 parameter) is NULL, this reads from address 0x0C04 → crash.
 // Call chain: sub_8289DDB0 → sub_827E0968 → sub_827E02F0(NULL) → CRASH
 // =============================================================================
-extern "C" void __imp__sub_827E02F0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827E02F0(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_827E02F0) {
     static int s_callCount = 0;
     static int s_invalidCalls = 0;
@@ -12584,7 +12559,7 @@ PPC_FUNC(sub_827E02F0) {
     }
     
     // Structure pointer looks valid - call original
-    __imp__sub_827E02F0(ctx, base);
+    sub_827E02F0(ctx, base);
 }
 
 // Hook sub_82192100 - skip dirty disc error UI and limit retries
@@ -12647,11 +12622,11 @@ PPC_FUNC(sub_82124490) {
     // Force return 0 (loading complete) to exit loading gate and proceed to resource loading
     ctx.r3.u64 = 0;
     
-    // Do NOT call __imp__sub_82124490 - it would return 1 and block forever
+    // Do NOT call sub_82124490 - it would return 1 and block forever
 }
 
 // Forward declare the original implementation from recompiled code
-extern "C" void __imp__sub_829A1F00(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_829A1F00(PPCContext& ctx, uint8_t* base);
 
 // Track completed async operations to avoid re-serving data
 // Key: async pointer, Value: pair<handle, offset> of completed operation
@@ -13131,85 +13106,85 @@ GUEST_FUNCTION_HOOK(__imp__NetDll_XNetUnregisterInAddr, Net::XNetUnregisterInAdd
 // This avoids validation token complexity and lets game logic run naturally.
 // =============================================================================
 
-extern "C" void __imp__sub_8249BE88(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8249BE88(PPCContext& ctx, uint8_t* base);
 GUEST_FUNCTION_HOOK(sub_8249BE88, GTA::FileResolve);
 
 
 // =============================================================================
 // Instrumentation for sub_82120FB8 blocking point
 // =============================================================================
-extern "C" void __imp__sub_827DB118(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827DB118(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_827DB118) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[63-SUBSYS] sub_827DB118 (thread worker init) ENTER #{} r5=0x{:08X}", s_count, ctx.r5.u32);
-    __imp__sub_827DB118(ctx, base);
+    sub_827DB118(ctx, base);
     LOGF_WARNING("[63-SUBSYS] sub_827DB118 (thread worker init) EXIT #{}", s_count);
 }
 
 // sub_8230D760 - called in loop by sub_8219FD88
-extern "C" void __imp__sub_8230D760(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8230D760(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_8230D760) {
     static int s_count = 0; ++s_count;
     if (s_count <= 20) LOGF_WARNING("[8219FD88-TRACE] sub_8230D760 ENTER #{} r3=0x{:08X}", s_count, ctx.r3.u32);
-    __imp__sub_8230D760(ctx, base);
+    sub_8230D760(ctx, base);
     if (s_count <= 20) LOGF_WARNING("[8219FD88-TRACE] sub_8230D760 EXIT #{}", s_count);
 }
 
 // sub_8230D160 - called in loop by sub_8219FD88  
-extern "C" void __imp__sub_8230D160(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8230D160(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_8230D160) {
     static int s_count = 0; ++s_count;
     if (s_count <= 20) LOGF_WARNING("[8219FD88-TRACE] sub_8230D160 ENTER #{} r3=0x{:08X}", s_count, ctx.r3.u32);
-    __imp__sub_8230D160(ctx, base);
+    sub_8230D160(ctx, base);
     if (s_count <= 20) LOGF_WARNING("[8219FD88-TRACE] sub_8230D160 EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
 // sub_8219F9A0 - called by sub_8219FD88
-extern "C" void __imp__sub_8219F9A0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8219F9A0(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_8219F9A0) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[8219FD88-TRACE] sub_8219F9A0 ENTER #{}", s_count);
-    __imp__sub_8219F9A0(ctx, base);
+    sub_8219F9A0(ctx, base);
     LOGF_WARNING("[8219FD88-TRACE] sub_8219F9A0 EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
 // sub_8219F948 - called by sub_8219FD88
-extern "C" void __imp__sub_8219F948(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8219F948(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_8219F948) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[8219FD88-TRACE] sub_8219F948 ENTER #{}", s_count);
-    __imp__sub_8219F948(ctx, base);
+    sub_8219F948(ctx, base);
     LOGF_WARNING("[8219FD88-TRACE] sub_8219F948 EXIT #{}", s_count);
 }
 
 // sub_824C1668 - called by sub_8219FD88
-extern "C" void __imp__sub_824C1668(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_824C1668(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_824C1668) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[8219FD88-TRACE] sub_824C1668 ENTER #{} r3=0x{:08X} r4={}", s_count, ctx.r3.u32, ctx.r4.u32);
-    __imp__sub_824C1668(ctx, base);
+    sub_824C1668(ctx, base);
     LOGF_WARNING("[8219FD88-TRACE] sub_824C1668 EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
 // sub_8219FD88 - called early in sub_82120FB8, potential blocker
-extern "C" void __imp__sub_8219FD88(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8219FD88(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_8219FD88) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[63-SUBSYS] sub_8219FD88 ENTER #{}", s_count);
-    __imp__sub_8219FD88(ctx, base);
+    sub_8219FD88(ctx, base);
     LOGF_WARNING("[63-SUBSYS] sub_8219FD88 EXIT #{}", s_count);
 }
 
 // sub_822F8980 - storage/file init in sub_82120FB8
 // PHASE 1: Enhanced instrumentation with global tracking flag
 
-extern "C" void __imp__sub_822F8980(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_822F8980(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_822F8980) {
     static int s_count = 0; ++s_count;
     g_inStorageInit = true;
     LOGF_WARNING("[STORAGE-INIT] sub_822F8980 ENTER #{} r3=0x{:08X} r4=0x{:08X}", 
                  s_count, ctx.r3.u32, ctx.r4.u32);
-    __imp__sub_822F8980(ctx, base);
+    sub_822F8980(ctx, base);
     g_inStorageInit = false;
     LOGF_WARNING("[STORAGE-INIT] sub_822F8980 EXIT #{}", s_count);
 }
@@ -13232,7 +13207,7 @@ static std::string ReadGuestString(uint8_t* base, uint32_t addr, int maxLen = 26
 
 // sub_822F3110 - File parsing loop iterator (called repeatedly)
 // PHASE 1: Deep instrumentation to find blocking point
-extern "C" void __imp__sub_822F3110(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_822F3110(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_822F3110) {
     static int s_count = 0; ++s_count;
     
@@ -13286,7 +13261,7 @@ PPC_FUNC(sub_822F3110) {
         LOGF_WARNING("[FILE-PARSE] sub_822F3110 #{} LR=0x{:08X} (caller)", s_count, (uint32_t)ctx.lr);
     }
     
-    __imp__sub_822F3110(ctx, base);
+    sub_822F3110(ctx, base);
     
     if (shouldLog) {
         LOGF_WARNING("[FILE-PARSE] sub_822F3110 #{} EXIT r3=0x{:08X}", s_count, ctx.r3.u32);
@@ -13297,18 +13272,18 @@ PPC_FUNC(sub_822F3110) {
 // FIX: When file parsing finds no entries (context[0]=0), the original code crashes
 // trying to access memory at loc_822F8950 after stream close. This safe implementation
 // skips sub_822F87E0 when there are no entries to process.
-extern "C" void __imp__sub_822F8890(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_822F8890(PPCContext& ctx, uint8_t* base);
 
 // Forward declarations for PPC runtime functions called by sub_822F8890
-extern "C" void __imp__sub_82192840(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_828E0AB8(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_82148358(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_8218BE78(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_822F3110(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_822F57A8(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_827827C8(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_82192A60(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_822F87E0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82192840(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_828E0AB8(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82148358(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8218BE78(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_822F3110(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_822F57A8(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827827C8(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82192A60(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_822F87E0(PPCContext& ctx, uint8_t* base);
 // __savegprlr_29 and __restgprlr_29 declared in ppc_recomp_shared.h
 
 PPC_FUNC(sub_822F8890) {
@@ -13340,7 +13315,7 @@ PPC_FUNC(sub_822F8890) {
     ctx.r4.s64 = (int64_t)(-2113208320) + (-28176);  // File path constant
     ctx.r3.u64 = ctx.r30.u64;
     ctx.lr = 0x822F88B4;
-    __imp__sub_82192840(ctx, base);
+    sub_82192840(ctx, base);
     
     uint32_t streamHandle = ctx.r3.u32;
     ctx.r29.u64 = streamHandle;
@@ -13353,7 +13328,7 @@ PPC_FUNC(sub_822F8890) {
         // File failed to open - call error handler and return 0
         ctx.r3.s64 = (int64_t)(-2113863680) + 836;
         ctx.lr = 0x822F88D4;
-    __imp__sub_828E0AB8(ctx, base);
+    sub_828E0AB8(ctx, base);
         ctx.r3.s64 = 0;
         
         // Restore stack and return
@@ -13369,11 +13344,11 @@ PPC_FUNC(sub_822F8890) {
     // File opened - initialize context
     ctx.r3.s64 = ctx.r31.s64 + 8;
     ctx.lr = 0x822F88E8;
-    __imp__sub_82148358(ctx, base);
+    sub_82148358(ctx, base);
     
     ctx.r3.u64 = PPC_LOAD_U32(ctx.r31.u32 + 0);
     ctx.lr = 0x822F88F0;
-    __imp__sub_8218BE78(ctx, base);
+    sub_8218BE78(ctx, base);
     
     // Zero out context fields
     PPC_STORE_U32(ctx.r31.u32 + 0, 0);
@@ -13381,11 +13356,11 @@ PPC_FUNC(sub_822F8890) {
     PPC_STORE_U16(ctx.r31.u32 + 6, 0);
     
     // Parse file entries
-    if (s_count <= 10) LOGF_WARNING("[FILE-PARSE] sub_822F8890 #{} calling __imp__sub_822F3110", s_count);
+    if (s_count <= 10) LOGF_WARNING("[FILE-PARSE] sub_822F8890 #{} calling sub_822F3110", s_count);
     ctx.r3.s64 = ctx.r1.s64 + 80;
     ctx.lr = 0x822F8908;
-    __imp__sub_822F3110(ctx, base);
-    if (s_count <= 10) LOGF_WARNING("[FILE-PARSE] sub_822F8890 #{} __imp__sub_822F3110 returned r3=0x{:08X}", s_count, ctx.r3.u32);
+    sub_822F3110(ctx, base);
+    if (s_count <= 10) LOGF_WARNING("[FILE-PARSE] sub_822F8890 #{} sub_822F3110 returned r3=0x{:08X}", s_count, ctx.r3.u32);
     
     // Process entries loop
     while (ctx.r3.u32 != 0) {
@@ -13393,13 +13368,13 @@ PPC_FUNC(sub_822F8890) {
         ctx.r5.s64 = ctx.r1.s64 + 88;
         ctx.r3.u64 = ctx.r31.u64;
         ctx.lr = 0x822F8920;
-        __imp__sub_822F57A8(ctx, base);
+        sub_822F57A8(ctx, base);
         
         if ((ctx.r3.u32 & 0xFF) != 0) {
             ctx.r4.s64 = 16;
             ctx.r3.u64 = ctx.r31.u64;
             ctx.lr = 0x822F8938;
-            __imp__sub_827827C8(ctx, base);
+            sub_827827C8(ctx, base);
             
             uint64_t val = PPC_LOAD_U64(ctx.r1.u32 + 88);
             PPC_STORE_U64(ctx.r3.u32 + 0, val);
@@ -13407,7 +13382,7 @@ PPC_FUNC(sub_822F8890) {
         
         ctx.r3.s64 = ctx.r1.s64 + 80;
         ctx.lr = 0x822F8948;
-        __imp__sub_822F3110(ctx, base);
+        sub_822F3110(ctx, base);
     }
     
     // Close stream - call through wrapper (sub_82192A60) for safety checks
@@ -13435,7 +13410,7 @@ PPC_FUNC(sub_822F8890) {
         ctx.r3.u64 = arrayPtr;
         ctx.r4.u64 = endPtr;
         ctx.lr = 0x822F896C;
-        __imp__sub_822F87E0(ctx, base);
+        sub_822F87E0(ctx, base);
     } else {
         if (s_count <= 10) {
             LOGF_WARNING("[FILE-PARSE] sub_822F8890 #{} SKIPPING sub_822F87E0 (no entries)", s_count);
@@ -13457,7 +13432,7 @@ PPC_FUNC(sub_822F8890) {
 
 // sub_822F87E0 - Called after file parsing to process results
 // Suspected crash location - called from sub_822F8890 after stream close
-extern "C" void __imp__sub_822F87E0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_822F87E0(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_822F87E0) {
     static int s_count = 0; ++s_count;
     if (s_count <= 10) {
@@ -13485,14 +13460,14 @@ PPC_FUNC(sub_822F87E0) {
                          s_count, ctx.r4.u32);
         }
     }
-    __imp__sub_822F87E0(ctx, base);
+    sub_822F87E0(ctx, base);
     if (s_count <= 10) {
         LOGF_WARNING("[FILE-PARSE] sub_822F87E0 #{} EXIT", s_count);
     }
 }
 
 // sub_822F57A8 - File entry processor (called in loop)
-extern "C" void __imp__sub_822F57A8(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_822F57A8(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_822F57A8) {
     static int s_count = 0; ++s_count;
     bool shouldLog = (s_count <= 30) || (s_count % 50 == 0);
@@ -13501,7 +13476,7 @@ PPC_FUNC(sub_822F57A8) {
         LOGF_WARNING("[FILE-PARSE] sub_822F57A8 #{} ENTER r3=0x{:08X} r4=0x{:08X} r5=0x{:08X}",
                      s_count, ctx.r3.u32, ctx.r4.u32, ctx.r5.u32);
     }
-    __imp__sub_822F57A8(ctx, base);
+    sub_822F57A8(ctx, base);
     if (shouldLog) {
         LOGF_WARNING("[FILE-PARSE] sub_822F57A8 #{} EXIT r3=0x{:08X}", s_count, ctx.r3.u32);
     }
@@ -13521,7 +13496,7 @@ PPC_FUNC(sub_822F57A8) {
 //   bl sub_822AFAF8
 //
 // This wrapper validates r4 before proceeding.
-extern "C" void __imp__sub_822AFAF8(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_822AFAF8(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_822AFAF8) {
     static int s_count = 0; ++s_count;
     
@@ -13587,7 +13562,7 @@ PPC_FUNC(sub_822AFAF8) {
                      s_count, globalPtr, subObjPtr, vtablePtr, funcPtr);
     }
     
-    __imp__sub_822AFAF8(ctx, base);
+    sub_822AFAF8(ctx, base);
     
     if (s_count <= 5) {
         LOGF_WARNING("[sub_822AFAF8] #{} EXIT r3=0x{:08X}", s_count, ctx.r3.u32);
@@ -13597,37 +13572,37 @@ PPC_FUNC(sub_822AFAF8) {
 // =========================================================================
 // Remaining 63-subsystem hooks (after Stats system)
 // =========================================================================
-extern "C" void __imp__sub_8212FB78(PPCContext& ctx, uint8_t* base);  // Friend system
-extern "C" void __imp__sub_8219ADF0(PPCContext& ctx, uint8_t* base);  // Online system
-extern "C" void __imp__sub_8212F578(PPCContext& ctx, uint8_t* base);  // Leaderboard
-extern "C" void __imp__sub_8212EDC8(PPCContext& ctx, uint8_t* base);  // Achievement
-extern "C" void __imp__sub_82138710(PPCContext& ctx, uint8_t* base);  // Replay system
-extern "C" void __imp__sub_821B2ED8(PPCContext& ctx, uint8_t* base);  // Camera recording
-extern "C" void __imp__sub_822467B8(PPCContext& ctx, uint8_t* base);  // Cinematic camera
-extern "C" void __imp__sub_82208460(PPCContext& ctx, uint8_t* base);  // Photo mode
-extern "C" void __imp__sub_821B9DA8(PPCContext& ctx, uint8_t* base);  // TV system
-extern "C" void __imp__sub_82258100(PPCContext& ctx, uint8_t* base);  // Internet cafe
-extern "C" void __imp__sub_821A03A0(PPCContext& ctx, uint8_t* base);  // Phone system
-extern "C" void __imp__sub_8232A2C0(PPCContext& ctx, uint8_t* base);  // Dating system
-extern "C" void __imp__sub_82125478(PPCContext& ctx, uint8_t* base);  // Final setup
+extern "C" void sub_8212FB78(PPCContext& ctx, uint8_t* base);  // Friend system
+extern "C" void sub_8219ADF0(PPCContext& ctx, uint8_t* base);  // Online system
+extern "C" void sub_8212F578(PPCContext& ctx, uint8_t* base);  // Leaderboard
+extern "C" void sub_8212EDC8(PPCContext& ctx, uint8_t* base);  // Achievement
+extern "C" void sub_82138710(PPCContext& ctx, uint8_t* base);  // Replay system
+extern "C" void sub_821B2ED8(PPCContext& ctx, uint8_t* base);  // Camera recording
+extern "C" void sub_822467B8(PPCContext& ctx, uint8_t* base);  // Cinematic camera
+extern "C" void sub_82208460(PPCContext& ctx, uint8_t* base);  // Photo mode
+extern "C" void sub_821B9DA8(PPCContext& ctx, uint8_t* base);  // TV system
+extern "C" void sub_82258100(PPCContext& ctx, uint8_t* base);  // Internet cafe
+extern "C" void sub_821A03A0(PPCContext& ctx, uint8_t* base);  // Phone system
+extern "C" void sub_8232A2C0(PPCContext& ctx, uint8_t* base);  // Dating system
+extern "C" void sub_82125478(PPCContext& ctx, uint8_t* base);  // Final setup
 
 PPC_FUNC(sub_8212FB78) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[63-SUBSYS] sub_8212FB78 (Friend system) ENTER #{}", s_count);
-    __imp__sub_8212FB78(ctx, base);
+    sub_8212FB78(ctx, base);
     LOGF_WARNING("[63-SUBSYS] sub_8212FB78 (Friend system) EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
 // REIMPLEMENTED: sub_8219ADF0 (Online system)
 // Was stubbed because: Xbox Live integration blocks on sync
 // Now: Sync hooks prevent blocking
-extern "C" void __imp__sub_8219ADF0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8219ADF0(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_8219ADF0) {
     static int s_count = 0; ++s_count;
     printf("[REIMPL] sub_8219ADF0 #%d ENTER - Online system (now non-blocking)\n", s_count);
     fflush(stdout);
     
-    __imp__sub_8219ADF0(ctx, base);
+    sub_8219ADF0(ctx, base);
     
     printf("[REIMPL] sub_8219ADF0 #%d EXIT r3=0x%08X\n", s_count, ctx.r3.u32);
     fflush(stdout);
@@ -13642,55 +13617,55 @@ PPC_FUNC(sub_8219ADF0) {
 PPC_FUNC(sub_8212F578) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[63-SUBSYS] sub_8212F578 (Leaderboard) ENTER #{}", s_count);
-    __imp__sub_8212F578(ctx, base);
+    sub_8212F578(ctx, base);
     LOGF_WARNING("[63-SUBSYS] sub_8212F578 (Leaderboard) EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
 PPC_FUNC(sub_8212EDC8) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[63-SUBSYS] sub_8212EDC8 (Achievement) ENTER #{}", s_count);
-    __imp__sub_8212EDC8(ctx, base);
+    sub_8212EDC8(ctx, base);
     LOGF_WARNING("[63-SUBSYS] sub_8212EDC8 (Achievement) EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
 PPC_FUNC(sub_82138710) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[63-SUBSYS] sub_82138710 (Replay system) ENTER #{}", s_count);
-    __imp__sub_82138710(ctx, base);
+    sub_82138710(ctx, base);
     LOGF_WARNING("[63-SUBSYS] sub_82138710 (Replay system) EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
 PPC_FUNC(sub_821B2ED8) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[63-SUBSYS] sub_821B2ED8 (Camera recording) ENTER #{}", s_count);
-    __imp__sub_821B2ED8(ctx, base);
+    sub_821B2ED8(ctx, base);
     LOGF_WARNING("[63-SUBSYS] sub_821B2ED8 (Camera recording) EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
 PPC_FUNC(sub_822467B8) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[63-SUBSYS] sub_822467B8 (Cinematic camera) ENTER #{}", s_count);
-    __imp__sub_822467B8(ctx, base);
+    sub_822467B8(ctx, base);
     LOGF_WARNING("[63-SUBSYS] sub_822467B8 (Cinematic camera) EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
 PPC_FUNC(sub_82208460) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[63-SUBSYS] sub_82208460 (Photo mode) ENTER #{}", s_count);
-    __imp__sub_82208460(ctx, base);
+    sub_82208460(ctx, base);
     LOGF_WARNING("[63-SUBSYS] sub_82208460 (Photo mode) EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
 // REIMPLEMENTED: sub_821B9DA8 (TV system)
 // Was stubbed because: blocks on sync primitives
 // Now: Sync hooks prevent blocking
-extern "C" void __imp__sub_821B9DA8(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_821B9DA8(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_821B9DA8) {
     static int s_count = 0; ++s_count;
     printf("[REIMPL] sub_821B9DA8 #%d ENTER - TV system (now non-blocking)\n", s_count);
     fflush(stdout);
     
-    __imp__sub_821B9DA8(ctx, base);
+    sub_821B9DA8(ctx, base);
     
     printf("[REIMPL] sub_821B9DA8 #%d EXIT r3=0x%08X\n", s_count, ctx.r3.u32);
     fflush(stdout);
@@ -13698,34 +13673,34 @@ PPC_FUNC(sub_821B9DA8) {
 PPC_FUNC(sub_82258100) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[63-SUBSYS] sub_82258100 (Internet cafe) ENTER #{}", s_count);
-    __imp__sub_82258100(ctx, base);
+    sub_82258100(ctx, base);
     LOGF_WARNING("[63-SUBSYS] sub_82258100 (Internet cafe) EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
 PPC_FUNC(sub_821A03A0) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[63-SUBSYS] sub_821A03A0 (Phone system) ENTER #{}", s_count);
-    __imp__sub_821A03A0(ctx, base);
+    sub_821A03A0(ctx, base);
     LOGF_WARNING("[63-SUBSYS] sub_821A03A0 (Phone system) EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
 PPC_FUNC(sub_8232A2C0) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[63-SUBSYS] sub_8232A2C0 (Dating system) ENTER #{}", s_count);
-    __imp__sub_8232A2C0(ctx, base);
+    sub_8232A2C0(ctx, base);
     LOGF_WARNING("[63-SUBSYS] sub_8232A2C0 (Dating system) EXIT #{} r3=0x{:08X}", s_count, ctx.r3.u32);
 }
 
 // REIMPLEMENTED: sub_82125478 (Final setup)
 // Was stubbed because: calls sub_82319040 -> sub_829A39A0 which blocks
 // Now: Sync hooks prevent blocking
-extern "C" void __imp__sub_82125478(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82125478(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_82125478) {
     static int s_count = 0; ++s_count;
     printf("[REIMPL] sub_82125478 #%d ENTER - Final setup (now non-blocking)\n", s_count);
     fflush(stdout);
     
-    __imp__sub_82125478(ctx, base);
+    sub_82125478(ctx, base);
     
     printf("[REIMPL] sub_82125478 #%d EXIT r3=0x%08X\n", s_count, ctx.r3.u32);
     fflush(stdout);
@@ -13740,16 +13715,16 @@ PPC_FUNC(sub_82125478) {
 // =========================================================================
 // Main Loop Tracing Hooks
 // =========================================================================
-extern "C" void __imp__sub_82856F08(PPCContext& ctx, uint8_t* base);  // Main Loop Entry
-extern "C" void __imp__sub_828529B0(PPCContext& ctx, uint8_t* base);  // Main Loop Orchestrator
-extern "C" void __imp__sub_828507F8(PPCContext& ctx, uint8_t* base);  // Frame Presentation
-extern "C" void __imp__sub_829D5388(PPCContext& ctx, uint8_t* base);  // D3D Present (VdSwap)
+extern "C" void sub_82856F08(PPCContext& ctx, uint8_t* base);  // Main Loop Entry
+extern "C" void sub_828529B0(PPCContext& ctx, uint8_t* base);  // Main Loop Orchestrator
+extern "C" void sub_828507F8(PPCContext& ctx, uint8_t* base);  // Frame Presentation
+extern "C" void sub_829D5388(PPCContext& ctx, uint8_t* base);  // D3D Present (VdSwap)
 
 PPC_FUNC(sub_82856F08) {
     static int s_count = 0; ++s_count;
     if (s_count <= 5 || s_count % 1000 == 0)
         LOGF_WARNING("[MAIN_LOOP] sub_82856F08 (Entry) #{}", s_count);
-    __imp__sub_82856F08(ctx, base);
+    sub_82856F08(ctx, base);
 }
 
 // =============================================================================
@@ -13819,7 +13794,7 @@ PPC_FUNC(sub_828529B0) {
         }
     }
     
-    __imp__sub_828529B0(ctx, base);
+    sub_828529B0(ctx, base);
     
     // ALTERNATIVE APPROACH: If Option B stub was created but vtable[16] still not called,
     // force the render trigger directly after main loop iteration
@@ -13838,63 +13813,63 @@ PPC_FUNC(sub_828529B0) {
 }
 
 // Trace sub_828529B0 internal calls to find blocking point
-extern "C" void __imp__sub_8285ACE8(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8285ACE8(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_8285ACE8) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[ORCH] sub_8285ACE8 ENTER #{}", s_count);
-    __imp__sub_8285ACE8(ctx, base);
+    sub_8285ACE8(ctx, base);
     LOGF_WARNING("[ORCH] sub_8285ACE8 EXIT #{}", s_count);
 }
 
-extern "C" void __imp__sub_829CA360(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_829CA360(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_829CA360) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[ORCH] sub_829CA360 ENTER #{}", s_count);
-    __imp__sub_829CA360(ctx, base);
+    sub_829CA360(ctx, base);
     LOGF_WARNING("[ORCH] sub_829CA360 EXIT #{}", s_count);
 }
 
-extern "C" void __imp__sub_829CA240(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_829CA240(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_829CA240) {
     static int s_count = 0; ++s_count;
     if (s_count <= 10) LOGF_WARNING("[ORCH] sub_829CA240 ENTER #{}", s_count);
-    __imp__sub_829CA240(ctx, base);
+    sub_829CA240(ctx, base);
     if (s_count <= 10) LOGF_WARNING("[ORCH] sub_829CA240 EXIT #{}", s_count);
 }
 
 // Loop function called 20 times in sub_828529B0
-extern "C" void __imp__sub_829D3728(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_829D3728(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_829D3728) {
     static int s_count = 0; ++s_count;
     if (s_count <= 25) LOGF_WARNING("[ORCH] sub_829D3728 ENTER #{}", s_count);
-    __imp__sub_829D3728(ctx, base);
+    sub_829D3728(ctx, base);
     if (s_count <= 25) LOGF_WARNING("[ORCH] sub_829D3728 EXIT #{}", s_count);
 }
 
 // Called after the loop
-extern "C" void __imp__sub_829D14E0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_829D14E0(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_829D14E0) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[ORCH] sub_829D14E0 ENTER #{}", s_count);
-    __imp__sub_829D14E0(ctx, base);
+    sub_829D14E0(ctx, base);
     LOGF_WARNING("[ORCH] sub_829D14E0 EXIT #{}", s_count);
 }
 
 // Called conditionally before rendering
-extern "C" void __imp__sub_82852610(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82852610(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_82852610) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[ORCH] sub_82852610 ENTER #{}", s_count);
-    __imp__sub_82852610(ctx, base);
+    sub_82852610(ctx, base);
     LOGF_WARNING("[ORCH] sub_82852610 EXIT #{}", s_count);
 }
 
 // Trace sub_828507F8 internal calls to find blocking point
-extern "C" void __imp__sub_829D5920(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_829D5920(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_829D5920) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[RENDER] sub_829D5920 ENTER #{}", s_count);
-    __imp__sub_829D5920(ctx, base);
+    sub_829D5920(ctx, base);
     LOGF_WARNING("[RENDER] sub_829D5920 EXIT #{}", s_count);
 }
 
@@ -13919,18 +13894,18 @@ PPC_FUNC(sub_829D87E8) {
 }
 
 // Trace sub_829D5950 - calls sub_829D87E8
-extern "C" void __imp__sub_829D5950(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_829D5950(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_829D5950) {
     static int s_count = 0; ++s_count;
     if (s_count <= 5) LOGF_WARNING("[RENDER] sub_829D5950 ENTER #{}", s_count);
-    __imp__sub_829D5950(ctx, base);
+    sub_829D5950(ctx, base);
     if (s_count <= 5) LOGF_WARNING("[RENDER] sub_829D5950 EXIT #{}", s_count);
 }
 
 PPC_FUNC(sub_828507F8) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[RENDER] sub_828507F8 (Frame Present) #{}", s_count);
-    __imp__sub_828507F8(ctx, base);
+    sub_828507F8(ctx, base);
     LOGF_WARNING("[RENDER] sub_828507F8 EXIT #{}", s_count);
 }
 
@@ -13938,16 +13913,16 @@ PPC_FUNC(sub_829D5388) {
     static int s_count = 0; ++s_count;
     if (s_count <= 5 || s_count % 1000 == 0)
         LOGF_WARNING("[RENDER] sub_829D5388 (D3D Present/VdSwap) #{}", s_count);
-    __imp__sub_829D5388(ctx, base);
+    sub_829D5388(ctx, base);
 }
 
 // =========================================================================
 // sub_821200D0 internal tracing
 // =========================================================================
-extern "C" void __imp__sub_82121E80(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_821924D8(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_8218C2C0(PPCContext& ctx, uint8_t* base);
-extern "C" void __imp__sub_8218C1F0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82121E80(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_821924D8(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8218C2C0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8218C1F0(PPCContext& ctx, uint8_t* base);
 
 // STUBBED: sub_82121E80 - loading state machine (blocks on async ops)
 PPC_FUNC(sub_82121E80) {
@@ -13965,7 +13940,7 @@ PPC_FUNC(sub_82121E80) {
 PPC_FUNC(sub_821924D8) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[821200D0-INT] sub_821924D8 ENTER #{}", s_count);
-    __imp__sub_821924D8(ctx, base);
+    sub_821924D8(ctx, base);
     LOGF_WARNING("[821200D0-INT] sub_821924D8 EXIT #{}", s_count);
 }
 
@@ -13986,26 +13961,26 @@ PPC_FUNC(sub_8218C1F0) {
     static int s_count = 0; ++s_count;
     if (s_count <= 5 || s_count % 1000 == 0)
         LOGF_WARNING("[821200D0-INT] sub_8218C1F0 #{}", s_count);
-    __imp__sub_8218C1F0(ctx, base);
+    sub_8218C1F0(ctx, base);
 }
 
 // =========================================================================
 // sub_821200A8 tracing (called after sub_821200D0 in sub_8218BEB0)
 // =========================================================================
-extern "C" void __imp__sub_821200A8(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_821200A8(PPCContext& ctx, uint8_t* base);
 
 // TRACE: sub_821200A8 - now running properly since sub_82857240 is fixed
 PPC_FUNC(sub_821200A8) {
     static int s_count = 0; ++s_count;
     LOGF_WARNING("[821200A8] #{} ENTER - post-init finalization", s_count);
-    __imp__sub_821200A8(ctx, base);
+    sub_821200A8(ctx, base);
     LOGF_WARNING("[821200A8] #{} EXIT", s_count);
 }
 
 // =========================================================================
 // sub_821219B0 - trace to find blocking point
 // =========================================================================
-extern "C" void __imp__sub_821219B0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_821219B0(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_821219B0) {
     static int s_count = 0; ++s_count;
     printf("[821219B0] #%d STUBBED - bypassing blocking sync primitive\n", s_count);
@@ -14015,31 +13990,31 @@ PPC_FUNC(sub_821219B0) {
 // =========================================================================
 // sub_821200D0 cleanup function traces - find which one blocks
 // =========================================================================
-extern "C" void __imp__sub_821B8FB0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_821B8FB0(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_821B8FB0) {
     static int s_count = 0; ++s_count;
     printf("[821B8FB0] #%d ENTER\n", s_count);
-    __imp__sub_821B8FB0(ctx, base);
+    sub_821B8FB0(ctx, base);
     printf("[821B8FB0] #%d EXIT\n", s_count);
 }
 
-extern "C" void __imp__sub_8220E528(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8220E528(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_8220E528) {
     static int s_count = 0; ++s_count;
     printf("[8220E528] #%d ENTER\n", s_count);
-    __imp__sub_8220E528(ctx, base);
+    sub_8220E528(ctx, base);
     printf("[8220E528] #%d EXIT\n", s_count);
 }
 
-extern "C" void __imp__sub_822C66C8(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_822C66C8(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_822C66C8) {
     static int s_count = 0; ++s_count;
     printf("[822C66C8] #%d ENTER\n", s_count);
-    __imp__sub_822C66C8(ctx, base);
+    sub_822C66C8(ctx, base);
     printf("[822C66C8] #%d EXIT\n", s_count);
 }
 
-extern "C" void __imp__sub_821A81F0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_821A81F0(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_821A81F0) {
     static int s_count = 0; ++s_count;
     printf("[821A81F0] #%d ENTER - signaling workers before cleanup\n", s_count);
@@ -14050,14 +14025,14 @@ PPC_FUNC(sub_821A81F0) {
     // signaling allows them to check exit flag and terminate
     SignalAllBlockingSemaphores();
     
-    __imp__sub_821A81F0(ctx, base);
+    sub_821A81F0(ctx, base);
     printf("[821A81F0] #%d EXIT\n", s_count);
     fflush(stdout);
 }
 
 // sub_823005E0 - Called by sub_821A81F0, performs worker cleanup
 // This function blocks waiting for workers to exit. Stub it to bypass the wait.
-extern "C" void __imp__sub_823005E0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_823005E0(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_823005E0) {
     static int s_count = 0; ++s_count;
     printf("[823005E0] #%d STUBBED - bypassing worker cleanup wait\n", s_count);
@@ -14068,13 +14043,13 @@ PPC_FUNC(sub_823005E0) {
     
     // Don't call original - it blocks waiting for workers
     // The workers will exit on their own when they check their exit flags
-    // __imp__sub_823005E0(ctx, base);
+    // sub_823005E0(ctx, base);
 }
 
 // sub_827DB880 - Worker manager shutdown loop
 // This function loops waiting for all workers to exit.
 // We must signal all semaphores before the loop to ensure workers wake up and exit.
-extern "C" void __imp__sub_827DB880(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_827DB880(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_827DB880) {
     static int s_count = 0; ++s_count;
     printf("[827DB880] #%d ENTER - worker shutdown loop, signaling all semaphores\n", s_count);
@@ -14093,40 +14068,40 @@ PPC_FUNC(sub_827DB880) {
     printf("[827DB880] #%d calling original function\n", s_count);
     fflush(stdout);
     
-    __imp__sub_827DB880(ctx, base);
+    sub_827DB880(ctx, base);
     
     printf("[827DB880] #%d EXIT\n", s_count);
     fflush(stdout);
 }
 
-extern "C" void __imp__sub_82268260(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82268260(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_82268260) {
     static int s_count = 0; ++s_count;
     printf("[82268260] #%d ENTER\n", s_count);
-    __imp__sub_82268260(ctx, base);
+    sub_82268260(ctx, base);
     printf("[82268260] #%d EXIT\n", s_count);
 }
 
-extern "C" void __imp__sub_8221BFF0(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_8221BFF0(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_8221BFF0) {
     static int s_count = 0; ++s_count;
     printf("[8221BFF0] #%d ENTER\n", s_count);
-    __imp__sub_8221BFF0(ctx, base);
+    sub_8221BFF0(ctx, base);
     printf("[8221BFF0] #%d EXIT\n", s_count);
 }
 
-extern "C" void __imp__sub_82297B08(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82297B08(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_82297B08) {
     static int s_count = 0; ++s_count;
     printf("[82297B08] #%d ENTER\n", s_count);
-    __imp__sub_82297B08(ctx, base);
+    sub_82297B08(ctx, base);
     printf("[82297B08] #%d EXIT\n", s_count);
 }
 
-extern "C" void __imp__sub_82212E08(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82212E08(PPCContext& ctx, uint8_t* base);
 PPC_FUNC(sub_82212E08) {
     static int s_count = 0; ++s_count;
     printf("[82212E08] #%d ENTER\n", s_count);
-    __imp__sub_82212E08(ctx, base);
+    sub_82212E08(ctx, base);
     printf("[82212E08] #%d EXIT\n", s_count);
 }
