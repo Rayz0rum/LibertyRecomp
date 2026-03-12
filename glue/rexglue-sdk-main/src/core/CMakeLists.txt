@@ -42,6 +42,24 @@ if(WIN32)
         string_win.cpp
         threading_win.cpp
     )
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Switch")
+    # Switch / libnx: devkitA64 provides a POSIX-like layer via newlib.
+    # Use the posix sources; syscalls not available (no rt/dl) are stubbed by libnx.
+    target_sources(rexcore PRIVATE
+        atomic_posix.cpp
+        clock_posix.cpp
+        dbg_posix.cpp
+        dynlib_posix.cpp
+        exception_handler_posix.cpp
+        filesystem_posix.cpp
+        mapped_memory_posix.cpp
+        math_gcc.cpp
+        memory_posix.cpp
+        seh_posix.cpp
+        socket_posix.cpp
+        string_posix.cpp
+        threading_posix.cpp
+    )
 elseif(UNIX)
     target_sources(rexcore PRIVATE
         atomic_posix.cpp
@@ -61,19 +79,24 @@ elseif(UNIX)
 endif()
 
 target_include_directories(rexcore PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../include>
+    $<BUILD_INTERFACE:${REXGLUE_ROOT}/include>
+    $<BUILD_INTERFACE:${PROJECT_BINARY_DIR}/include>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 
 target_include_directories(rexcore PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/../..
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../thirdparty/cli11/include
+    ${REXGLUE_ROOT}
+    ${REXGLUE_ROOT}/thirdparty/cli11/include
 )
 
-if(UNIX AND NOT APPLE)
+if(CMAKE_SYSTEM_NAME STREQUAL "Switch")
+    # libnx (devkitA64) provides pthread-compatible threading via its own runtime.
+    # No separate rt/dl needed — newlib stubs cover them.
+    target_link_libraries(rexcore PRIVATE pthread)
+elseif(UNIX AND NOT APPLE)
     target_link_libraries(rexcore PRIVATE pthread rt dl)
 elseif(APPLE)
-    target_link_libraries(rexcore PRIVATE pthread dl)
+    target_link_libraries(rexcore PRIVATE pthread)
 endif()
 
 target_link_libraries(rexcore

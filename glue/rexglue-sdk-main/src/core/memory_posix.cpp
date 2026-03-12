@@ -427,6 +427,13 @@ FileMappingHandle CreateFileMappingHandle(const std::filesystem::path& path, siz
   }
   oflag |= O_CREAT;
   auto full_path = MakeShmName(path);
+#if REX_PLATFORM_SWITCH
+  // libnx (newlib) has no shm_open; fall back to a plain anonymous fd via memfd_create
+  // if available, otherwise return invalid so callers use anonymous mmap instead.
+  (void)full_path;
+  (void)oflag;
+  return kFileMappingHandleInvalid;
+#else
   int ret = shm_open(full_path.c_str(), oflag, 0777);
   if (ret < 0) {
     return kFileMappingHandleInvalid;
@@ -437,6 +444,7 @@ FileMappingHandle CreateFileMappingHandle(const std::filesystem::path& path, siz
     return kFileMappingHandleInvalid;
   }
   return static_cast<FileMappingHandle>(ret);
+#endif  // REX_PLATFORM_SWITCH
 #endif
 }
 

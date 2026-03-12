@@ -143,20 +143,20 @@ PPC_FUNC(sub_82619B88)
 }
 
 float ShadowScaleFactor(EShadowResolution ref) {
-    switch (ref) {
-        case EShadowResolution::x512:
-            return 0.5f;
-        case EShadowResolution::x1024:
-            return 1.0f;
-        case EShadowResolution::x2048:
-            return 2.0f;
-        case EShadowResolution::x4096:
-            return 4.0f;
-        case EShadowResolution::x8192:
-            return 8.0f;
-        default:
-            return 1.0f;
+    // Returns scale factor relative to the original Xbox 360 shadow base of 256 pixels.
+    // user0 hook sets the shadow RT to Config::ShadowResolution.Value pixels directly,
+    // so this multiplier should match that ratio (value/256) to keep CSM tiles consistent.
+    //   x512  → 512/256 = 2×  original
+    //   x1024 → 4×  original
+    //   x2048 → 8×  original
+    //   x4096 → 16× original (default)
+    //   x8192 → 32× original
+    constexpr float kOriginalBase = 256.0f;
+    int32_t resValue = static_cast<int32_t>(ref);
+    if (resValue > 0) {
+        return static_cast<float>(resValue) / kOriginalBase;
     }
+    return 1.0f;  // EShadowResolution::Original — keep native size
 }
 
 // CreateArrayTexture

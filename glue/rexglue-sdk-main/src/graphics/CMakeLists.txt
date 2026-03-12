@@ -118,10 +118,12 @@ target_include_directories(rexgraphics PRIVATE
 target_link_libraries(rexgraphics PUBLIC
     rexcore
     rexsystem
-    rexui
     xxHash::xxhash
     snappy
 )
+if(TARGET rexui)
+    target_link_libraries(rexgraphics PUBLIC rexui)
+endif()
 
 if(REXGLUE_USE_VULKAN)
     target_link_libraries(rexgraphics PUBLIC

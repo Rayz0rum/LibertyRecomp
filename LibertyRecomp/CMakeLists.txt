@@ -448,6 +448,8 @@ elseif (LIBERTY_RECOMP_TARGET_PLATFORM STREQUAL "ios" OR CMAKE_SYSTEM_NAME STREQ
 
     add_executable(LibertyRecomp MACOSX_BUNDLE
             ${LIBERTY_RECOMP_CXX_SOURCES}
+            "res/ios/Assets.xcassets"
+            "res/ios/LaunchScreen.storyboard"
     )
     set_target_properties(LibertyRecomp PROPERTIES
             OUTPUT_NAME "Liberty Recompiled"
@@ -456,6 +458,9 @@ elseif (LIBERTY_RECOMP_TARGET_PLATFORM STREQUAL "ios" OR CMAKE_SYSTEM_NAME STREQ
             MACOSX_BUNDLE_BUNDLE_NAME "Liberty Recompiled"
             MACOSX_BUNDLE_BUNDLE_VERSION ${IOS_BUNDLE_VERSION}
             MACOSX_BUNDLE_SHORT_VERSION_STRING ${IOS_BUNDLE_VERSION}
+            MACOSX_BUNDLE_ICON_FILE "AppIcon"
+            XCODE_ATTRIBUTE_ASSETCATALOG_COMPILER_APPICON_NAME "AppIcon"
+            XCODE_ATTRIBUTE_INFOPLIST_KEY_UILaunchStoryboardName "LaunchScreen"
             XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2"
             XCODE_ATTRIBUTE_IPHONEOS_DEPLOYMENT_TARGET "16.0"
             XCODE_ATTRIBUTE_ENABLE_BITCODE "NO"

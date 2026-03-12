@@ -54,18 +54,13 @@ set(REXKERNEL_SOURCES
     xboxkrnl/xboxkrnl_video.cpp
     xboxkrnl/xboxkrnl_xconfig.cpp
     xboxkrnl/xboxkrnl_audio.cpp
+    $<$<NOT:$<BOOL:${APPLE}>>:xboxkrnl/xboxkrnl_audio_xma.cpp>
 
-    # rexcrt: native CRT replacements for statically-linked PPC CRT functions
+    crt/heap.cpp
+    crt/file.cpp
     crt/memory.cpp
     crt/string.cpp
-    crt/file.cpp
-    crt/heap.cpp
 )
-
-# XMA audio requires FFmpeg (not available on macOS)
-if(NOT APPLE)
-    list(APPEND REXKERNEL_SOURCES xboxkrnl/xboxkrnl_audio_xma.cpp)
-endif()
 
 add_library(rexkernel STATIC ${REXKERNEL_SOURCES})
 add_library(rex::kernel ALIAS rexkernel)
@@ -76,6 +71,7 @@ target_include_directories(rexkernel PUBLIC
 )
 target_include_directories(rexkernel PRIVATE
     ${REXGLUE_ROOT}/thirdparty
+    ${REXGLUE_ROOT}/thirdparty/imgui
 )
 
 target_link_libraries(rexkernel
@@ -84,7 +80,7 @@ target_link_libraries(rexkernel
     PRIVATE
         rexgraphics
         rexinput
-        $<$<NOT:$<BOOL:${APPLE}>>:rexaudio>
-        $<$<TARGET_EXISTS:o1heap>:o1heap>
+        rexaudio
+        $<IF:$<TARGET_EXISTS:rexglue_o1heap>,rexglue_o1heap,o1heap>
 )
 

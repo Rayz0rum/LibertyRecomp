@@ -10,25 +10,35 @@
 #include <rex/chrono/clock.h>
 #include <rex/platform.h>
 
-static_assert(REX_PLATFORM_LINUX || REX_PLATFORM_MAC, "This file is POSIX-only");
+static_assert(REX_PLATFORM_POSIX, "This file requires a POSIX-like platform (macOS, iOS, Linux, Android, PS4, Switch)");
 
 #include <sys/time.h>
+
+// CLOCK_MONOTONIC_RAW is a Linux extension (avoids NTP slew adjustments).
+// PS4 (FreeBSD-derived) and Switch (libnx/newlib) only expose CLOCK_MONOTONIC.
+// Using CLOCK_MONOTONIC on all non-Linux POSIX platforms is equivalent for our
+// purposes: we only need a stable, monotonically increasing nanosecond source.
+#if REX_PLATFORM_LINUX && defined(CLOCK_MONOTONIC_RAW)
+#  define REX_CLOCK_MONOTONIC CLOCK_MONOTONIC_RAW
+#else
+#  define REX_CLOCK_MONOTONIC CLOCK_MONOTONIC
+#endif
 
 namespace rex::chrono {
 
 uint64_t Clock::host_tick_frequency_platform() {
   timespec res;
-  int error = clock_getres(CLOCK_MONOTONIC_RAW, &res);
+  int error = clock_getres(REX_CLOCK_MONOTONIC, &res);
   assert_zero(error);
   assert_zero(res.tv_sec);  // Sub second resolution is required.
 
-  // Convert nano seconds to hertz. Resolution is 1ns on most systems.
+  // Convert nanoseconds to hertz. Resolution is 1 ns on most systems.
   return 1000000000ull / res.tv_nsec;
 }
 
 uint64_t Clock::host_tick_count_platform() {
   timespec tp;
-  int error = clock_gettime(CLOCK_MONOTONIC_RAW, &tp);
+  int error = clock_gettime(REX_CLOCK_MONOTONIC, &tp);
   assert_zero(error);
 
   return tp.tv_nsec + tp.tv_sec * 1000000000ull;

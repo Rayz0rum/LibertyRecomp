@@ -61,13 +61,6 @@ if(WIN32)
         window_win.cpp
         windowed_app_context_win.cpp
     )
-elseif(APPLE)
-    set(REXUI_PLATFORM_SOURCES
-        # macOS: no GTK/X11 — stub implementations
-        surface_macos.cpp
-        window_macos.cpp
-        windowed_app_context_macos.cpp
-    )
 else()
     set(REXUI_PLATFORM_SOURCES
         surface_gnulinux.cpp
@@ -122,7 +115,7 @@ if(WIN32)
         dwmapi
         Shcore
     )
-elseif(NOT APPLE)
+else()
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(GTK3 REQUIRED gtk+-3.0)
     pkg_check_modules(X11_XCB REQUIRED x11-xcb)

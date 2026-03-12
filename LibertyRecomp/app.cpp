@@ -29,6 +29,8 @@ void App::Restart(std::vector<std::string> restartArgs)
 
 void App::Exit()
 {
+    printf("[APP-EXIT] App::Exit() called!\n");
+    fflush(stdout);
     Config::Save();
 
 #ifdef _WIN32

@@ -68,6 +68,8 @@ void Memory::InitializeFromRexGlue()
 
     // Shared init: manual stubs, vtable pre-population
     PopulateFunctionTableAndVtables();
+
+    fprintf(stderr, "[DIAG] Post-Populate GetFunction(0x82A692C8)=%p\n", (void*)rex_memory_->GetFunction(0x82A692C8));
 }
 
 void Memory::PopulateFunctionTableAndVtables()

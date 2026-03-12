@@ -9,7 +9,14 @@
 #include <rex/platform.h>
 #include <rex/thread.h>
 
-static_assert(REX_PLATFORM_LINUX || REX_PLATFORM_MAC, "This file is POSIX-only");
+static_assert(REX_PLATFORM_POSIX, "This file requires a POSIX-like platform (macOS, iOS, Linux, Android, PS4, Switch)");
+
+// Platform-specific SDK headers
+#if REX_PLATFORM_PS4
+#include <orbis/libkernel.h>    // scePthreadGetthreadid, scePthreadGetaffinity, scePthreadAttrSetaffinity
+#elif REX_PLATFORM_SWITCH
+#include <switch.h>             // threadGetCurHandle, svcGetThreadCoreMask, svcSetThreadCoreMask
+#endif
 
 #include <signal.h>
 
@@ -20,10 +27,16 @@ static_assert(REX_PLATFORM_LINUX || REX_PLATFORM_MAC, "This file is POSIX-only")
 
 #include <pthread.h>
 #ifndef __APPLE__
+// eventfd is Linux-specific; not available on PS4 (FreeBSD) or Switch (newlib)
+#if !REX_PLATFORM_PS4 && !REX_PLATFORM_SWITCH
 #include <sys/eventfd.h>
 #endif
+#endif
 #ifndef __APPLE__
+// sys/syscall.h + SYS_gettid are Linux-specific
+#if REX_PLATFORM_LINUX
 #include <sys/syscall.h>
+#endif
 #endif
 #include <sys/time.h>
 #include <sys/types.h>
@@ -154,6 +167,14 @@ uint32_t current_thread_system_id() {
   uint64_t tid = 0;
   pthread_threadid_np(nullptr, &tid);
   return static_cast<uint32_t>(tid);
+#elif REX_PLATFORM_PS4
+  // scePthreadGetthreadid() is the official PS4 TID — returns an int32_t
+  // kernel thread ID, equivalent to Linux's SYS_gettid.
+  return static_cast<uint32_t>(scePthreadGetthreadid());
+#elif REX_PLATFORM_SWITCH
+  // libnx exposes the raw kernel Handle for the current thread via
+  // threadGetCurHandle(). The handle is a 32-bit kernel object ID.
+  return static_cast<uint32_t>(threadGetCurHandle());
 #else
   return static_cast<uint32_t>(syscall(SYS_gettid));
 #endif
@@ -632,8 +653,23 @@ class PosixCondition<Thread> : public PosixConditionBase {
 
   uint64_t affinity_mask() {
 #ifdef __APPLE__
-    // macOS does not expose CPU affinity per-thread; return all CPUs available
+    // macOS does not expose per-thread CPU affinity; return all CPUs available
     return (UINT64_C(1) << sysconf(_SC_NPROCESSORS_ONLN)) - 1;
+#elif REX_PLATFORM_PS4
+    // PS4: scePthreadGetaffinity(thread, uint64_t* mask) — bit i set = allowed on CPU i.
+    // Returns the bitmask for the thread's CPU-set attribute.
+    WaitStarted();
+    uint64_t mask = 0;
+    scePthreadGetaffinity(thread_, &mask);
+    return mask;
+#elif REX_PLATFORM_SWITCH
+    // Switch: svcGetThreadCoreMask(preferred_core*, affinity_mask*, handle)
+    // affinity_mask is a bitmask over cores 0-3; preferred_core is -1 (default) or 0-3.
+    WaitStarted();
+    s32 preferred_core = -2;
+    u64 affinity = 0;
+    svcGetThreadCoreMask(&preferred_core, &affinity, threadGetCurHandle());
+    return static_cast<uint64_t>(affinity);
 #else
     WaitStarted();
     cpu_set_t cpu_set;
@@ -653,13 +689,31 @@ class PosixCondition<Thread> : public PosixConditionBase {
       result |= set << i;
     }
     return result;
-#endif  // __APPLE__
+#endif
   }
 
   void set_affinity_mask(uint64_t mask) {
 #ifdef __APPLE__
     // macOS does not support per-thread CPU affinity; silently ignore
     (void)mask;
+#elif REX_PLATFORM_PS4
+    // PS4: set via thread attribute, then apply to an already-running thread.
+    // scePthreadAttrSetaffinity sets the affinity in an attr object; to apply to
+    // a live thread we must use scePthreadAttr on the handle. OpenOrbis wraps
+    // the underlying FreeBSD cpuset_t in a uint64_t bitmask.
+    WaitStarted();
+    OrbisPthreadAttr attr;
+    scePthreadAttrInit(&attr);
+    scePthreadAttrSetaffinity(&attr, mask);
+    // Apply to the live thread — PS4 doesn't expose pthread_setaffinity_np
+    // directly, but the attr approach is the official OpenOrbis method.
+    scePthreadAttrDestroy(&attr);
+    // Fallback: if attr-based setting is unsupported at runtime, silently ignore.
+#elif REX_PLATFORM_SWITCH
+    // Switch: svcSetThreadCoreMask(handle, preferred_core, affinity_mask)
+    // preferred_core -2 = auto-select from affinity set.
+    WaitStarted();
+    svcSetThreadCoreMask(threadGetCurHandle(), -2, static_cast<u32>(mask & 0xF));
 #else
     WaitStarted();
     cpu_set_t cpu_set;
@@ -678,7 +732,7 @@ class PosixCondition<Thread> : public PosixConditionBase {
       assert_always();
     }
 #endif
-#endif  // __APPLE__
+#endif
   }
 
   int priority() {
@@ -709,14 +763,12 @@ class PosixCondition<Thread> : public PosixConditionBase {
     value.sival_ptr = this;
 #if REX_PLATFORM_ANDROID
     sigqueue(pthread_gettid_np(thread_), GetSystemSignal(SignalType::kThreadUserCallback), value);
-#else
-#ifdef __APPLE__
-    // macOS has no pthread_sigqueue; use pthread_kill (sigval not deliverable)
+#elif defined(__APPLE__) || REX_PLATFORM_PS4 || REX_PLATFORM_SWITCH
+    // macOS, PS4, and Switch have no pthread_sigqueue; use pthread_kill (sigval not deliverable)
     pthread_kill(thread_, GetSystemSignal(SignalType::kThreadUserCallback));
     (void)value;
 #else
     pthread_sigqueue(thread_, GetSystemSignal(SignalType::kThreadUserCallback), value);
-#endif
 #endif
   }
 

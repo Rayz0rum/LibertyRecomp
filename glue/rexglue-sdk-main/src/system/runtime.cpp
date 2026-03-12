@@ -279,6 +279,50 @@ bool Runtime::SetupVfs() {
   // Games handle "device not found" gracefully but don't handle actual device
   // errors (like NAME_COLLISION) well. Let cache: fail cleanly.
 
+  // ── User data (save games, settings, screenshots) ──────────────────────────
+  // Mount user_data_root_ as a *writable* device so the Xbox360 VFS layer can
+  // resolve save-data paths that the game writes through NtCreateFile / XFF.
+  //
+  // The guest game uses "hdd:\\" paths for persistent storage; we map those to
+  // this writable partition rather than the read-only game device.
+  //
+  // Platform roots (set by ReXApp::OnInitialize):
+  //   Desktop : ~/.local/share/<AppName>/   (normal writable directory)
+  //   PS4     : /savedata0/                 (sceSaveDataMount2 result)
+  //   Switch  : save:/                      (fsdevMountSaveData result)
+  if (!user_data_root_.empty()) {
+    auto abs_user_root = std::filesystem::absolute(user_data_root_);
+
+    // Create the directory if it doesn't exist (desktop; PS4/Switch already
+    // exist at mount time).
+    if (!std::filesystem::exists(abs_user_root)) {
+      std::error_code ec;
+      std::filesystem::create_directories(abs_user_root, ec);
+      if (ec) {
+        REXSYS_WARN("SetupVfs: could not create user data dir {}: {}",
+                    abs_user_root.string(), ec.message());
+      }
+    }
+
+    if (std::filesystem::exists(abs_user_root)) {
+      auto user_mount = "\\Device\\Harddisk0\\PartitionUser";
+      auto user_device = std::make_unique<rex::filesystem::HostPathDevice>(
+          user_mount, abs_user_root, /*read_only=*/false);
+
+      if (user_device->Initialize() &&
+          file_system_->RegisterDevice(std::move(user_device))) {
+        // hdd:\  — the symbolic link the Xbox360 kernel uses for the hard disk
+        // partition where user data lives.  GTA IV writes saves here.
+        file_system_->RegisterSymbolicLink("hdd:", user_mount);
+        // userdata: — convenience alias used by rexglue's content_manager
+        file_system_->RegisterSymbolicLink("userdata:", user_mount);
+        REXSYS_INFO("  Mounted {} at hdd: / userdata:", abs_user_root.string());
+      } else {
+        REXSYS_WARN("SetupVfs: failed to mount user data at {}", abs_user_root.string());
+      }
+    }
+  }
+
   return true;
 }
 

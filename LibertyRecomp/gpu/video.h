@@ -550,7 +550,8 @@ enum GuestPrimitiveType
     D3DPT_LINESTRIP = 3,
     D3DPT_TRIANGLELIST = 4,
     D3DPT_TRIANGLEFAN = 5,
-    D3DPT_TRIANGLESTRIP = 6,
+    D3DPT_RECTLIST = 6,      // Xenos 3-vertex screen-aligned quad (postfx, UI)
+    D3DPT_TRIANGLESTRIP = 8, // Corrected: Xenos TriStrip opcode is 8 not 6
     D3DPT_QUADLIST = 13
 };
 

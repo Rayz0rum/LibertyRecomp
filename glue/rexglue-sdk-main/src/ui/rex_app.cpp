@@ -13,6 +13,15 @@
 
 #include <rex/cvar.h>
 #include <rex/filesystem.h>
+#include <rex/platform.h>
+
+// PS4: save data must be explicitly mounted before the VFS can use it.
+#if REX_PLATFORM_PS4
+#  include <os/ps4/savedata_ps4.h>
+extern int32_t g_ps4_user_id;  // set by ps4_main.cpp via sceUserServiceGetInitialUser
+#endif
+
+
 #include <rex/logging/sink.h>
 #include <rex/logging.h>
 #include <rex/ui/overlay/console_overlay.h>
@@ -56,21 +65,53 @@ ReXApp::ReXApp(ui::WindowedAppContext& ctx, std::string_view name, PPCImageInfo 
 bool ReXApp::OnInitialize() {
   auto exe_dir = rex::filesystem::GetExecutableFolder();
 
-  // Game directory: positional arg or default to exe_dir/assets
+  // ── Game directory ──────────────────────────────────────────────────────────
+  // Priority: CLI positional arg > platform default.
+  //
+  //   Desktop  : <exe_dir>/assets/
+  //   PS4      : /app0/           (kernel always extracts PKG here; read-only)
+  //   Switch   : romfs:/game/     (NRO RomFS section; read-only)
   std::filesystem::path game_dir;
   if (auto arg = GetArgument("game_directory")) {
     game_dir = *arg;
   } else {
+#if REX_PLATFORM_PS4
+    game_dir = std::filesystem::path("/app0");
+#elif REX_PLATFORM_SWITCH
+    game_dir = std::filesystem::path("romfs:/game");
+#else
     game_dir = exe_dir / "assets";
+#endif
   }
 
-  // User data: cvar override, or platform default
+  // ── User / save data directory ─────────────────────────────────────────────
+  // Priority: cvar override > platform default.
+  //
+  //   Desktop  : <XDG_DATA_HOME or ~/.local/share>/<AppName>/
+  //   PS4      : /savedata0/      (mounted by MountSaveData() below)
+  //   Switch   : save:/           (mounted as "save" device by __appInit)
   std::filesystem::path user_dir;
   std::string user_data_cvar = REXCVAR_GET(user_data_root);
   if (!user_data_cvar.empty()) {
     user_dir = user_data_cvar;
   } else {
+#if REX_PLATFORM_PS4
+    // Mount the SCE save-data container now, before SetupVfs() runs.
+    // MountSaveData returns the POSIX mount point (e.g. "/savedata0").
+    // If it fails we fall back to /app0 (read-only) so the game can at least
+    // boot and warn the player rather than crash silently.
+    std::string save_mp = os::savedata::MountSaveData(g_ps4_user_id, "GTAIV00");
+    user_dir = save_mp.empty() ? std::filesystem::path("/app0")
+                               : std::filesystem::path(save_mp);
+#elif REX_PLATFORM_SWITCH
+    // save:/ was mounted by __appInit via fsdevMountSaveData().
+    // If the mount failed (no user resolved) fall back to sdmc:/LibertyRecomp/.
+    user_dir = std::filesystem::exists("save:/")
+             ? std::filesystem::path("save:/")
+             : std::filesystem::path("sdmc:/LibertyRecomp");
+#else
     user_dir = rex::filesystem::GetUserFolder() / GetName();
+#endif
   }
 
   // Update data: cvar override, or empty (opt-in)

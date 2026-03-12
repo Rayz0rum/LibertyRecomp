@@ -84,6 +84,17 @@ target_include_directories(mspack PUBLIC
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 target_compile_options(mspack PRIVATE -w)
 
+# o1heap for rexglue - SDK uses a different version (O1HEAP_ALIGNMENT = sizeof(void*)*2)
+# from the top-level project's o1heap (sizeof(void*)*4). Build SDK's copy separately.
+if(TARGET o1heap)
+    # Rename the top-level o1heap target reference so rexkernel doesn't pick it up
+    set(_REXGLUE_O1HEAP_DIR "${REX_3P}/o1heap/o1heap")
+    add_library(rexglue_o1heap STATIC "${_REXGLUE_O1HEAP_DIR}/o1heap.c")
+    target_include_directories(rexglue_o1heap PUBLIC
+        $<BUILD_INTERFACE:${_REXGLUE_O1HEAP_DIR}>)
+    target_compile_options(rexglue_o1heap PRIVATE -w)
+endif()
+
 # abseil-cpp - use vcpkg's abseil to avoid duplicate symbols with
 # protobuf/GameNetworkingSockets which also link vcpkg abseil.
 find_package(absl CONFIG REQUIRED)

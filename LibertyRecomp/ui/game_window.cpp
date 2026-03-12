@@ -41,6 +41,8 @@ int Window_OnSDLEvent(void*, SDL_Event* event)
             if (App::s_isSaving)
                 break;
 
+            printf("[SDL_QUIT] App::Exit() triggered from Window_OnSDLEvent!\n");
+            fflush(stdout);
             App::Exit();
 
             break;

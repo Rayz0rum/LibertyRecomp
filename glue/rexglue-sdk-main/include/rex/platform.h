@@ -28,13 +28,23 @@
 #include <TargetConditionals.h>
 #endif
 
-#if defined(TARGET_OS_MAC) && TARGET_OS_MAC
+// NOTE: Order matters — on iOS, TARGET_OS_MAC is also 1 (Apple family).
+// Check TARGET_OS_IOS first so iOS is not mis-identified as macOS.
+#if defined(TARGET_OS_IOS) && TARGET_OS_IOS
+#define REX_PLATFORM_IOS 1
+#elif defined(TARGET_OS_MAC) && TARGET_OS_MAC
 #define REX_PLATFORM_MAC 1
 #elif defined(WIN32) || defined(_WIN32)
 #define REX_PLATFORM_WIN32 1
 #elif defined(__ANDROID__)
 #define REX_PLATFORM_ANDROID 1
 #define REX_PLATFORM_LINUX 1
+#elif defined(__ORBIS__) || defined(__SCE__)
+// PS4 / OpenOrbis: clang targeting x86_64-scei-ps4 defines __ORBIS__
+#define REX_PLATFORM_PS4 1
+#elif defined(__SWITCH__)
+// Nintendo Switch / libnx (devkitA64): toolchain defines __SWITCH__
+#define REX_PLATFORM_SWITCH 1
 #elif defined(__gnu_linux__)
 #define REX_PLATFORM_GNU_LINUX 1
 #define REX_PLATFORM_LINUX 1
@@ -44,6 +54,9 @@
 
 // Ensure all platform macros are always defined (0 when inactive)
 // so they can be used in static_assert and regular expressions.
+#ifndef REX_PLATFORM_IOS
+#define REX_PLATFORM_IOS 0
+#endif
 #ifndef REX_PLATFORM_MAC
 #define REX_PLATFORM_MAC 0
 #endif
@@ -52,6 +65,12 @@
 #endif
 #ifndef REX_PLATFORM_ANDROID
 #define REX_PLATFORM_ANDROID 0
+#endif
+#ifndef REX_PLATFORM_PS4
+#define REX_PLATFORM_PS4 0
+#endif
+#ifndef REX_PLATFORM_SWITCH
+#define REX_PLATFORM_SWITCH 0
 #endif
 #ifndef REX_PLATFORM_GNU_LINUX
 #define REX_PLATFORM_GNU_LINUX 0
@@ -118,6 +137,16 @@
 #else
 #define REX_HAS_BUILTIN_STRLEN 0
 #define REX_LACKS_FLOAT_FROM_CHARS 0
+#endif
+
+// Convenience: true on any POSIX-like platform.
+// macOS/iOS are full POSIX. Linux/Android are full POSIX.
+// PS4 (OpenOrbis/FreeBSD-derived) and Switch (libnx/newlib) provide enough
+// POSIX surface area to share the posix source files.
+#if REX_PLATFORM_MAC || REX_PLATFORM_IOS || REX_PLATFORM_LINUX || REX_PLATFORM_PS4 || REX_PLATFORM_SWITCH
+#define REX_PLATFORM_POSIX 1
+#else
+#define REX_PLATFORM_POSIX 0
 #endif
 
 namespace rex {

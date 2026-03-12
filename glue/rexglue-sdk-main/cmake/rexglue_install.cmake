@@ -3,7 +3,9 @@
 #==========================================================
 set_target_properties(rexcore PROPERTIES EXPORT_NAME core)
 set_target_properties(rexfilesystem PROPERTIES EXPORT_NAME filesystem)
-set_target_properties(rexui PROPERTIES EXPORT_NAME ui)
+if(TARGET rexui)
+    set_target_properties(rexui PROPERTIES EXPORT_NAME ui)
+endif()
 set_target_properties(rexinput PROPERTIES EXPORT_NAME input)
 set_target_properties(rexaudio PROPERTIES EXPORT_NAME audio)
 set_target_properties(rexgraphics PROPERTIES EXPORT_NAME graphics)
@@ -37,7 +39,16 @@ if(REXGLUE_USE_D3D12)
     list(APPEND REXGLUE_INSTALL_TARGETS dxc-headers)
 endif()
 
-install(TARGETS ${REXGLUE_INSTALL_TARGETS}
+# Filter out any targets that don't exist at configure time
+# (e.g. SPIRV-Tools-static when only the merged target is built)
+set(_FILTERED_TARGETS)
+foreach(_t ${REXGLUE_INSTALL_TARGETS})
+    if(TARGET ${_t})
+        list(APPEND _FILTERED_TARGETS ${_t})
+    endif()
+endforeach()
+
+install(TARGETS ${_FILTERED_TARGETS}
     EXPORT rexglueTargets
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
@@ -137,13 +148,7 @@ install(EXPORT rexglueTargets
 )
 
 # Register in the CMake User Package Registry after install.
-# This makes find_package(rexglue) work with no REXSDK env var or CMAKE_PREFIX_PATH.
-# Multiple SxS installs coexist. Each prefix gets a unique hash entry.
-#
-# Windows: HKCU\Software\Kitware\CMake\Packages\rexglue  (REG_SZ, value name = MD5 hash)
-# Unix:    ~/.cmake/packages/rexglue/<hash>               (file containing prefix path)
 install(CODE [[
-    # Normalize path casing on Windows before hashing to avoid duplicate entries
     if(CMAKE_HOST_WIN32)
         string(TOLOWER "${CMAKE_INSTALL_PREFIX}" _reg_key)
     else()
@@ -152,7 +157,6 @@ install(CODE [[
     string(MD5 _hash "${_reg_key}")
 
     if(CMAKE_HOST_WIN32)
-        # Windows CMake User Package Registry lives in HKCU (not the filesystem)
         set(_reg_root "HKCU\\Software\\Kitware\\CMake\\Packages\\rexglue")
         execute_process(
             COMMAND reg add "${_reg_root}" /v "${_hash}" /t REG_SZ /d "${CMAKE_INSTALL_PREFIX}" /f

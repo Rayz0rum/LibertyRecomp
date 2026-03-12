@@ -4,6 +4,7 @@
 set(REXAUDIO_SOURCES
     audio_driver.cpp
     audio_system.cpp
+    xma_register_file.cpp
     # NOP backend (always available)
     nop/nop_audio_system.cpp
     # SDL backend
@@ -11,13 +12,9 @@ set(REXAUDIO_SOURCES
     sdl/sdl_audio_driver.cpp
 )
 
-# XMA decoding requires FFmpeg (not available on macOS)
 if(NOT APPLE)
-    list(APPEND REXAUDIO_SOURCES
-        xma_context.cpp
-        xma_decoder.cpp
-        xma_register_file.cpp
-    )
+    # XMA decoding requires FFmpeg (libavcodec/libavutil)
+    list(APPEND REXAUDIO_SOURCES xma_context.cpp xma_decoder.cpp)
 endif()
 
 add_library(rexaudio STATIC ${REXAUDIO_SOURCES})
@@ -32,7 +29,8 @@ target_link_libraries(rexaudio
     PUBLIC rexcore SDL2::SDL2
 )
 
-# Link FFmpeg only on non-Apple platforms
 if(NOT APPLE)
-    target_link_libraries(rexaudio PUBLIC libavcodec libavutil)
+    target_link_libraries(rexaudio PRIVATE libavcodec libavutil)
+else()
+    target_compile_definitions(rexaudio PRIVATE REX_NO_XMA_DECODER=1)
 endif()

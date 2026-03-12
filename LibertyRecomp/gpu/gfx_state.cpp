@@ -273,9 +273,7 @@ static uint32_t CalculateTriangleCount(D3DPrimitiveType primType, uint32_t count
 void EndDrawCall() {
     s_totalDrawCalls++;
     s_frameDrawCalls++;
-    
-    // Track draw calls per render pass
-    s_frameDrawCalls++;
+    // (removed duplicate s_frameDrawCalls++ that was here — stats were doubled)
     
     // Estimate triangle count based on primitive type
     uint32_t count = s_currentDrawCall.indexed ? 

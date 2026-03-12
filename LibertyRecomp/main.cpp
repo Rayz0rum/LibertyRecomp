@@ -54,6 +54,7 @@
 #include <rex/kernel/user_module.h>
 #include <rex/filesystem/vfs.h>
 #include <rex/filesystem/devices/host_path_device.h>
+#include <rex/kernel/crt/heap.h>
 
 #ifdef _WIN32
 #include <timeapi.h>
@@ -199,6 +200,7 @@ static void ShowVideoBackendErrorAndExit()
         fprintf(stderr, "[Main] Video backend initialization failed (no window available for message box).\n");
         fflush(stderr);
     }
+    printf("[EXIT-TRACE] main.cpp:203 calling _Exit\n"); fflush(stdout);
     std::_Exit(1);
 }
 
@@ -226,6 +228,7 @@ void KiSystemStartup()
     if (g_memory.base == nullptr)
     {
         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, GameWindow::GetTitle(), Localise("System_MemoryAllocationFailed").c_str(), GameWindow::s_pWindow);
+        printf("[EXIT-TRACE] main.cpp:230 calling _Exit\n"); fflush(stdout);
         std::_Exit(1);
     }
 
@@ -240,6 +243,13 @@ void KiSystemStartup()
     // overwrites ALL of that.  Removing eliminates redundant work.
 
     g_userHeap.Init();
+
+    // Initialize rexcrt o1heap for generated code's RtlAllocateHeap hooks
+    if (!rex::kernel::crt::InitHeap(FLAGS_rexcrt_heap_size_mb)) {
+        fprintf(stderr, "[Main] FATAL: rexcrt heap init failed\n");
+        printf("[EXIT-TRACE] main.cpp:248 calling _Exit\n"); fflush(stdout);
+        std::_Exit(1);
+    }
 
     // Initialize save system early - creates directories and registers save content
     SaveSystem::Initialize();
@@ -308,6 +318,7 @@ void init()
         MessageBoxA(nullptr, "Your CPU does not meet the minimum system requirements.", "Liberty Recompiled", MB_ICONERROR);
 #endif
 
+        printf("[EXIT-TRACE] main.cpp:318 calling _Exit\n"); fflush(stdout);
         std::_Exit(1);
     }
 }
@@ -468,6 +479,7 @@ int main(int argc, char *argv[])
         fprintf(stderr, "[Main] Setup() returned 0x%08X\n", rt_status);
         if (rt_status != 0 /* X_STATUS_SUCCESS */) {
             fprintf(stderr, "[Main] FATAL: rex::Runtime::Setup() failed with 0x%08X\n", rt_status);
+            printf("[EXIT-TRACE] main.cpp:478 calling _Exit\n"); fflush(stdout);
             std::_Exit(1);
         }
         // DIAG: verify xstart is registered after Setup()
@@ -627,6 +639,7 @@ int main(int argc, char *argv[])
         }
 
         SDL_ShowSimpleMessageBox(messageBoxStyle, GameWindow::GetTitle(), resultText, GameWindow::s_pWindow);
+        printf("[EXIT-TRACE] main.cpp:637 calling _Exit\n"); fflush(stdout);
         std::_Exit(int(journal.lastResult));
     }
 
@@ -638,6 +651,7 @@ int main(int argc, char *argv[])
             char text[512];
             snprintf(text, sizeof(text), Localise("System_Win32_MissingDLLs").c_str(), dll.data());
             SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, GameWindow::GetTitle(), text, GameWindow::s_pWindow);
+            printf("[EXIT-TRACE] main.cpp:648 calling _Exit\n"); fflush(stdout);
             std::_Exit(1);
         }
     }
@@ -665,6 +679,7 @@ int main(int argc, char *argv[])
 
          if (!InstallerWizard::Run(GetGamePath(), isGameInstalled && forceDLCInstaller))
          {
+             printf("[EXIT-TRACE] main.cpp:675 calling _Exit\n"); fflush(stdout);
              std::_Exit(0);
          }
      }
@@ -697,6 +712,7 @@ int main(int argc, char *argv[])
         {
             // User selected Exit from main menu
             MainMenu::Shutdown();
+            printf("[EXIT-TRACE] main.cpp:707 calling _Exit\n"); fflush(stdout);
             std::_Exit(0);
         }
         MainMenu::Shutdown();
@@ -745,6 +761,7 @@ int main(int argc, char *argv[])
         if (!device->Initialize()) {
             printf("[Main] FATAL: Failed to initialize VFS host device\n");
             fflush(stdout);
+            printf("[EXIT-TRACE] main.cpp:755 calling _Exit\n"); fflush(stdout);
             std::_Exit(1);
         }
         rt->file_system()->RegisterDevice(std::move(device));
@@ -756,6 +773,7 @@ int main(int argc, char *argv[])
         if (xst != 0) {
             printf("[Main] FATAL: LoadXexImage failed: 0x%08X\n", xst);
             fflush(stdout);
+            printf("[EXIT-TRACE] main.cpp:766 calling _Exit\n"); fflush(stdout);
             std::_Exit(1);
         }
 
@@ -850,6 +868,7 @@ int main(int argc, char *argv[])
             fprintf(stderr, "[TERMINATE] no current exception\n");
         }
         fflush(stderr);
+        printf("[EXIT-TRACE] main.cpp:860 calling _Exit\n"); fflush(stdout);
         std::_Exit(99);
     });
 
@@ -874,6 +893,7 @@ int main(int argc, char *argv[])
     if (!main_xthread) {
         printf("[Main] FATAL: LaunchModule() returned null\n");
         fflush(stdout);
+        printf("[EXIT-TRACE] main.cpp:884 calling _Exit\n"); fflush(stdout);
         std::_Exit(1);
     }
     printf("[Main] Main XThread launched via RexGlue (handle=0x%08X)\n",

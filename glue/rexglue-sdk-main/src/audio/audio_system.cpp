@@ -171,9 +171,11 @@ void AudioSystem::Shutdown() {
   }
 
   // Shut down XMA decoder first - its worker can stall in FFmpeg
+#ifndef __APPLE__
   if (xma_decoder_) {
     xma_decoder_->Shutdown();
   }
+#endif
 
   worker_running_ = false;
   shutdown_event_->Set();
