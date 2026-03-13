@@ -15,6 +15,12 @@
 #include <string>
 #include <vector>
 
+// MSVC does not have __builtin_bswap32 - use _byteswap_ulong instead.
+#if defined(_MSC_VER)
+#  include <stdlib.h>
+#  define __builtin_bswap32(x) _byteswap_ulong(x)
+#endif
+
 namespace fs = std::filesystem;
 
 // RAGE FXC Magic: "rgxa" read as little-endian uint32
