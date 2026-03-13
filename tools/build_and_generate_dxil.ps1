@@ -37,13 +37,11 @@ if (-not $CMake) {
 Write-Host "  Using cmake: $CMake"
 
 # --- Detect VS generator via vswhere ----------------------------------------
-# vswhere.exe lives at a fixed location regardless of where VS is installed.
 $VSGenerator = $null
 $VSArch = "x64"
 
 $vswhere = "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe"
 if (Test-Path $vswhere) {
-    # Get the highest installed VS version
     $vsVersionRaw = & $vswhere -latest -property installationVersion 2>$null
     if ($vsVersionRaw) {
         $vsMajor = [int]($vsVersionRaw.Split(".")[0])
@@ -51,14 +49,13 @@ if (Test-Path $vswhere) {
             17 { $VSGenerator = "Visual Studio 17 2022" }
             16 { $VSGenerator = "Visual Studio 16 2019" }
             15 { $VSGenerator = "Visual Studio 15 2017" }
-            default { Write-Host "  vswhere found VS major $vsMajor - trying VS 17 2022" ; $VSGenerator = "Visual Studio 17 2022" }
+            default { $VSGenerator = "Visual Studio 17 2022" }
         }
         Write-Host "  Detected VS $vsVersionRaw -> generator: $VSGenerator"
     }
 }
 
 if (-not $VSGenerator) {
-    # vswhere not found or returned nothing - parse cmake --help for VS generators
     Write-Host "  vswhere not available, scanning cmake generators..."
     $cmakeHelp = & $CMake --help 2>&1 | Out-String
     $generatorOrder = @("Visual Studio 17 2022", "Visual Studio 16 2019", "Visual Studio 15 2017", "Visual Studio 14 2015")
@@ -72,7 +69,6 @@ if (-not $VSGenerator) {
 }
 
 if (-not $VSGenerator) {
-    # Last resort: Ninja (works if you're in a VS Dev Prompt or have LLVM)
     $ninjaCmd = Get-Command ninja -ErrorAction SilentlyContinue
     if ($ninjaCmd) {
         $VSGenerator = "Ninja"
@@ -84,9 +80,8 @@ if (-not $VSGenerator) {
 if (-not $VSGenerator) {
     Write-Error @"
 Could not detect a usable CMake generator.
-Fix: Install VS 2022 with the 'Desktop development with C++' workload from:
+Fix: Install VS 2022 with 'Desktop development with C++' workload from:
   https://visualstudio.microsoft.com/
-Then re-run this script. No Developer Prompt required.
 "@
 }
 Write-Host "  Using generator: $VSGenerator"
@@ -121,6 +116,20 @@ function Run {
     }
 }
 
+# Wipe a build dir if it contains a CMakeCache with a different generator.
+# This prevents the "generator does not match" error after a failed first run.
+function Reset-BuildDirIfStale {
+    param([string]$buildDir)
+    $cacheFile = Join-Path $buildDir "CMakeCache.txt"
+    if (-not (Test-Path $cacheFile)) { return }
+    $cacheContent = Get-Content $cacheFile -Raw
+    # Check if the cached generator matches what we want to use
+    if ($cacheContent -notmatch [regex]::Escape($VSGenerator)) {
+        Write-Host "  Stale CMakeCache detected (wrong generator). Wiping $buildDir ..." -ForegroundColor Yellow
+        Remove-Item -Recurse -Force $buildDir
+    }
+}
+
 function CMakeConfigureArgs {
     param([string]$srcDir, [string[]]$extra)
     $a = @($srcDir, "-G", $VSGenerator)
@@ -142,6 +151,7 @@ Step "Building rage_fxc_extractor"
 if (Test-Path $FxcExtractorExe) {
     Write-Host "  Already built, skipping." -ForegroundColor DarkGray
 } else {
+    Reset-BuildDirIfStale $FxcExtractorBuild
     New-Item -ItemType Directory -Force -Path $FxcExtractorBuild | Out-Null
     Push-Location $FxcExtractorBuild
     try {
@@ -158,6 +168,7 @@ Step "Building XenosRecomp (DXIL enabled)"
 if (Test-Path $XenosRecompExe) {
     Write-Host "  Already built, skipping." -ForegroundColor DarkGray
 } else {
+    Reset-BuildDirIfStale $XenosRecompBuild
     New-Item -ItemType Directory -Force -Path $XenosRecompBuild | Out-Null
     Push-Location $XenosRecompBuild
     try {
