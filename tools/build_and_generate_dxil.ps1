@@ -36,31 +36,58 @@ if (-not $CMake) {
 }
 Write-Host "  Using cmake: $CMake"
 
-# --- Detect VS generator ----------------------------------------------------
-# Pick the highest VS version available so MSBuild is used (no nmake needed).
+# --- Detect VS generator via vswhere ----------------------------------------
+# vswhere.exe lives at a fixed location regardless of where VS is installed.
 $VSGenerator = $null
-$VSGeneratorCandidates = @(
-    @{ Gen = "Visual Studio 17 2022"; Path = "C:\Program Files\Microsoft Visual Studio\2022" },
-    @{ Gen = "Visual Studio 16 2019"; Path = "C:\Program Files\Microsoft Visual Studio\2019" },
-    @{ Gen = "Visual Studio 15 2017"; Path = "C:\Program Files (x86)\Microsoft Visual Studio\2017" }
-)
-foreach ($entry in $VSGeneratorCandidates) {
-    if (Test-Path $entry.Path) { $VSGenerator = $entry.Gen; break }
+$VSArch = "x64"
+
+$vswhere = "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe"
+if (Test-Path $vswhere) {
+    # Get the highest installed VS version
+    $vsVersionRaw = & $vswhere -latest -property installationVersion 2>$null
+    if ($vsVersionRaw) {
+        $vsMajor = [int]($vsVersionRaw.Split(".")[0])
+        switch ($vsMajor) {
+            17 { $VSGenerator = "Visual Studio 17 2022" }
+            16 { $VSGenerator = "Visual Studio 16 2019" }
+            15 { $VSGenerator = "Visual Studio 15 2017" }
+            default { Write-Host "  vswhere found VS major $vsMajor - trying VS 17 2022" ; $VSGenerator = "Visual Studio 17 2022" }
+        }
+        Write-Host "  Detected VS $vsVersionRaw -> generator: $VSGenerator"
+    }
 }
+
 if (-not $VSGenerator) {
-    # Fallback: try Ninja if it's on PATH
+    # vswhere not found or returned nothing - parse cmake --help for VS generators
+    Write-Host "  vswhere not available, scanning cmake generators..."
+    $cmakeHelp = & $CMake --help 2>&1 | Out-String
+    $generatorOrder = @("Visual Studio 17 2022", "Visual Studio 16 2019", "Visual Studio 15 2017", "Visual Studio 14 2015")
+    foreach ($gen in $generatorOrder) {
+        if ($cmakeHelp -match [regex]::Escape($gen)) {
+            $VSGenerator = $gen
+            Write-Host "  Found generator: $VSGenerator"
+            break
+        }
+    }
+}
+
+if (-not $VSGenerator) {
+    # Last resort: Ninja (works if you're in a VS Dev Prompt or have LLVM)
     $ninjaCmd = Get-Command ninja -ErrorAction SilentlyContinue
     if ($ninjaCmd) {
         $VSGenerator = "Ninja"
-        Write-Host "  No VS install detected, falling back to Ninja generator."
-    } else {
-        Write-Error @"
-No Visual Studio install found and 'ninja' is not on PATH.
-Fix options:
-  1. Install VS 2022 from https://visualstudio.microsoft.com/  (Desktop dev with C++ workload)
-  2. Or run this from a VS 2022 Developer Command Prompt (Start menu -> 'Developer PowerShell for VS 2022')
-"@
+        $VSArch = ""
+        Write-Host "  Falling back to Ninja generator."
     }
+}
+
+if (-not $VSGenerator) {
+    Write-Error @"
+Could not detect a usable CMake generator.
+Fix: Install VS 2022 with the 'Desktop development with C++' workload from:
+  https://visualstudio.microsoft.com/
+Then re-run this script. No Developer Prompt required.
+"@
 }
 Write-Host "  Using generator: $VSGenerator"
 
@@ -94,15 +121,12 @@ function Run {
     }
 }
 
-# Build cmake args for configure - VS generators need -A x64; Ninja does not
 function CMakeConfigureArgs {
     param([string]$srcDir, [string[]]$extra)
-    $args = @($srcDir, "-G", $VSGenerator)
-    if ($VSGenerator -like "Visual Studio*") {
-        $args += @("-A", "x64")
-    }
-    $args += $extra
-    return $args
+    $a = @($srcDir, "-G", $VSGenerator)
+    if ($VSArch -ne "") { $a += @("-A", $VSArch) }
+    $a += $extra
+    return $a
 }
 
 # --- 0. Validate fxl_final --------------------------------------------------
