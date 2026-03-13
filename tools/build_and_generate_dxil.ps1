@@ -29,7 +29,8 @@ foreach ($candidate in $CMakeCandidates) {
 }
 if (-not $CMake) {
     # Last resort: check PATH
-    $CMake = (Get-Command cmake -ErrorAction SilentlyContinue)?.Source
+    $cmakeCmd = Get-Command cmake -ErrorAction SilentlyContinue
+    if ($cmakeCmd) { $CMake = $cmakeCmd.Source }
 }
 if (-not $CMake) {
     Write-Error @"
