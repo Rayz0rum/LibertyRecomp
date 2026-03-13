@@ -27,7 +27,8 @@ $XenosRecompBuild  = Join-Path $RepoRoot "tools\XenosRecomp\build_win"
 $XenosRecompExe    = Join-Path $XenosRecompBuild "XenosRecomp\Release\XenosRecomp.exe"
 
 # fxl_final is already extracted on the Mac by the macOS installer
-$FxlFinalDir         = "\\Mac\Home\Library\Application Support\LibertyRecomp\game\common\shaders\fxl_final"
+# fxl_final is inside the repo private dir - visible to Windows over the Mac share
+$FxlFinalDir         = Join-Path $RepoRoot "LibertyRecompLib\private\fxl_final"
 $ExtractedShadersDir = Join-Path $RepoRoot "extracted_shaders"
 $ShaderCacheCpp      = Join-Path $RepoRoot "LibertyRecompLib\shader\shader_cache.cpp"
 $ShaderCommonH       = Join-Path $RepoRoot "tools\XenosRecomp\XenosRecomp\shader_common.h"
