@@ -627,6 +627,65 @@ extern "C" PPC_FUNC(sub_82A487B8) {
 // 0x70xxxxxx range, causing SIGBUS). Pure hardware-bound Xbox 360 D3D code.
 extern "C" PPC_FUNC(sub_82871180) { ctx.r3.u32 = 0; }
 
+// sub_8284CFD8 — Streaming ring-buffer worker pool init
+//
+// This function loops over 2 streaming workers, allocating ring-buffer structs
+// at unk_8319F2F8 + i*24944.  Each struct has a semaphore handle slot at +24940
+// that workers block on via NtWaitForSingleObjectEx.  In BSS the slot is zero,
+// so the wait returns INVALID_HANDLE immediately — workers spin and never sleep,
+// the ring-buffer drain loop never yields, and the main thread's completion
+// event H_c is never released → deadlock in sub_8285D018 wait chain.
+//
+// Previous attempts patched inside the generated code and called sub_82849778
+// (a RAGE utility, not NtCreateSemaphore) — producing PPC code addresses as
+// "handles" which are silently wrong.
+//
+// Fix: override here, call the original __imp__ to let workers be created
+// normally, then post-seed the semaphore handles via rex::system::XSemaphore
+// C++ API — no guest call needed, guaranteed valid kernel object handles.
+extern "C" void __imp__sub_8284CFD8(PPCContext &ctx, uint8_t *base);
+extern "C" PPC_FUNC(sub_8284CFD8) {
+    __imp__sub_8284CFD8(ctx, base);  // run original worker init
+
+    constexpr uint32_t RINGBUF_BASE  = 0x8319F2F8;
+    constexpr uint32_t WORKER_STRIDE = 24944;
+    constexpr uint32_t SEMA_OFFSET   = 24940;
+    constexpr uint32_t NUM_WORKERS   = 2;
+
+    auto* ks = rex::system::kernel_state();
+    if (!ks) {
+        printf("[SEMA-SEED] ERROR: kernel_state() null\n");
+        fflush(stdout);
+        return;
+    }
+
+    for (uint32_t i = 0; i < NUM_WORKERS; i++) {
+        uint32_t ringbuf_addr = RINGBUF_BASE + i * WORKER_STRIDE;
+
+        uint32_t existing = PPC_LOAD_U32(ringbuf_addr + SEMA_OFFSET);
+        // Valid kernel handles are 0xF8xxxxxx; anything else (code ptrs, BSS garbage) needs replacement
+        if ((existing & 0xFF000000u) == 0xF8000000u) {
+            printf("[SEMA-SEED] worker=%u already seeded handle=0x%08X\n", i, existing);
+            fflush(stdout);
+            continue;
+        }
+
+        auto sem = rex::system::object_ref<rex::system::XSemaphore>(
+            new rex::system::XSemaphore(ks));
+        if (!sem->Initialize(0, 0x7FFF)) {
+            printf("[SEMA-SEED] ERROR: XSemaphore::Initialize failed worker=%u\n", i);
+            fflush(stdout);
+            continue;
+        }
+
+        uint32_t handle = sem->handle();
+        PPC_STORE_U32(ringbuf_addr + SEMA_OFFSET, handle);
+        printf("[SEMA-SEED] worker=%u  ringbuf=0x%08X+%u  handle=0x%08X  OK\n",
+               i, ringbuf_addr, SEMA_OFFSET, handle);
+        fflush(stdout);
+    }
+}
+
 // sub_827DF248 - pgStreamer::Init — creates pgStreamer table and worker threads.
 //
 // Problem: pgStreamer worker threads (sub_827DE858) die immediately after
@@ -1055,7 +1114,7 @@ extern "C" PPC_FUNC(sub_82A10EB0) {
 
 extern "C" void __imp__sub_8285D018(PPCContext &ctx, uint8_t *base);
 static std::atomic<int> s_gpuSubmitCount{0};
-PPC_FUNC(sub_8285D018) {
+extern "C" PPC_FUNC(sub_8285D018) {
     // Ring buffer submit+wait: skip all GPU command submission and fence machinery.
     // High-level D3D hooks in video.cpp capture actual rendering.
     int n = s_gpuSubmitCount.fetch_add(1, std::memory_order_relaxed);
@@ -1067,21 +1126,22 @@ PPC_FUNC(sub_8285D018) {
 }
 
 extern "C" void __imp__sub_8285C648(PPCContext &ctx, uint8_t *base);
-PPC_FUNC(sub_8285C648) {
+extern "C" PPC_FUNC(sub_8285C648) {
     // GPU fence wait: immediately signal completion — no GPU hardware to wait on.
     ctx.r3.u32 = 1; // return 1 = fence signaled
 }
 
 extern "C" void __imp__sub_8285CF98(PPCContext &ctx, uint8_t *base);
-PPC_FUNC(sub_8285CF98) {
+extern "C" PPC_FUNC(sub_8285CF98) {
     // Fence create+wait wrapper: return 1 (success) without waiting.
     ctx.r3.u32 = 1;
 }
 
 extern "C" void __imp__sub_828497D8(PPCContext &ctx, uint8_t *base);
-PPC_FUNC(sub_828497D8) {
-    // NtWait dispatcher called by fence wait chain: return 1 (success).
-    ctx.r3.u32 = 1;
+extern "C" PPC_FUNC(sub_828497D8) {
+    // NtWait dispatcher: pass through to original so non-GPU waits still work.
+    // Only the higher-level sub_8285D018/sub_8285C648 stubs short-circuit GPU fences.
+    __imp__sub_828497D8(ctx, base);
 }
 
 // =============================================================================
@@ -1281,7 +1341,7 @@ extern "C" PPC_FUNC(xstart) {
 
 // sub_82A18BE0 — first function called by xstart (firmware/init check)
 extern "C" void __imp__sub_82A18BE0(PPCContext &ctx, uint8_t *base);
-PPC_FUNC(sub_82A18BE0) {
+extern "C" PPC_FUNC(sub_82A18BE0) {
     printf("[DIAG] sub_82A18BE0 ENTER (firmware check) caller=0x%08X\n",
            static_cast<uint32_t>(ctx.lr));
     fflush(stdout);
@@ -1292,7 +1352,7 @@ PPC_FUNC(sub_82A18BE0) {
 
 // sub_82A18B08 — called by sub_82A18BE0, determines if HalReturnToFirmware fires
 extern "C" void __imp__sub_82A18B08(PPCContext &ctx, uint8_t *base);
-PPC_FUNC(sub_82A18B08) {
+extern "C" PPC_FUNC(sub_82A18B08) {
     printf("[DIAG] sub_82A18B08 ENTER (firmware init check)\n");
     fflush(stdout);
     __imp__sub_82A18B08(ctx, base);
@@ -1304,7 +1364,7 @@ PPC_FUNC(sub_82A18B08) {
 
 // sub_82A18620 — second function in xstart (notification callbacks with critical section)
 extern "C" void __imp__sub_82A18620(PPCContext &ctx, uint8_t *base);
-PPC_FUNC(sub_82A18620) {
+extern "C" PPC_FUNC(sub_82A18620) {
     printf("[DIAG] sub_82A18620 ENTER (notification callbacks) arg=0x%08X\n", ctx.r3.u32);
     fflush(stdout);
     __imp__sub_82A18620(ctx, base);
@@ -1314,7 +1374,7 @@ PPC_FUNC(sub_82A18620) {
 
 // sub_82A110A8 — XEX privilege/AV pack check (called from xstart before anything)
 extern "C" void __imp__sub_82A110A8(PPCContext &ctx, uint8_t *base);
-PPC_FUNC(sub_82A110A8) {
+extern "C" PPC_FUNC(sub_82A110A8) {
     printf("[DIAG] sub_82A110A8 ENTER (XEX privilege check) caller=0x%08X\n",
            static_cast<uint32_t>(ctx.lr));
     fflush(stdout);
@@ -1327,96 +1387,9 @@ PPC_FUNC(sub_82A110A8) {
 
 
 
-// Runtime function table patching — because PPC_FUNC weak overrides don't work
-// for intra-library calls. We patch the function table before __imp__xstart runs.
-
-// Wrapper functions that log and delegate to originals
-static PPCFunc* g_orig_sub_828474B8 = nullptr;
-static PPCFunc* g_orig_sub_82140000 = nullptr;
-static PPCFunc* g_orig_sub_82140088 = nullptr;
-static PPCFunc* g_orig_sub_821B3CE8 = nullptr;
-static PPCFunc* g_orig_sub_821458B8 = nullptr;
-static PPCFunc* g_orig_sub_821B39A8 = nullptr;
-
-static void hook_sub_828474B8(PPCContext &ctx, uint8_t *base) {
-    printf("[GAME] sub_828474B8 ENTER (main framework) r3=%d r4=0x%08X\n", ctx.r3.s32, ctx.r4.u32);
-    fflush(stdout);
-    if (g_orig_sub_828474B8) g_orig_sub_828474B8(ctx, base);
-    printf("[GAME] sub_828474B8 RETURN\n"); fflush(stdout);
-}
-
-static void hook_sub_82140000(PPCContext &ctx, uint8_t *base) {
-    printf("[GAME] sub_82140000 ENTER (gate) caller=0x%08X\n", (uint32_t)ctx.lr);
-    fflush(stdout);
-    if (g_orig_sub_82140000) g_orig_sub_82140000(ctx, base);
-    uint32_t result = ctx.r3.u32 & 0xFF;
-    printf("[GAME] sub_82140000 RETURN = %u (%s)\n",
-           result, result ? "SUCCESS → game loop will run" : "FAIL → game loop SKIPPED");
-    fflush(stdout);
-}
-
-static void hook_sub_82140088(PPCContext &ctx, uint8_t *base) {
-    printf("[GAME] sub_82140088 ENTER (MAIN GAME LOOP!)\n"); fflush(stdout);
-    if (g_orig_sub_82140088) g_orig_sub_82140088(ctx, base);
-    printf("[GAME] sub_82140088 RETURN (game loop exited)\n"); fflush(stdout);
-}
-
-static void hook_sub_821B3CE8(PPCContext &ctx, uint8_t *base) {
-    printf("[GAME] sub_821B3CE8 ENTER (RAGE engine init) arg=0x%08X\n", ctx.r3.u32);
-    fflush(stdout);
-    if (g_orig_sub_821B3CE8) g_orig_sub_821B3CE8(ctx, base);
-    uint32_t result = ctx.r3.u32 & 0xFF;
-    printf("[GAME] sub_821B3CE8 RETURN = %u (%s)\n",
-           result, result ? "INIT SUCCESS" : "INIT FAILED");
-    fflush(stdout);
-}
-
-static std::atomic<int> s_initGateCount2{0};
-static void hook_sub_821458B8(PPCContext &ctx, uint8_t *base) {
-    if (g_orig_sub_821458B8) g_orig_sub_821458B8(ctx, base);
-    int n = s_initGateCount2.fetch_add(1, std::memory_order_relaxed);
-    uint32_t result = ctx.r3.u32 & 0xFF;
-    if (n < 5 || (n & 0xFF) == 0) {
-        printf("[GAME] sub_821458B8 (init gate) #%d = %u (%s)\n",
-               n, result, result ? "READY" : "not ready");
-        fflush(stdout);
-    }
-}
-
-static std::atomic<int> s_quitCheckCount2{0};
-static void hook_sub_821B39A8(PPCContext &ctx, uint8_t *base) {
-    if (g_orig_sub_821B39A8) g_orig_sub_821B39A8(ctx, base);
-    int n = s_quitCheckCount2.fetch_add(1, std::memory_order_relaxed);
-    uint32_t result = ctx.r3.u32 & 0xFF;
-    if (n < 5 || result != 0 || (n & 0xFF) == 0) {
-        printf("[GAME] sub_821B39A8 (quit flag) #%d = %u (%s)\n",
-               n, result, result ? "EXIT REQUESTED" : "keep running");
-        fflush(stdout);
-    }
-}
-
-static void PatchFunctionTable(uint8_t* base, uint32_t guestAddr, PPCFunc* newFunc, PPCFunc** origOut) {
-    PPCFunc** slot = &PPC_LOOKUP_FUNC(base, guestAddr);
-    *origOut = *slot;
-    *slot = newFunc;
-    printf("[PATCH] 0x%08X: %p → %p\n", guestAddr, (void*)*origOut, (void*)newFunc);
-    fflush(stdout);
-}
-
-static void InstallFunctionTableHooks(uint8_t* base) {
-    printf("[PATCH] Installing function table hooks...\n"); fflush(stdout);
-    PatchFunctionTable(base, 0x828474B8, hook_sub_828474B8, &g_orig_sub_828474B8);
-    PatchFunctionTable(base, 0x82140000, hook_sub_82140000, &g_orig_sub_82140000);
-    PatchFunctionTable(base, 0x82140088, hook_sub_82140088, &g_orig_sub_82140088);
-    PatchFunctionTable(base, 0x821B3CE8, hook_sub_821B3CE8, &g_orig_sub_821B3CE8);
-    PatchFunctionTable(base, 0x821458B8, hook_sub_821458B8, &g_orig_sub_821458B8);
-    PatchFunctionTable(base, 0x821B39A8, hook_sub_821B39A8, &g_orig_sub_821B39A8);
-    printf("[PATCH] Done — %d hooks installed\n", 6); fflush(stdout);
-}
-
 // sub_82140000 — GATE: calls sub_821B3CE8 (RAGE init), returns 0 or 1
 extern "C" void __imp__sub_82140000(PPCContext &ctx, uint8_t *base);
-PPC_FUNC(sub_82140000) {
+extern "C" PPC_FUNC(sub_82140000) {
     printf("[DIAG] sub_82140000 ENTER (RAGE init gate) caller=0x%08X\n",
            static_cast<uint32_t>(ctx.lr));
     fflush(stdout);
@@ -1429,7 +1402,7 @@ PPC_FUNC(sub_82140000) {
 
 // sub_82140088 — MAIN GAME LOOP
 extern "C" void __imp__sub_82140088(PPCContext &ctx, uint8_t *base);
-PPC_FUNC(sub_82140088) {
+extern "C" PPC_FUNC(sub_82140088) {
     printf("[DIAG] sub_82140088 ENTER (main game loop!) caller=0x%08X\n",
            static_cast<uint32_t>(ctx.lr));
     fflush(stdout);
@@ -1441,7 +1414,7 @@ PPC_FUNC(sub_82140088) {
 // sub_821458B8 — INIT GATE: returns 0 = "not ready", non-zero = "ready"
 extern "C" void __imp__sub_821458B8(PPCContext &ctx, uint8_t *base);
 static std::atomic<int> s_initGateCount{0};
-PPC_FUNC(sub_821458B8) {
+extern "C" PPC_FUNC(sub_821458B8) {
     __imp__sub_821458B8(ctx, base);
     int n = s_initGateCount.fetch_add(1, std::memory_order_relaxed);
     uint32_t result = ctx.r3.u32 & 0xFF;
@@ -1455,7 +1428,7 @@ PPC_FUNC(sub_821458B8) {
 // sub_821B39A8 — QUIT FLAG: returns 0 = "keep running", non-zero = "exit"
 extern "C" void __imp__sub_821B39A8(PPCContext &ctx, uint8_t *base);
 static std::atomic<int> s_quitCheckCount{0};
-PPC_FUNC(sub_821B39A8) {
+extern "C" PPC_FUNC(sub_821B39A8) {
     __imp__sub_821B39A8(ctx, base);
     int n = s_quitCheckCount.fetch_add(1, std::memory_order_relaxed);
     uint32_t result = ctx.r3.u32 & 0xFF;
@@ -1468,7 +1441,7 @@ PPC_FUNC(sub_821B39A8) {
 
 // sub_821B3CE8 — RAGE ENGINE INIT (the big one)
 extern "C" void __imp__sub_821B3CE8(PPCContext &ctx, uint8_t *base);
-PPC_FUNC(sub_821B3CE8) {
+extern "C" PPC_FUNC(sub_821B3CE8) {
     printf("[DIAG] sub_821B3CE8 ENTER (RAGE engine init) arg=0x%08X caller=0x%08X\n",
            ctx.r3.u32, static_cast<uint32_t>(ctx.lr));
     fflush(stdout);
@@ -1481,7 +1454,7 @@ PPC_FUNC(sub_821B3CE8) {
 
 // sub_821411D8 — game systems init (only called if sub_821B3CE8 succeeds)
 extern "C" void __imp__sub_821411D8(PPCContext &ctx, uint8_t *base);
-PPC_FUNC(sub_821411D8) {
+extern "C" PPC_FUNC(sub_821411D8) {
     printf("[DIAG] sub_821411D8 ENTER (game systems init) caller=0x%08X\n",
            static_cast<uint32_t>(ctx.lr));
     fflush(stdout);

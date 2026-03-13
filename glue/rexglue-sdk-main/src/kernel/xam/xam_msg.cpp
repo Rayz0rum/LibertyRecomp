@@ -7,6 +7,8 @@
  ******************************************************************************
  *
  * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
+ * @modified    2026       - PS4 NP trophy bridge for achievement writes
+ * @modified    2026       - Game Center achievement bridge (iOS/macOS)
  */
 
 // Disable warnings about unused parameters for kernel functions
@@ -22,6 +24,31 @@
 #include <rex/system/xio.h>
 #include <rex/system/xthread.h>
 #include <rex/system/xtypes.h>
+
+// ── PS4 trophy bridge ────────────────────────────────────────────────────────
+// Forward-declare the bridge entry point so xam_msg.cpp doesn't need to pull
+// in any orbis/ headers.  The actual definition lives in os/ps4/achievement_bridge_ps4.cpp
+// and is only compiled when LIBERTY_RECOMP_PS4 is defined.
+#ifdef LIBERTY_RECOMP_PS4
+extern void LibertyPS4OnXboxAchievementUnlocked(uint32_t xbox_id);
+#endif
+
+// ── Game Center achievement bridge (iOS / macOS) ─────────────────────────────
+// Forward-declared here so this .cpp does not pull in ObjC headers.
+// Definition lives in os/gamecenter/achievement_bridge_gc.mm.
+#ifdef LIBERTY_RECOMP_GAMECENTER
+extern "C" void LibertyGCOnXboxAchievementUnlocked(uint32_t xbox_id);
+#endif
+
+// ── XAM message IDs for achievement I/O ─────────────────────────────────────
+// app = 0xFB  (XAM user module)
+// message 0xB0008 → XamUserWriteAchievements  (write/unlock one achievement)
+// The 8-byte buffer layout passed by sub_82A11FB8:
+//   [0..3]  be<u32>  user_index  (always 1 for single-user GTA IV)
+//   [4..7]  be<u32>  nested_ptr  → guest address of { be<u32> xuid_lo,
+//                                                      be<u32> xbox_ach_id }
+static constexpr uint32_t kXamApp                 = 0xFB;
+static constexpr uint32_t kMsgWriteAchievements   = 0xB0008;
 
 namespace rex {
 namespace kernel {
@@ -53,9 +80,73 @@ struct XMSGSTARTIOREQUEST_UNKNOWNARG {
   be<uint32_t> unk_1;
 };
 
+// ── xeXMsgStartIORequestEx ───────────────────────────────────────────────────
+//
+// Central intercept point.  On PS4 / iOS / macOS builds we intercept the
+// achievement-write message (app=0xFB, msg=0xB0008) before normal dispatch:
+//   1. Extract the Xbox achievement ID from the guest buffer.
+//   2. Forward to the platform trophy/achievement bridge:
+//        PS4  → sceNpTrophyUnlockTrophy + auto-platinum scan
+//        iOS/macOS → GKAchievement reportAchievements + auto-platinum scan
+//   3. Complete the overlapped with SUCCESS and return IO_PENDING so the game
+//      thread unblocks normally (otherwise the worker gets error 1627).
+//
+// All other messages fall through to the normal DispatchMessageAsync path.
+
 X_HRESULT xeXMsgStartIORequestEx(uint32_t app, uint32_t message, uint32_t overlapped_ptr,
                                  uint32_t buffer_ptr, uint32_t buffer_length,
                                  XMSGSTARTIOREQUEST_UNKNOWNARG* unknown) {
+
+#ifdef LIBERTY_RECOMP_PS4
+  // ── Achievement write intercept ─────────────────────────────────────────
+  if (app == kXamApp && message == kMsgWriteAchievements && buffer_ptr &&
+      buffer_length >= 8) {
+    // The 8-byte buffer is big-endian guest memory.
+    // [0] = user_index, [1] = nested guest ptr → {xuid_lo, xbox_ach_id}
+    auto* hbuf = kernel_state()->memory()->TranslateVirtual<be<uint32_t>*>(buffer_ptr);
+    const uint32_t nested_gptr = hbuf[1];  // auto byte-swapped by be<>
+
+    if (nested_gptr) {
+      auto* nested = kernel_state()->memory()->TranslateVirtual<be<uint32_t>*>(nested_gptr);
+      // nested[0] = xuid_lo, nested[1] = xbox achievement ID (1-indexed)
+      const uint32_t xbox_id = nested[1];  // auto byte-swapped by be<>
+
+      REXKRNL_DEBUG("XMsgStartIORequest: PS4 bridge — xbox_achievement_id={}", xbox_id);
+      LibertyPS4OnXboxAchievementUnlocked(xbox_id);
+    }
+
+    // Complete the overlapped with SUCCESS so the worker thread unblocks.
+    // Returning IO_PENDING is what the game expects when an overlapped is set.
+    if (overlapped_ptr) {
+      kernel_state()->CompleteOverlappedImmediate(overlapped_ptr, X_ERROR_SUCCESS);
+      return X_ERROR_IO_PENDING;
+    }
+    return X_ERROR_SUCCESS;
+  }
+#elif defined(LIBERTY_RECOMP_GAMECENTER)
+  // ── Game Center achievement write intercept ──────────────────────────────
+  if (app == kXamApp && message == kMsgWriteAchievements && buffer_ptr &&
+      buffer_length >= 8) {
+    auto* hbuf = kernel_state()->memory()->TranslateVirtual<be<uint32_t>*>(buffer_ptr);
+    const uint32_t nested_gptr = hbuf[1];
+
+    if (nested_gptr) {
+      auto* nested = kernel_state()->memory()->TranslateVirtual<be<uint32_t>*>(nested_gptr);
+      const uint32_t xbox_id = nested[1];
+
+      REXKRNL_DEBUG("XMsgStartIORequest: GC bridge — xbox_achievement_id={}", xbox_id);
+      LibertyGCOnXboxAchievementUnlocked(xbox_id);
+    }
+
+    if (overlapped_ptr) {
+      kernel_state()->CompleteOverlappedImmediate(overlapped_ptr, X_ERROR_SUCCESS);
+      return X_ERROR_IO_PENDING;
+    }
+    return X_ERROR_SUCCESS;
+  }
+#endif  // LIBERTY_RECOMP_PS4 / LIBERTY_RECOMP_GAMECENTER
+
+  // ── Default dispatch ─────────────────────────────────────────────────────
   auto result =
       kernel_state()->app_manager()->DispatchMessageAsync(app, message, buffer_ptr, buffer_length);
   if (result == X_E_NOTFOUND) {

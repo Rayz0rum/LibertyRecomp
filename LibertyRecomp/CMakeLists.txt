@@ -126,6 +126,7 @@ elseif (LIBERTY_RECOMP_TARGET_PLATFORM STREQUAL "ios" OR CMAKE_SYSTEM_NAME STREQ
         "os/ios/user_ios.cpp"
         "os/ios/version_ios.cpp"
         "os/ios/ios_paths_objc.mm"
+        "os/gamecenter/achievement_bridge_gc.mm"
     )
 elseif (LIBERTY_RECOMP_TARGET_PLATFORM STREQUAL "android" OR ANDROID)
     set(LIBERTY_RECOMP_OS_CXX_SOURCES
@@ -146,7 +147,9 @@ elseif (LIBERTY_RECOMP_TARGET_PLATFORM STREQUAL "ps4" OR CMAKE_SYSTEM_NAME STREQ
         "os/ps4/ps4_main.cpp"
         "os/ps4/user_malloc_ps4.cpp"
         "os/ps4/trophy_ps4.cpp"
+        "os/ps4/achievement_bridge_ps4.cpp"
     )
+    add_compile_definitions(LIBERTY_RECOMP_PS4)
 elseif (LIBERTY_RECOMP_TARGET_PLATFORM STREQUAL "switch" OR CMAKE_SYSTEM_NAME STREQUAL "Switch")
     set(LIBERTY_RECOMP_OS_CXX_SOURCES
         "os/switch/logger_switch.cpp"
@@ -171,6 +174,7 @@ elseif (APPLE)
         "os/macos/process_macos.cpp"
         "os/macos/user_macos.cpp"
         "os/macos/version_macos.cpp"
+        "os/gamecenter/achievement_bridge_gc.mm"
     )
 endif()
 
@@ -770,6 +774,8 @@ target_link_libraries(LibertyRecomp PRIVATE
 if (APPLE)
     target_link_libraries(LibertyRecomp PRIVATE -Wl,-force_load,$<TARGET_FILE:LibertyRecompLib>)
     target_link_libraries(LibertyRecomp PRIVATE "-framework CoreGraphics")
+    target_link_libraries(LibertyRecomp PRIVATE "-framework GameKit")
+    target_compile_definitions(LibertyRecomp PRIVATE LIBERTY_RECOMP_GAMECENTER)
 else()
     target_link_libraries(LibertyRecomp PRIVATE LibertyRecompLib)
 endif()

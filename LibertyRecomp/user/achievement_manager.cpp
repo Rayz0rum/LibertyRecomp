@@ -3,6 +3,10 @@
 #include <ui/achievement_overlay.h>
 #include <user/config.h>
 
+#ifdef LIBERTY_RECOMP_GAMECENTER
+#include <os/gamecenter/achievement_bridge_gc.h>
+#endif
+
 #define NUM_RECORDS sizeof(AchievementManager::Data.Records) / sizeof(AchievementData::AchRecord)
 
 time_t AchievementManager::GetTimestamp(uint16_t id)
@@ -88,6 +92,9 @@ void AchievementManager::Reset()
 
 void AchievementManager::Load()
 {
+#ifdef LIBERTY_RECOMP_GAMECENTER
+    LibertyGCInit();  // authenticate GKLocalPlayer (dispatch_once guarded)
+#endif
     AchievementManager::Reset();
 
     Status = EAchStatus::Success;
