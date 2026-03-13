@@ -120,8 +120,8 @@ float HorizonSearch(float2 uv, float3 viewPos, float3 viewNormal, float2 directi
     // Add jitter to starting position
     float2 startOffset = direction * stepSize * jitter;
     
-    [unroll]
-    for (int step = 1; step <= g_stepsPerSample; step++)
+    [loop]
+    for (int step = 1; step <= g_stepsPerSample; step++)  // [loop]: bound is cbuffer var, not compile-time const
     {
         float2 sampleOffset = direction * stepSize * float(step) + startOffset;
         float2 sampleUV = uv + sampleOffset * texelSize;
@@ -167,8 +167,8 @@ float CalculateGTAO(float2 uv, float3 viewPos, float3 viewNormal, float jitter)
     float sampleCount = float(g_sampleCount);
     
     // Sample multiple directions around the hemisphere
-    [unroll]
-    for (int i = 0; i < g_sampleCount; i++)
+    [loop]
+    for (int i = 0; i < g_sampleCount; i++)  // [loop]: bound is cbuffer var, not compile-time const
     {
         // Direction angle with noise offset
         float angle = (float(i) + 0.5) / sampleCount * PI + rotationNoise;

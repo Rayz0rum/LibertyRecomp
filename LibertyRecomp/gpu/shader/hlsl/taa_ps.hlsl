@@ -50,7 +50,7 @@ float3 ClipToAABB(float3 color, float3 boxMin, float3 boxMax)
     float3 extents = 0.5 * (boxMax - boxMin);
     
     float3 offset = color - center;
-    float3 ts = abs(extents / (offset + 0.0001));
+    float3 ts = abs(extents) / (abs(offset) + 0.0001);  // fix: abs both sides to handle negative offset
     float t = saturate(min(min(ts.x, ts.y), ts.z));
     
     return center + offset * t;
