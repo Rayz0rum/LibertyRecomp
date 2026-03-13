@@ -12,10 +12,34 @@ $ErrorActionPreference = "Stop"
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 
-# --- Locate cmake (prefer VS-bundled, fall back to PATH) --------------------
-$CMake = "cmake"
-$VSCMake = "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe"
-if (Test-Path $VSCMake) { $CMake = $VSCMake }
+# --- Locate cmake -----------------------------------------------------------
+# Search VS 2022 (all editions), VS 2019, then chocolatey/winget installs
+$CMake = $null
+$CMakeCandidates = @(
+    "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe",
+    "C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe",
+    "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe",
+    "C:\Program Files\Microsoft Visual Studio\2022\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe",
+    "C:\Program Files\Microsoft Visual Studio\2019\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe",
+    "C:\Program Files\CMake\bin\cmake.exe",
+    "C:\ProgramData\chocolatey\bin\cmake.exe"
+)
+foreach ($candidate in $CMakeCandidates) {
+    if (Test-Path $candidate) { $CMake = $candidate; break }
+}
+if (-not $CMake) {
+    # Last resort: check PATH
+    $CMake = (Get-Command cmake -ErrorAction SilentlyContinue)?.Source
+}
+if (-not $CMake) {
+    Write-Error @"
+cmake not found. Install it one of these ways:
+  1. Run from a VS 2022 Developer Command Prompt  (Start menu -> 'Developer PowerShell for VS 2022')
+  2. Install CMake from https://cmake.org/download/ and tick 'Add to PATH'
+  3. In VS installer, enable: Desktop dev with C++ -> C++ CMake tools for Windows
+"@
+}
+Write-Host "  Using cmake: $CMake"
 
 # --- Paths ------------------------------------------------------------------
 $FxcExtractorSrc   = Join-Path $RepoRoot "tools\rage_fxc_extractor"
