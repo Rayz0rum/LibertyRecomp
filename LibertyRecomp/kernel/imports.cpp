@@ -563,7 +563,9 @@ extern "C" PPC_FUNC(sub_82A41320) {
 // sub_828507F8 - Frame presentation (fix throttle check)
 extern "C" void __imp__sub_828507F8(PPCContext &ctx, uint8_t *base);
 extern "C" PPC_FUNC(sub_828507F8) {
-  PPC_STORE_U32(0x83124CCC, 0);
+  // Do NOT zero 0x83124CCC here. That wiped the submitted-frame counter before the
+  // pacing check, causing submitted(0) - presented(N) < 2 to never trigger and
+  // blocking VdSwap after frame 2. The sync is now done in sub_82A467D8 (video.cpp).
   __imp__sub_828507F8(ctx, base);
 }
 
@@ -1111,6 +1113,27 @@ extern "C" PPC_FUNC(sub_82A10EB0) {
 //   sub_8285CF98 : "fence create + wait wrapper"  → return 1 (signaled)
 //   sub_828497D8 : "NtWait dispatcher"             → return 1 (success)
 // =============================================================================
+
+// sub_827A9A20 — binary search in a resource dictionary (hash map).
+// r3 = dict pointer (struct with +16=array, +20=count, +8=next),  r4 = key.
+// 15+ callers load the dict pointer from global 0x831C2EF8 which is null when
+// GPU init is stubbed.  First instruction reads r3+20 → SIGBUS on null.
+// Fix: return 0 (not found) when dict is null.  This covers all callers at once.
+extern "C" void __imp__sub_827A9A20(PPCContext &ctx, uint8_t *base);
+static std::atomic<int> s_827A9A20_nullDict{0};
+extern "C" PPC_FUNC(sub_827A9A20) {
+    if (ctx.r3.u32 == 0) {
+        int n = s_827A9A20_nullDict.fetch_add(1, std::memory_order_relaxed);
+        if (n < 10) {
+            printf("[GPU-STUB] sub_827A9A20 null dict lookup (key=0x%08X) #%d\n",
+                   ctx.r4.u32, n);
+            fflush(stdout);
+        }
+        ctx.r3.u32 = 0; // not found
+        return;
+    }
+    __imp__sub_827A9A20(ctx, base);
+}
 
 extern "C" void __imp__sub_8285D018(PPCContext &ctx, uint8_t *base);
 static std::atomic<int> s_gpuSubmitCount{0};

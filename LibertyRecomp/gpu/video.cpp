@@ -9334,6 +9334,17 @@ PPC_FUNC(sub_82A467D8)
     
     // Now do the actual host-side Present
     Video::Present();
+
+    // Sync the submitted-frame counter (0x83124CCC) to equal the presented counter
+    // (device[16544]) after every present.  sub_828507F8 gates VdSwap on
+    // (submitted - presented >= 2).  If submitted < presented the gate fires and
+    // VdSwap is skipped, stalling rendering after frame 2.  Keeping them equal
+    // means the difference is always 0, so the gate never triggers.
+    if (device != 0) {
+        uint8_t* devicePtr2 = static_cast<uint8_t*>(g_memory.Translate(device));
+        uint32_t fc = GTAIV::GetDeviceU32(devicePtr2, GTAIV::DeviceOffset::FrameCounter);
+        PPC_STORE_U32(0x83124CCC, fc);
+    }
 }
 
 // PM4 buffer flush — defined via PPC_FUNC above (sub_82A499B8)
