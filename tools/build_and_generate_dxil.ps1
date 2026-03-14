@@ -36,64 +36,60 @@ if (-not $CMake) {
 }
 Write-Host "  Using cmake: $CMake"
 
-# --- Detect VS generator via vswhere ----------------------------------------
-$VSGenerator = $null
-$VSArch = "x64"
-
+# --- Locate VS install via vswhere -------------------------------------------
+$VSInstallPath = $null
 $vswhere = "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe"
 if (Test-Path $vswhere) {
-    $vsVersionRaw = & $vswhere -latest -property installationVersion 2>$null
-    if ($vsVersionRaw) {
-        $vsMajor = [int]($vsVersionRaw.Split(".")[0])
-        switch ($vsMajor) {
-            17 { $VSGenerator = "Visual Studio 17 2022" }
-            16 { $VSGenerator = "Visual Studio 16 2019" }
-            15 { $VSGenerator = "Visual Studio 15 2017" }
-            default { $VSGenerator = "Visual Studio 17 2022" }
-        }
-        Write-Host "  Detected VS $vsVersionRaw -> generator: $VSGenerator"
+    $VSInstallPath = (& $vswhere -latest -property installationPath 2>$null).Trim()
+    Write-Host "  VS install: $VSInstallPath"
+}
+if (-not $VSInstallPath) {
+    foreach ($p in @(
+        "C:\Program Files\Microsoft Visual Studio\2022\Community",
+        "C:\Program Files\Microsoft Visual Studio\2022\Professional",
+        "C:\Program Files\Microsoft Visual Studio\2022\Enterprise",
+        "C:\Program Files\Microsoft Visual Studio\2022\BuildTools"
+    )) {
+        if (Test-Path $p) { $VSInstallPath = $p; break }
     }
 }
-
-if (-not $VSGenerator) {
-    Write-Host "  vswhere not available, scanning cmake generators..."
-    $cmakeHelp = & $CMake --help 2>&1 | Out-String
-    $generatorOrder = @("Visual Studio 17 2022", "Visual Studio 16 2019", "Visual Studio 15 2017", "Visual Studio 14 2015")
-    foreach ($gen in $generatorOrder) {
-        if ($cmakeHelp -match [regex]::Escape($gen)) {
-            $VSGenerator = $gen
-            Write-Host "  Found generator: $VSGenerator"
-            break
-        }
-    }
+if (-not $VSInstallPath) {
+    Write-Error "Visual Studio 2022 not found. Install it with the 'Desktop development with C++' workload."
 }
 
-if (-not $VSGenerator) {
+# --- Locate Ninja (bundled with VS) ------------------------------------------
+$Ninja = $null
+$NinjaCandidates = @(
+    "$VSInstallPath\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.exe",
+    "C:\tools\ninja\ninja.exe",
+    "C:\ProgramData\chocolatey\bin\ninja.exe"
+)
+foreach ($candidate in $NinjaCandidates) {
+    if (Test-Path $candidate) { $Ninja = $candidate; break }
+}
+if (-not $Ninja) {
     $ninjaCmd = Get-Command ninja -ErrorAction SilentlyContinue
-    if ($ninjaCmd) {
-        $VSGenerator = "Ninja"
-        $VSArch = ""
-        Write-Host "  Falling back to Ninja generator."
-    }
+    if ($ninjaCmd) { $Ninja = $ninjaCmd.Source }
 }
+if (-not $Ninja) {
+    Write-Error "ninja.exe not found under VS install. Reinstall VS 2022 with 'Desktop development with C++' workload."
+}
+Write-Host "  Using ninja: $Ninja"
 
-if (-not $VSGenerator) {
-    Write-Error @"
-Could not detect a usable CMake generator.
-Fix: Install VS 2022 with 'Desktop development with C++' workload from:
-  https://visualstudio.microsoft.com/
-"@
+# --- Locate vcvars64.bat -----------------------------------------------------
+$VcVars = "$VSInstallPath\VC\Auxiliary\Build\vcvars64.bat"
+if (-not (Test-Path $VcVars)) {
+    Write-Error "vcvars64.bat not found at: $VcVars"
 }
-Write-Host "  Using generator: $VSGenerator"
+Write-Host "  Using vcvars: $VcVars"
 
 # --- Paths ------------------------------------------------------------------
-$FxcExtractorSrc   = Join-Path $RepoRoot "tools\rage_fxc_extractor"
 $FxcExtractorBuild = Join-Path $RepoRoot "tools\rage_fxc_extractor\build"
 $FxcExtractorExe   = Join-Path $FxcExtractorBuild "Release\rage_fxc_extractor.exe"
 
-$XenosRecompSrc    = Join-Path $RepoRoot "tools\XenosRecomp"
 $XenosRecompBuild  = Join-Path $RepoRoot "tools\XenosRecomp\build_win"
-$XenosRecompExe    = Join-Path $XenosRecompBuild "XenosRecomp\Release\XenosRecomp.exe"
+# Ninja puts exe directly in the target subdir (no Release/ subfolder)
+$XenosRecompExe    = Join-Path $XenosRecompBuild "XenosRecomp\XenosRecomp.exe"
 
 $FxlFinalDir         = Join-Path $RepoRoot "LibertyRecompLib\private\fxl_final"
 $ExtractedShadersDir = Join-Path $RepoRoot "extracted_shaders"
@@ -111,51 +107,66 @@ function Run {
     param([string]$exe, [string[]]$arguments)
     Write-Host "  > $exe $($arguments -join ' ')"
     & $exe @arguments
-    if ($LASTEXITCODE -ne 0) {
-        throw "Command failed (exit $LASTEXITCODE): $exe"
-    }
+    if ($LASTEXITCODE -ne 0) { throw "Command failed (exit $LASTEXITCODE): $exe" }
 }
 
-# Wipe a build dir if it contains a CMakeCache with a different generator.
-# This prevents the "generator does not match" error after a failed first run.
+# Run cmake inside a vcvars64 + Ninja environment.
+# Uses pushd to map the UNC working directory to a drive letter so cmd.exe
+# can use it as CWD (cmd.exe refuses UNC paths as working directory).
+function Run-InVsEnv {
+    param([string]$workDir, [string[]]$cmakeArgs)
+    $argStr = $cmakeArgs -join ' '
+    $bat = [System.IO.Path]::GetTempFileName() -replace '\.tmp$', '.bat'
+    @"
+@echo off
+pushd "$workDir"
+if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
+call "$VcVars" >nul 2>&1
+set PATH=$([System.IO.Path]::GetDirectoryName($Ninja));%PATH%
+"$CMake" $argStr
+set EC=%ERRORLEVEL%
+popd
+exit /b %EC%
+"@ | Set-Content $bat -Encoding ASCII
+    Write-Host "  > [vcvars] cmake $argStr"
+    cmd /c $bat
+    $ec = $LASTEXITCODE
+    Remove-Item $bat -ErrorAction SilentlyContinue
+    if ($ec -ne 0) { throw "cmake command failed (exit $ec)" }
+}
+
 function Reset-BuildDirIfStale {
-    param([string]$buildDir)
+    param([string]$buildDir, [string]$expectedGenerator)
     $cacheFile = Join-Path $buildDir "CMakeCache.txt"
     if (-not (Test-Path $cacheFile)) { return }
     $cacheContent = Get-Content $cacheFile -Raw
-    # Check if the cached generator matches what we want to use
-    if ($cacheContent -notmatch [regex]::Escape($VSGenerator)) {
-        Write-Host "  Stale CMakeCache detected (wrong generator). Wiping $buildDir ..." -ForegroundColor Yellow
+    if ($cacheContent -notmatch [regex]::Escape($expectedGenerator)) {
+        Write-Host "  Stale CMakeCache (wrong generator). Wiping $buildDir ..." -ForegroundColor Yellow
         Remove-Item -Recurse -Force $buildDir
     }
 }
 
-function CMakeConfigureArgs {
-    param([string]$srcDir, [string[]]$extra)
-    $a = @($srcDir, "-G", $VSGenerator)
-    if ($VSArch -ne "") { $a += @("-A", $VSArch) }
-    $a += $extra
-    return $a
-}
-
 # --- 0. Validate fxl_final --------------------------------------------------
 Step "Checking shader source directory"
-if (-not (Test-Path $FxlFinalDir)) {
-    Write-Error "fxl_final not found at: $FxlFinalDir"
-}
+if (-not (Test-Path $FxlFinalDir)) { Write-Error "fxl_final not found at: $FxlFinalDir" }
 $FxcCount = (Get-ChildItem -LiteralPath $FxlFinalDir -Filter "*.fxc").Count
 Write-Host "  Found $FxcCount .fxc files" -ForegroundColor Green
 
-# --- 1. Build rage_fxc_extractor --------------------------------------------
+# --- 1. Build rage_fxc_extractor (VS generator - no PCH) --------------------
 Step "Building rage_fxc_extractor"
 if (Test-Path $FxcExtractorExe) {
     Write-Host "  Already built, skipping." -ForegroundColor DarkGray
 } else {
-    Reset-BuildDirIfStale $FxcExtractorBuild
+    Reset-BuildDirIfStale $FxcExtractorBuild "Visual Studio"
     New-Item -ItemType Directory -Force -Path $FxcExtractorBuild | Out-Null
     Push-Location $FxcExtractorBuild
     try {
-        Run $CMake (CMakeConfigureArgs ".." @("-DCMAKE_BUILD_TYPE=Release"))
+        $cmakeHelp = & $CMake --help 2>&1 | Out-String
+        $vsGen = "Visual Studio 17 2022"
+        foreach ($g in @("Visual Studio 17 2022","Visual Studio 16 2019","Visual Studio 15 2017")) {
+            if ($cmakeHelp -match [regex]::Escape($g)) { $vsGen = $g; break }
+        }
+        Run $CMake @("..", "-G", $vsGen, "-A", "x64", "-DCMAKE_BUILD_TYPE=Release")
         Run $CMake @("--build", ".", "--config", "Release")
     } finally {
         Pop-Location
@@ -163,29 +174,25 @@ if (Test-Path $FxcExtractorExe) {
 }
 Write-Host "  $FxcExtractorExe" -ForegroundColor Green
 
-# --- 2. Build XenosRecomp ---------------------------------------------------
-Step "Building XenosRecomp (DXIL enabled)"
+# --- 2. Build XenosRecomp with Ninja + MSVC ----------------------------------
+Step "Building XenosRecomp (DXIL enabled, Ninja generator)"
 if (Test-Path $XenosRecompExe) {
     Write-Host "  Already built, skipping." -ForegroundColor DarkGray
 } else {
-    Reset-BuildDirIfStale $XenosRecompBuild
+    Reset-BuildDirIfStale $XenosRecompBuild "Ninja"
     New-Item -ItemType Directory -Force -Path $XenosRecompBuild | Out-Null
-    Push-Location $XenosRecompBuild
-    try {
-        Run $CMake (CMakeConfigureArgs ".." @("-DXENOS_RECOMP_DXIL=ON", "-DCMAKE_BUILD_TYPE=Release"))
-        Run $CMake @("--build", ".", "--config", "Release", "--target", "XenosRecomp")
-    } finally {
-        Pop-Location
-    }
+    $xenosSrc = Join-Path $RepoRoot "tools\XenosRecomp"
+    Run-InVsEnv $XenosRecompBuild @("$xenosSrc", "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release", "-DXENOS_RECOMP_DXIL=ON", "-DCMAKE_SYSTEM_PROCESSOR=x86_64", "-DCMAKE_SYSTEM_NAME=Windows")
+    Run-InVsEnv $XenosRecompBuild @("--build", ".", "--target", "XenosRecomp")
 }
 Write-Host "  $XenosRecompExe" -ForegroundColor Green
 
-# --- 3. dxil.dll beside the process for DXIL signing -----------------------
+# --- 3. dxil.dll beside the process -----------------------------------------
 Step "Setting up dxil.dll"
-$dxilDest = Join-Path (Get-Location) "dxil.dll"
+$dxilDest = Join-Path $RepoRoot "dxil.dll"
 if (-not (Test-Path $dxilDest)) {
     Copy-Item $DxilDll $dxilDest
-    Write-Host "  Copied dxil.dll to working directory" -ForegroundColor Green
+    Write-Host "  Copied dxil.dll to repo root" -ForegroundColor Green
 } else {
     Write-Host "  dxil.dll already present" -ForegroundColor DarkGray
 }
@@ -196,10 +203,8 @@ $existingFiles = 0
 if (Test-Path $ExtractedShadersDir) {
     $existingFiles = (Get-ChildItem -LiteralPath $ExtractedShadersDir -Recurse -File).Count
 }
-
 if ($existingFiles -gt 0) {
     Write-Host "  extracted_shaders\ already has $existingFiles files, skipping." -ForegroundColor DarkGray
-    Write-Host "  (Delete extracted_shaders\ to force re-extraction)" -ForegroundColor DarkGray
 } else {
     New-Item -ItemType Directory -Force -Path $ExtractedShadersDir | Out-Null
     Run $FxcExtractorExe @("--batch", $FxlFinalDir, $ExtractedShadersDir)
@@ -213,6 +218,8 @@ if (Test-Path $ShaderCacheCpp) {
     Copy-Item $ShaderCacheCpp "$ShaderCacheCpp.bak" -Force
     Write-Host "  Backed up existing shader_cache.cpp"
 }
+# dxil.dll must be next to the process at runtime
+$env:PATH = "$RepoRoot;$env:PATH"
 Run $XenosRecompExe @($ExtractedShadersDir, $ShaderCacheCpp, $ShaderCommonH)
 $sizeMB = [math]::Round((Get-Item $ShaderCacheCpp).Length / 1MB, 1)
 Write-Host "  Generated shader_cache.cpp ($sizeMB MB)" -ForegroundColor Green
@@ -221,9 +228,7 @@ Write-Host "  Generated shader_cache.cpp ($sizeMB MB)" -ForegroundColor Green
 Step "Compiling post-process HLSL shaders"
 $ps1 = Join-Path $RepoRoot "tools\compile_dxil_shaders.ps1"
 powershell -ExecutionPolicy Bypass -File $ps1
-if ($LASTEXITCODE -ne 0) {
-    throw "compile_dxil_shaders.ps1 failed"
-}
+if ($LASTEXITCODE -ne 0) { throw "compile_dxil_shaders.ps1 failed" }
 
 # --- Done -------------------------------------------------------------------
 Write-Host ""

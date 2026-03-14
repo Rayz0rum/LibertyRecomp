@@ -475,7 +475,16 @@ uint32_t xeNtSetEvent(uint32_t handle, rex::be<uint32_t>* previous_state_ptr) {
       *previous_state_ptr = static_cast<uint32_t>(was_signalled);
     }
   } else {
-    result = X_STATUS_INVALID_HANDLE;
+    // LIBERTY RECOMP FIX: Fallback to Semaphore if Event lookup fails.
+    auto sem = kernel_state()->object_table()->LookupObject<XSemaphore>(handle);
+    if (sem) {
+      int32_t previous_count = sem->ReleaseSemaphore(1);
+      if (previous_state_ptr) {
+        *previous_state_ptr = static_cast<uint32_t>(previous_count > 0 ? 1 : 0);
+      }
+    } else {
+      result = X_STATUS_INVALID_HANDLE;
+    }
   }
 
   return result;
