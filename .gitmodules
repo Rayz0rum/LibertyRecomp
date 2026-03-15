@@ -68,3 +68,6 @@
 [submodule "thirdparty/GameNetworkingSockets"]
 	path = thirdparty/GameNetworkingSockets
 	url = https://github.com/ValveSoftware/GameNetworkingSockets.git
+[submodule "tools/extract-xiso"]
+    path = tools/extract-xiso
+    url = https://github.com/XboxDev/extract-xiso.git
