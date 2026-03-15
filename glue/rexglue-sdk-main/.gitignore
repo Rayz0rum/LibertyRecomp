@@ -1,5 +1,0 @@
-# IDA databases
-*.i64
-*.idb
-# Generated recompilation output (copyrighted)
-gta4-recomp/generated/
